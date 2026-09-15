@@ -60,12 +60,12 @@ else
   note "Домен не указан — приложение будет доступно только по адресу сервера, без HTTPS."
 fi
 
-say "1/8 Обновляем систему и ставим нужные программы"
+say "1/9 Обновляем систему и ставим нужные программы"
 run apt-get update -y
 run apt-get upgrade -y
 run apt-get install -y git nginx ufw ca-certificates curl
 
-say "2/8 Устанавливаем Node.js ${NODE_MAJOR}"
+say "2/9 Устанавливаем Node.js ${NODE_MAJOR}"
 if [ "$DRY_RUN" = "1" ]; then
   note "+ установка Node.js из репозитория NodeSource"
 elif command -v node >/dev/null && node --version | grep -q "^v${NODE_MAJOR}"; then
@@ -76,7 +76,7 @@ else
   note "Установлен Node.js $(node --version)"
 fi
 
-say "3/8 Создаём отдельного пользователя для приложения"
+say "3/9 Создаём отдельного пользователя для приложения"
 if [ "$DRY_RUN" = "1" ]; then
   note "+ adduser --system --group --home /opt/${APP_USER} ${APP_USER}"
 elif id "$APP_USER" >/dev/null 2>&1; then
@@ -85,7 +85,7 @@ else
   adduser --system --group --home "/opt/${APP_USER}" "$APP_USER"
 fi
 
-say "4/8 Загружаем код приложения"
+say "4/9 Загружаем код приложения"
 if [ "$DRY_RUN" = "1" ]; then
   note "+ git clone ${REPO} ${APP_DIR} (ветка ${BRANCH})"
 elif [ -d "$APP_DIR/.git" ]; then
@@ -98,13 +98,13 @@ else
 fi
 run chown -R "${APP_USER}:${APP_USER}" "$APP_DIR"
 
-say "5/8 Готовим папку для данных"
+say "5/9 Готовим папку для данных"
 run mkdir -p "$APP_DATA"
 run chown "${APP_USER}:${APP_USER}" "$APP_DATA"
 run chmod 750 "$APP_DATA"
 note "Данные компании будут храниться в ${APP_DATA} — эта папка не затрагивается при обновлении."
 
-say "6/8 Настраиваем автозапуск приложения"
+say "6/9 Настраиваем автозапуск приложения"
 write /etc/systemd/system/line-design.service <<UNIT
 [Unit]
 Description=Line Design — финансы студии
@@ -138,7 +138,7 @@ if [ "$DRY_RUN" != "1" ]; then
     || { echo "Приложение не запустилось. Посмотрите: journalctl -u line-design -n 50" >&2; exit 1; }
 fi
 
-say "7/8 Настраиваем nginx"
+say "7/9 Настраиваем nginx"
 write /etc/nginx/sites-available/line-design <<NGINX
 server {
     listen 80;
@@ -166,7 +166,7 @@ run ufw allow 'Nginx Full'
 run ufw --force enable
 note "Порт приложения наружу закрыт: снаружи отвечает только nginx."
 
-say "8/8 Сертификат HTTPS"
+say "8/9 Сертификат HTTPS"
 if [ -z "$DOMAIN" ]; then
   note "Домен не указан — сертификат не выпускаем."
 elif [ "$DRY_RUN" = "1" ]; then
@@ -191,6 +191,19 @@ else
   fi
 fi
 
+say "9/9 Настраиваем ежедневные резервные копии"
+write /etc/cron.daily/line-design-backup <<'BACKUP'
+#!/bin/sh
+# Ежедневная копия данных приложения. Хранится 30 дней.
+set -e
+mkdir -p /var/backups/line-design
+tar -czf "/var/backups/line-design/$(date +%F).tar.gz" -C /var/lib line-design-finance
+find /var/backups/line-design -name '*.tar.gz' -mtime +30 -delete
+BACKUP
+run chmod +x /etc/cron.daily/line-design-backup
+run mkdir -p /var/backups/line-design
+note "Копии складываются в /var/backups/line-design, хранятся 30 дней."
+
 say "Готово"
 if [ -n "$DOMAIN" ]; then
   note "Приложение: https://${DOMAIN}/finance/"
@@ -203,5 +216,6 @@ if [ "$DRY_RUN" != "1" ] && [ -f "${APP_DATA}/ПАРОЛИ-ПРИ-ПЕРВОМ-�
   cat "${APP_DATA}/ПАРОЛИ-ПРИ-ПЕРВОМ-ЗАПУСКЕ.txt"
 fi
 
-note "Резервные копии: папка ${APP_DATA}."
+note "Данные компании: ${APP_DATA}"
+note "Резервные копии: /var/backups/line-design (ежедневно, хранятся 30 дней)"
 note "Обновление: git -C ${APP_DIR} pull && systemctl restart line-design"
