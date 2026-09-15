@@ -15,6 +15,13 @@
 
 set -euo pipefail
 
+# Установка идёт без вопросов: обновление системы не должно останавливаться
+# на диалогах о перезапуске служб и о новых версиях файлов настроек.
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+APT_OPTS="-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+
 DOMAIN="${1:-}"
 EMAIL="${2:-}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -63,7 +70,8 @@ fi
 
 say "1/9 Обновляем систему и ставим нужные программы"
 run apt-get update -y
-run apt-get upgrade -y
+# shellcheck disable=SC2086
+run apt-get upgrade -y $APT_OPTS
 run apt-get install -y git nginx ufw ca-certificates curl
 
 say "2/9 Устанавливаем Node.js"
