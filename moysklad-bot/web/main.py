@@ -325,20 +325,28 @@ async def shipment_detail(
     start, end, _granularity = _period(days)
 
     try:
-        data, balance, bonus = await asyncio.gather(
-            moysklad.get_shipment_detail(href, start, end),
+        data = await moysklad.get_shipment_detail(href, start, end)
+    except MoySkladError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    # Долг за всё время, как во «Взаиморасчётах», и отдельно бонусы: они
+    # висят на своём контрагенте и в этот остаток не попадают. Считается
+    # по другим отчётам, поэтому их отказ не должен уносить всю карточку —
+    # отгрузки и платежи важнее, их и покажем.
+    balance: float | None = None
+    bonus: dict = {"total": 0.0, "rows": []}
+    try:
+        balance, bonus = await asyncio.gather(
             moysklad.get_counterparty_balance(href),
             moysklad.get_bonus_total(name),
         )
     except MoySkladError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        logger.warning("Не удалось посчитать долг по %s: %s", name or href, exc)
 
     return {
-        # Долг за всё время, как во «Взаиморасчётах», и отдельно бонусы:
-        # они висят на своём контрагенте и в этот остаток не попадают.
         "balance": balance,
         "bonus": bonus["total"],
-        "balanceNet": balance - bonus["total"],
+        "balanceNet": None if balance is None else balance - bonus["total"],
         "bonusRows": bonus["rows"][:40],
         "total": data["total"],
         "paid": data["paid"],

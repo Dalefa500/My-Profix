@@ -797,31 +797,36 @@ async function renderShipmentDetail(container) {
      считаем и показываем оба слагаемых и итог. */
   const debt = el("div", "card");
   debt.append(el("div", "card__title", "Долг за всё время"));
-  const debtRows = el("div", "rows");
+  if (data.balance === null) {
+    // Остаток считается по другому отчёту МойСклада; если он не ответил,
+    // карточка всё равно должна показать отгрузки и платежи.
+    debt.append(el("div", "empty", "Остаток сейчас недоступен"));
+  } else {
+    const debtRows = el("div", "rows");
 
-  const balanceRow = el("div", "row");
-  balanceRow.append(el("div", "row__label", "По взаиморасчётам"));
-  balanceRow.append(el("div", "row__value", money(data.balance)));
-  debtRows.append(balanceRow);
+    const balanceRow = el("div", "row");
+    balanceRow.append(el("div", "row__label", "По взаиморасчётам"));
+    balanceRow.append(el("div", "row__value", money(data.balance)));
+    debtRows.append(balanceRow);
 
-  const bonusRow = el("div", "row");
-  bonusRow.append(el("div", "row__label", "Бонусы покупателю"));
-  bonusRow.append(el("div", "row__value row__value--muted", `− ${money(data.bonus)}`));
-  debtRows.append(bonusRow);
+    const bonusRow = el("div", "row");
+    bonusRow.append(el("div", "row__label", "Бонусы покупателю"));
+    bonusRow.append(el("div", "row__value row__value--muted", `− ${money(data.bonus)}`));
+    debtRows.append(bonusRow);
 
-  // Красным — только если после вычета он всё ещё должен
-  const netRow = el("div", "row row--total");
-  netRow.append(el("div", "row__label", "Итого должен"));
-  netRow.append(
-    el(
-      "div",
-      `row__value row__value--${data.balanceNet > 0.01 ? "unpaid" : "paid"}`,
-      money(data.balanceNet),
-    ),
-  );
-  debtRows.append(netRow);
-
-  debt.append(debtRows);
+    // Красным — только если после вычета он всё ещё должен
+    const netRow = el("div", "row row--total");
+    netRow.append(el("div", "row__label", "Итого должен"));
+    netRow.append(
+      el(
+        "div",
+        `row__value row__value--${data.balanceNet > 0.01 ? "unpaid" : "paid"}`,
+        money(data.balanceNet),
+      ),
+    );
+    debtRows.append(netRow);
+    debt.append(debtRows);
+  }
   container.append(debt);
 
   const goods = el("div", "card");
@@ -897,7 +902,7 @@ async function renderShipmentDetail(container) {
   }
   container.append(cash);
 
-  if (data.bonusRows.length) {
+  if (data.balance !== null && data.bonusRows.length) {
     const bonuses = el("div", "card");
     bonuses.append(el("div", "card__title", "Выданные бонусы"));
     const rows = el("div", "rows");

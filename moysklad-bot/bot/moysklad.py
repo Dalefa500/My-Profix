@@ -521,19 +521,19 @@ class MoySkladClient:
     async def get_counterparty_balance(self, agent_href: str) -> float:
         """Конечный остаток контрагента за всё время — та же цифра, что в
         «Деньги → Взаиморасчёты». Плюс означает, что должен он нам.
+
+        Отчёт не умеет фильтроваться по agent (API отвечает 412), зато
+        принимает выборочный запрос: POST со списком нужных контрагентов.
         """
-        agent_id = agent_href.rstrip("/").rsplit("/", 1)[-1]
         data = await self._request(
-            "GET", "/report/counterparty", params={"filter": f"agent={agent_href}", "limit": 10}
+            "POST",
+            "/report/counterparty",
+            json={"counterparties": [self._meta(agent_href, "counterparty")]},
         )
         rows = data.get("rows") if isinstance(data, dict) else data
-        if not isinstance(rows, list):
-            raise MoySkladError("Неожиданный формат ответа /report/counterparty")
-        for row in rows:
-            href = (((row.get("agent") or {}).get("meta") or {}).get("href") or "")
-            if not href or href.rstrip("/").rsplit("/", 1)[-1] == agent_id:
-                return row.get("balance", 0) / 100
-        return 0.0
+        if not isinstance(rows, list) or not rows:
+            raise MoySkladError("Пустой ответ /report/counterparty")
+        return rows[0].get("balance", 0) / 100
 
     async def get_bonus_total(self, agent_name: str) -> dict:
         """Бонусы, выданные контрагенту. В учёте они висят на отдельном
