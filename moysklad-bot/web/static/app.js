@@ -908,11 +908,18 @@ async function renderShipmentDetail(container) {
   container.append(cash);
 
   if (data.balance !== null && data.bonusRows.length) {
+    /* Бонусы — своей графой: в долг они не входят (их уже проводят
+       приходом от покупателя), но видеть, сколько всего выдано за годы,
+       нужно отдельно. */
     const bonuses = el("div", "card");
-    bonuses.append(
-      el("div", "card__title", `Выданные бонусы · всего ${money(data.bonus)}`),
-    );
+    bonuses.append(el("div", "card__title", "Бонусы покупателю"));
     const rows = el("div", "rows");
+
+    const totalRow = el("div", "row row--total");
+    totalRow.append(el("div", "row__label", "Выдано за всё время"));
+    totalRow.append(el("div", "row__value", money(data.bonus)));
+    rows.append(totalRow);
+
     data.bonusRows.forEach((row) => {
       const line = el("div", "row");
       line.append(el("div", "row__label", _docDate(row.date)));

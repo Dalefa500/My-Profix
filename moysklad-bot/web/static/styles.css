@@ -582,6 +582,8 @@ svg { display: block; }
   border-top: 1px solid rgba(255, 255, 255, .22);
   font-size: 18px;
 }
+/* Итог может стоять и первой строкой — тогда черта сверху не нужна */
+.row--total:first-child { border-top: 0; }
 .row--total .row__label { color: var(--ink); }
 .row__value--unpaid { color: var(--warn); }
 /* Вычет в расчёте — не поступление денег, цветом не выделяем */
