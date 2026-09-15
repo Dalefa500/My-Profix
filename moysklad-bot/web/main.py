@@ -428,7 +428,10 @@ async def team_detail(request: Request, href: str, days: int = Query(30, ge=1, l
 # the service worker's scope over the whole app.
 
 
-@app.get("/")
+# HEAD тоже: им ходят проверки доступности и превью ссылок, а FastAPI,
+# в отличие от Starlette, сам его к GET не добавляет — и такой запрос
+# упирался в 404.
+@app.api_route("/", methods=["GET", "HEAD"])
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
