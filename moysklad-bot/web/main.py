@@ -275,6 +275,40 @@ async def report(request: Request, days: int = Query(30, ge=1, le=400)) -> dict:
     }
 
 
+@app.get("/api/shipments", dependencies=authed)
+async def shipments(request: Request, days: int = Query(30, ge=1, le=400)) -> dict:
+    """Отгрузки за период: сколько всего отгружено, по дням (или месяцам
+    на длинных периодах) и кому.
+    """
+    moysklad: MoySkladClient = request.app.state.moysklad
+    start, end, granularity = _period(days)
+
+    try:
+        data = await moysklad.get_shipment_summary(start, end)
+    except MoySkladError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    daily = data["daily"]
+    if granularity == "day":
+        rows = [{"label": _day_label(key), "total": daily[key]} for key in sorted(daily)]
+    else:
+        monthly: dict[str, float] = defaultdict(float)
+        for key, value in daily.items():
+            monthly[key[:7]] += value
+        rows = [
+            {"label": _month_label(f"{key}-01"), "total": monthly[key]}
+            for key in sorted(monthly)
+        ]
+
+    return {
+        "granularity": granularity,
+        "total": data["total"],
+        "count": data["count"],
+        "rows": rows,
+        "agents": data["agents"][:25],
+    }
+
+
 @app.get("/api/stock", dependencies=authed)
 async def stock(request: Request) -> dict:
     moysklad: MoySkladClient = request.app.state.moysklad

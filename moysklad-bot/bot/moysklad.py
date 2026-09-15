@@ -242,6 +242,22 @@ class MoySkladClient:
         end (inclusive), paginated. Pass agent_href to filter server-side to
         one specific counterparty.
         """
+        return await self._documents_between(
+            entity, start, end, expand_agent=expand_agent, agent_href=agent_href
+        )
+
+    async def _documents_between(
+        self,
+        entity: str,
+        start: datetime,
+        end: datetime,
+        *,
+        expand_agent: bool = False,
+        agent_href: str | None = None,
+    ) -> list[dict]:
+        """Every document of one kind whose moment falls in the period,
+        page by page. Shared by the cash reports and by shipments.
+        """
         rows_all: list[dict] = []
         offset = 0
         limit = 1000
@@ -282,6 +298,58 @@ class MoySkladClient:
                 daily.setdefault(day, {"income": 0.0, "expense": 0.0})
                 daily[day][key] += row.get("sum", 0) / 100
         return daily
+
+    async def _counterparty_names(self) -> dict[str, str]:
+        """href -> name for every counterparty. Documents carry only a link
+        to the counterparty; asking the API to expand it caps a page at 100
+        rows, so for a year of shipments it is far cheaper to pull the list
+        once and look names up locally.
+        """
+        names: dict[str, str] = {}
+        offset = 0
+        limit = 1000
+        while True:
+            data = await self._request(
+                "GET", "/entity/counterparty", params={"limit": limit, "offset": offset}
+            )
+            rows = data.get("rows", [])
+            for row in rows:
+                href = (row.get("meta") or {}).get("href")
+                if href:
+                    names[href] = row.get("name", "?")
+            if len(rows) < limit:
+                break
+            offset += limit
+        return names
+
+    async def get_shipment_summary(self, start: datetime, end: datetime) -> dict:
+        """Shipments (отгрузки) in the period: total, document count,
+        per-day sums and a per-counterparty breakdown.
+        """
+        daily: dict[str, float] = {}
+        by_agent: dict[str, float] = {}
+        total = 0.0
+        count = 0
+        for row in await self._documents_between("demand", start, end):
+            amount = row.get("sum", 0) / 100
+            total += amount
+            count += 1
+            day = (row.get("moment") or "")[:10]
+            if day:
+                daily[day] = daily.get(day, 0.0) + amount
+            href = ((row.get("agent") or {}).get("meta") or {}).get("href")
+            if href:
+                by_agent[href] = by_agent.get(href, 0.0) + amount
+
+        names = await self._counterparty_names() if by_agent else {}
+        agents = sorted(
+            (
+                {"name": names.get(href, "Без контрагента"), "total": value}
+                for href, value in by_agent.items()
+            ),
+            key=lambda a: -a["total"],
+        )
+        return {"total": total, "count": count, "daily": daily, "agents": agents}
 
     async def resolve_tracked_agents(self, names: dict[str, str]) -> list[dict]:
         """Resolve a fixed list of counterparties, keyed by the search term

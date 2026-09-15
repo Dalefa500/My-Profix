@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
 <link rel="icon" href="/icons/icon-192.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/styles.css?v=14">
+<link rel="stylesheet" href="/styles.css?v=15">
 </head>
 <body>
 
@@ -48,6 +48,7 @@
   <main id="views">
     <section class="view" data-view="balance"></section>
     <section class="view" data-view="report" hidden></section>
+    <section class="view" data-view="shipments" hidden></section>
     <section class="view" data-view="stock" hidden></section>
     <section class="view" data-view="team" hidden></section>
   </main>
@@ -63,6 +64,15 @@
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 15l4-5 3 3 4-6"/>
       </svg><span>Отчёт</span>
+    </button>
+    <button class="tab" data-tab="shipments" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 16.5V7.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v9"/>
+        <path d="M14 10h3.4a1 1 0 0 1 .8.4l2.4 3.2a1 1 0 0 1 .2.6v2.3"/>
+        <path d="M9.5 16.5h5"/><path d="M3 16.5h1.5"/><path d="M19.5 16.5H21"/>
+        <path d="M7 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/>
+        <path d="M17 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/>
+      </svg><span>Отгрузки</span>
     </button>
     <button class="tab" data-tab="stock" type="button">
       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -81,6 +91,6 @@
 
 <div id="tooltip" class="tooltip" hidden></div>
 
-<script src="/app.js?v=14"></script>
+<script src="/app.js?v=15"></script>
 </body>
 </html>

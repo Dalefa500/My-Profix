@@ -399,7 +399,7 @@ svg { display: block; }
 
 .tabbar {
   position: relative; z-index: 20; flex: none;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   /* Кнопки прижаты к нижнему краю: под подписями остаётся небольшой
      зазор от жестовой полосы iPhone, а не вся её зона целиком. */
   height: calc(var(--tabbar-h) + 8px + env(safe-area-inset-bottom) * .5);

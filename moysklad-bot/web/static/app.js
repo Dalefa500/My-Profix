@@ -8,11 +8,18 @@ const PERIODS = [
   ...Array.from({ length: 11 }, (_, i) => ({ label: `${i + 2} мес.`, days: (i + 2) * 30 })),
 ];
 
-const TABS = { balance: "Баланс", report: "Отчёт", stock: "Остатки", team: "Команда" };
+const TABS = {
+  balance: "Баланс",
+  report: "Отчёт",
+  shipments: "Отгрузки",
+  stock: "Остатки",
+  team: "Команда",
+};
 
 const state = {
   tab: "balance",
   reportDays: 30,
+  shipmentDays: 30,
   teamDays: 30,
   detail: null, // {href, name} когда открыт человек из «Команды»
   stockQuery: "",
@@ -125,7 +132,7 @@ $("#login-form").addEventListener("submit", async (event) => {
 
 /* ── Навигация ────────────────────────────────────────── */
 
-const TAB_ORDER = ["balance", "report", "stock", "team"];
+const TAB_ORDER = ["balance", "report", "shipments", "stock", "team"];
 
 const LEAVING = ["is-leaving", "to-right"];
 
@@ -491,6 +498,7 @@ async function render() {
   try {
     if (state.tab === "balance") await renderBalance(container);
     else if (state.tab === "report") await renderReport(container);
+    else if (state.tab === "shipments") await renderShipments(container);
     else if (state.tab === "stock") await renderStock(container);
     else if (state.detail) await renderTeamDetail(container);
     else await renderTeam(container);
@@ -661,6 +669,64 @@ async function renderReport(container) {
       line.append(el("div", "row__label", row.label));
       line.append(el("div", "row__value row__value--col row__value--income", money(row.income)));
       line.append(el("div", "row__value row__value--col row__value--expense", money(row.expense)));
+      rows.append(line);
+    });
+    card.append(rows);
+  }
+  container.append(card);
+}
+
+/* ── Отгрузки ─────────────────────────────────────────── */
+
+async function renderShipments(container) {
+  const data = await api(`/api/shipments?days=${state.shipmentDays}`);
+
+  resetWithChips(container, state.shipmentDays, (days) => {
+    state.shipmentDays = days;
+    quietEntry = true;
+    render();
+  });
+
+  container.append(
+    tiles([
+      { label: "Отгружено", value: amount(data.total), tone: "income" },
+      { label: "Документов", value: nf.format(data.count), tone: "" },
+    ]),
+  );
+
+  // Кому отгружали — сразу видно, чья доля какая
+  const who = el("div", "card");
+  who.append(el("div", "card__title", "Кому отгружали"));
+  if (!data.agents.length) {
+    who.append(el("div", "empty", "За этот период отгрузок нет"));
+  } else {
+    const rows = el("div", "rows");
+    data.agents.forEach((agent) => {
+      const line = el("div", "row");
+      line.append(el("div", "row__label", agent.name));
+      line.append(el("div", "row__value", money(agent.total)));
+      rows.append(line);
+    });
+    who.append(rows);
+  }
+  container.append(who);
+
+  const card = el("div", "card");
+  card.append(
+    el("div", "card__title", data.granularity === "day" ? "По дням" : "По месяцам"),
+  );
+  if (!data.rows.length) {
+    card.append(el("div", "empty", "За этот период отгрузок нет"));
+  } else {
+    card.append(legend([{ label: "Отгружено", color: "var(--income)" }]));
+    card.append(
+      lineChart(data.rows, [{ key: "total", label: "Отгружено", color: "var(--income)" }]),
+    );
+    const rows = el("div", "rows");
+    [...data.rows].reverse().forEach((row) => {
+      const line = el("div", "row");
+      line.append(el("div", "row__label", row.label));
+      line.append(el("div", "row__value", money(row.total)));
       rows.append(line);
     });
     card.append(rows);
@@ -978,8 +1044,14 @@ function lineChart(rows, series) {
 
   xAxisLabels(frame, rows);
   frame.host.append(svg);
-  attachTooltip(frame, rows, (row) =>
-    `<b>${row.label}</b><br>Доход: ${money(row.income)}<br>Расход: ${money(row.expense)}`,
+  // Подпись собирается из самих серий — так она верна для любого
+  // графика, а не только для доходов с расходами.
+  attachTooltip(
+    frame,
+    rows,
+    (row) =>
+      `<b>${row.label}</b>` +
+      series.map((s) => `<br>${s.label}: ${money(row[s.key])}`).join(""),
   );
   return frame.host;
 }
