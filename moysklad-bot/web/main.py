@@ -337,7 +337,7 @@ async def shipment_detail(
     bonus: dict = {"total": 0.0, "rows": []}
     try:
         balance, bonus = await asyncio.gather(
-            moysklad.get_counterparty_balance(href),
+            moysklad.get_counterparty_balance(href, name),
             moysklad.get_bonus_total(name),
         )
     except MoySkladError as exc:
