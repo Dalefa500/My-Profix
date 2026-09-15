@@ -787,7 +787,8 @@ async function renderShipmentDetail(container) {
     tiles([
       { label: "Отгружено", value: amount(data.total), tone: "income" },
       { label: "Занёс денег", value: amount(data.paid), tone: "pos" },
-      { label: "Долг за период", value: amount(data.debt), tone: data.debt > 0 ? "neg" : "" },
+      // Долг за период не нужен — основной долг виден целиком ниже.
+      { label: "Бонусы всего", value: amount(data.bonus), tone: "" },
     ]),
   );
 
