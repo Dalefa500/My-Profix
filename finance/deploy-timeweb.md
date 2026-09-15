@@ -37,6 +37,29 @@
 
 ---
 
+## 2а. Установка одной командой
+
+Если сервер только что куплен и на нём чистая Ubuntu, всё описанное ниже
+делает один скрипт. Подключитесь по SSH и выполните:
+
+```bash
+apt update && apt install -y git
+git clone -b claude/design-studio-finance-app-cuden1 \
+  https://github.com/Dalefa500/powermix-site.git /opt/line-design-app
+bash /opt/line-design-app/server/install.sh finance.example.com почта@пример.ru
+```
+
+Скрипт поставит Node.js и nginx, настроит автозапуск и HTTPS, закроет
+лишние порты и покажет логины с паролями учредителей.
+
+Посмотреть, что скрипт сделает, ничего не меняя:
+
+```bash
+DRY_RUN=1 bash /opt/line-design-app/server/install.sh finance.example.com
+```
+
+Дальше — те же шаги вручную, если хочется всё контролировать.
+
 ## 3. Подготовка сервера
 
 Подключитесь по SSH (в TimeWeb есть и консоль прямо в браузере):
