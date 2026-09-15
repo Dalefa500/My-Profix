@@ -18,6 +18,12 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # Код берётся с диска, а не из образа: правки подхватываются
+    # перезапуском, без пересборки. Пересобирать нужно только когда
+    # меняются зависимости в requirements.txt.
+    volumes:
+      - ./bot:/app/bot:ro
+      - ./web:/app/web:ro
     <<: *network-workarounds
 
   web:
@@ -28,6 +34,9 @@ services:
       --proxy-headers --forwarded-allow-ips=*
     env_file:
       - .env
+    volumes:
+      - ./bot:/app/bot:ro
+      - ./web:/app/web:ro
     <<: *network-workarounds
 
   caddy:

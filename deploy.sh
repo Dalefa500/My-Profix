@@ -1,5 +1,6 @@
 #!/bin/sh
-# Обновление Profix на сервере одной командой: ./deploy.sh
+# Обновление Profix на сервере: ./deploy.sh
+# Пересборка образа (нужна только при смене зависимостей): ./deploy.sh build
 set -e
 cd "$(dirname "$0")"
 
@@ -8,14 +9,19 @@ git pull
 
 cd moysklad-bot
 
-# BuildKit на каждую сборку спрашивает Docker Hub про базовый образ и
-# упирается в ограничение по числу запросов (429 Too Many Requests).
-# Классический сборщик берёт уже скачанный образ с диска и в интернет
-# за ним не ходит.
-export DOCKER_BUILDKIT=0
+if [ "$1" = "build" ]; then
+    # BuildKit и классический сборщик оба спрашивают Docker Hub про
+    # базовый образ и упираются в ограничение по числу запросов (429).
+    # Если так вышло — просто повторите позже, лимит снимается сам.
+    echo "── Пересобираем образ ──"
+    DOCKER_BUILDKIT=0 docker compose build
+fi
 
-echo "── Собираем и запускаем ──"
-docker compose up -d --build
+echo "── Применяем настройки и перезапускаем ──"
+# Код примонтирован с диска, поэтому образ пересобирать не нужно:
+# контейнеру достаточно перечитать файлы.
+docker compose up -d --no-build
+docker compose restart web moysklad-bot
 
 echo "── Что теперь в контейнере ──"
 docker compose exec -T web grep -om1 'v=[0-9]*' /app/web/static/index.html
