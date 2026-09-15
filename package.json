@@ -1,0 +1,12 @@
+{
+  "name": "studio-finance",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Учёт финансов дизайн-студии: веб-приложение с общим сервером для двух учредителей",
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.js",
+    "user": "node server/manage-users.js"
+  },
+  "engines": { "node": ">=18" }
+}
