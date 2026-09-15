@@ -772,7 +772,9 @@ async function renderShipments(container) {
 
 async function renderShipmentDetail(container) {
   const data = await api(
-    `/api/shipments/detail?days=${state.shipmentDays}&href=${encodeURIComponent(state.detail.href)}`,
+    `/api/shipments/detail?days=${state.shipmentDays}` +
+      `&href=${encodeURIComponent(state.detail.href)}` +
+      `&name=${encodeURIComponent(state.detail.name)}`,
   );
 
   resetWithChips(container, state.shipmentDays, (days) => {
@@ -788,6 +790,39 @@ async function renderShipmentDetail(container) {
       { label: "Долг", value: amount(data.debt), tone: data.debt > 0 ? "neg" : "" },
     ]),
   );
+
+  /* Сколько должен всего — это цифра из «Взаиморасчётов», за всё время
+     работы. Бонусы в неё не входят: в учёте они висят на отдельном
+     контрагенте, а кому выданы — написано только в назначении. Поэтому
+     считаем и показываем оба слагаемых и итог. */
+  const debt = el("div", "card");
+  debt.append(el("div", "card__title", "Долг за всё время"));
+  const debtRows = el("div", "rows");
+
+  const balanceRow = el("div", "row");
+  balanceRow.append(el("div", "row__label", "По взаиморасчётам"));
+  balanceRow.append(el("div", "row__value", money(data.balance)));
+  debtRows.append(balanceRow);
+
+  const bonusRow = el("div", "row");
+  bonusRow.append(el("div", "row__label", "Бонусы покупателю"));
+  bonusRow.append(el("div", "row__value row__value--muted", `− ${money(data.bonus)}`));
+  debtRows.append(bonusRow);
+
+  // Красным — только если после вычета он всё ещё должен
+  const netRow = el("div", "row row--total");
+  netRow.append(el("div", "row__label", "Итого должен"));
+  netRow.append(
+    el(
+      "div",
+      `row__value row__value--${data.balanceNet > 0.01 ? "unpaid" : "paid"}`,
+      money(data.balanceNet),
+    ),
+  );
+  debtRows.append(netRow);
+
+  debt.append(debtRows);
+  container.append(debt);
 
   const goods = el("div", "card");
   goods.append(el("div", "card__title", "Что отгружено"));
@@ -861,6 +896,24 @@ async function renderShipmentDetail(container) {
     cash.append(rows);
   }
   container.append(cash);
+
+  if (data.bonusRows.length) {
+    const bonuses = el("div", "card");
+    bonuses.append(el("div", "card__title", "Выданные бонусы"));
+    const rows = el("div", "rows");
+    data.bonusRows.forEach((row) => {
+      const line = el("div", "row");
+      line.append(el("div", "row__label", _docDate(row.date)));
+      line.append(el("div", "row__value row__value--muted", `− ${money(row.sum)}`));
+      if (row.purpose) {
+        line.classList.add("row--stacked");
+        line.append(el("div", "row__note", row.purpose));
+      }
+      rows.append(line);
+    });
+    bonuses.append(rows);
+    container.append(bonuses);
+  }
 }
 
 /* Фото товара из МойСклада. Грузится лениво и только когда строка

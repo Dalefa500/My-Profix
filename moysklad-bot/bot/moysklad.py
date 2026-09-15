@@ -518,6 +518,64 @@ class MoySkladClient:
             "payments": payments,
         }
 
+    async def get_counterparty_balance(self, agent_href: str) -> float:
+        """Конечный остаток контрагента за всё время — та же цифра, что в
+        «Деньги → Взаиморасчёты». Плюс означает, что должен он нам.
+        """
+        agent_id = agent_href.rstrip("/").rsplit("/", 1)[-1]
+        data = await self._request(
+            "GET", "/report/counterparty", params={"filter": f"agent={agent_href}", "limit": 10}
+        )
+        rows = data.get("rows") if isinstance(data, dict) else data
+        if not isinstance(rows, list):
+            raise MoySkladError("Неожиданный формат ответа /report/counterparty")
+        for row in rows:
+            href = (((row.get("agent") or {}).get("meta") or {}).get("href") or "")
+            if not href or href.rstrip("/").rsplit("/", 1)[-1] == agent_id:
+                return row.get("balance", 0) / 100
+        return 0.0
+
+    async def get_bonus_total(self, agent_name: str) -> dict:
+        """Бонусы, выданные контрагенту. В учёте они висят на отдельном
+        контрагенте («Бонус покупатель»), а кому именно — написано только
+        в назначении платежа, поэтому ищем по имени в тексте.
+        """
+        bonus_agents = [
+            candidate["meta"]["href"]
+            for candidate in await self.search_counterparty("Бонус", limit=10)
+            if "бонус" in (candidate.get("name") or "").lower()
+        ]
+        if not bonus_agents:
+            return {"total": 0.0, "rows": []}
+
+        # Имя контрагента в назначении пишут по-разному («Бонус ба Максуд»,
+        # «Бонус ба Максуд осиё»), поэтому сверяем по значимым словам.
+        words = [w.lower() for w in re.findall(r"\w+", agent_name) if len(w) > 3]
+        if not words:
+            return {"total": 0.0, "rows": []}
+
+        start = datetime(2000, 1, 1)
+        end = datetime.now()
+        total = 0.0
+        rows: list[dict] = []
+        for entity in self.MONEY_OUT:
+            for href in bonus_agents:
+                for row in await self.get_cash_rows(entity, start, end, agent_href=href):
+                    text = (row.get("description") or "").lower()
+                    if not any(word in text for word in words):
+                        continue
+                    amount = row.get("sum", 0) / 100
+                    total += amount
+                    rows.append(
+                        {
+                            "date": (row.get("moment") or "")[:10],
+                            "sum": amount,
+                            "purpose": row.get("description") or "",
+                        }
+                    )
+        rows.sort(key=lambda r: r["date"], reverse=True)
+        return {"total": total, "rows": rows}
+
     async def get_product_image(self, assortment_href: str) -> tuple[bytes, str] | None:
         """Миниатюра товара. Список картинок и сам файл лежат по разным
         адресам: сперва спрашиваем список, потом скачиваем миниатюру.

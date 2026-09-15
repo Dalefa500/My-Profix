@@ -313,7 +313,7 @@ async def shipments(request: Request, days: int = Query(30, ge=1, le=400)) -> di
 
 @app.get("/api/shipments/detail", dependencies=authed)
 async def shipment_detail(
-    request: Request, href: str, days: int = Query(30, ge=1, le=400)
+    request: Request, href: str, name: str = "", days: int = Query(30, ge=1, le=400)
 ) -> dict:
     """Что именно отгрузили одному контрагенту за период и что оплачено."""
     # href приходит с клиента и уходит в фильтр запроса — принимаем только
@@ -325,11 +325,21 @@ async def shipment_detail(
     start, end, _granularity = _period(days)
 
     try:
-        data = await moysklad.get_shipment_detail(href, start, end)
+        data, balance, bonus = await asyncio.gather(
+            moysklad.get_shipment_detail(href, start, end),
+            moysklad.get_counterparty_balance(href),
+            moysklad.get_bonus_total(name),
+        )
     except MoySkladError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
     return {
+        # Долг за всё время, как во «Взаиморасчётах», и отдельно бонусы:
+        # они висят на своём контрагенте и в этот остаток не попадают.
+        "balance": balance,
+        "bonus": bonus["total"],
+        "balanceNet": balance - bonus["total"],
+        "bonusRows": bonus["rows"][:40],
         "total": data["total"],
         "paid": data["paid"],
         "debt": data["debt"],

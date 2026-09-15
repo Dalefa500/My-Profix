@@ -577,7 +577,15 @@ svg { display: block; }
   border-color: rgba(63, 191, 127, .4);
 }
 .row__value--paid { color: var(--good); }
+/* Итоговая строка расчёта — крупнее и с более заметной чертой */
+.row--total {
+  border-top: 1px solid rgba(255, 255, 255, .22);
+  font-size: 18px;
+}
+.row--total .row__label { color: var(--ink); }
 .row__value--unpaid { color: var(--warn); }
+/* Вычет в расчёте — не поступление денег, цветом не выделяем */
+.row__value--muted { color: var(--ink-3); }
 
 /* Сигнал «на исходе»: цвет + точка + подпись, чтобы читался и при
    ярком солнце, и при дальтонизме — не одним оттенком. */
