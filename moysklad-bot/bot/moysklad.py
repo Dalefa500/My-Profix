@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -9,6 +10,15 @@ import httpx
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.moysklad.ru/api/remap/1.2"
+
+
+# В каталоге остались хвосты вроде «Клей профикс 800 новый 2018» —
+# метка давней переоценки, в отчётах она только мешает читать.
+_STALE_SUFFIX = re.compile(r"\s*новый\s*20\d\d\s*", re.IGNORECASE)
+
+
+def clean_product_name(name: str) -> str:
+    return _STALE_SUFFIX.sub(" ", name).strip()
 
 
 class MoySkladError(RuntimeError):
@@ -369,6 +379,18 @@ class MoySkladClient:
             "agents": agents,
         }
 
+    async def _uom_names(self) -> dict[str, str]:
+        """href -> название единицы измерения. В раскрытом товаре единица
+        приходит ссылкой, а справочник маленький — забираем целиком.
+        """
+        names: dict[str, str] = {}
+        data = await self._request("GET", "/entity/uom", params={"limit": 1000})
+        for row in data.get("rows", []):
+            href = (row.get("meta") or {}).get("href")
+            if href:
+                names[href] = row.get("name", "")
+        return names
+
     async def get_shipment_detail(
         self, agent_href: str, start: datetime, end: datetime
     ) -> dict:
@@ -422,18 +444,21 @@ class MoySkladClient:
                 for position in ((row.get("positions") or {}).get("rows") or []):
                     item = position.get("assortment") or {}
                     name = item.get("name", "?")
+                    href = (item.get("meta") or {}).get("href") or ""
                     quantity = position.get("quantity", 0) or 0
                     price = (position.get("price", 0) or 0) / 100
                     discount = position.get("discount", 0) or 0
                     line = quantity * price * (1 - discount / 100)
+                    # Складываем по самому товару, а не по названию: разные
+                    # позиции могут называться одинаково.
                     entry = goods.setdefault(
-                        name,
+                        href or name,
                         {
-                            "name": name,
+                            "name": clean_product_name(name),
                             "qty": 0.0,
                             "sum": 0.0,
-                            "uom": ((item.get("uom") or {}).get("name") or ""),
-                            "href": ((item.get("meta") or {}).get("href") or ""),
+                            "uom_href": ((item.get("uom") or {}).get("meta") or {}).get("href", ""),
+                            "href": href,
                         },
                     )
                     entry["qty"] += quantity
@@ -442,10 +467,12 @@ class MoySkladClient:
                 break
             offset += limit
 
+        uoms = await self._uom_names() if goods else {}
         for entry in goods.values():
             # Цена за единицу — средняя по периоду: одна и та же позиция
             # могла уходить по разной цене.
             entry["price"] = entry["sum"] / entry["qty"] if entry["qty"] else 0.0
+            entry["uom"] = uoms.get(entry.pop("uom_href", ""), "")
 
         return {
             "total": total,
