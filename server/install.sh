@@ -126,6 +126,13 @@ else
   git clone --branch "$BRANCH" "$REPO" "$APP_DIR"
 fi
 run chown -R "${APP_USER}:${APP_USER}" "$APP_DIR"
+# Код принадлежит пользователю приложения, а обновления запускаются от root.
+# Без этой отметки git отказывается работать с «чужим» каталогом.
+if [ "$DRY_RUN" = "1" ]; then
+  note "+ git config --global --add safe.directory ${APP_DIR}"
+elif ! git config --global --get-all safe.directory 2>/dev/null | grep -qx "$APP_DIR"; then
+  git config --global --add safe.directory "$APP_DIR"
+fi
 
 say "5/9 Готовим папку для данных"
 run mkdir -p "$APP_DATA"
