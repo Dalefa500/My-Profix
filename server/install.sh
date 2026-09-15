@@ -25,6 +25,10 @@ APT_OPTS="-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 DOMAIN="${1:-}"
 EMAIL="${2:-}"
 DRY_RUN="${DRY_RUN:-0}"
+# AUTH_DISABLED=1 — приложение открывается без логина и пароля.
+# Значение попадает в настройки службы, так что запуск скрипта с другим
+# значением переключает режим.
+AUTH_DISABLED="${AUTH_DISABLED:-0}"
 
 REPO="${REPO:-https://github.com/Dalefa500/powermix-site.git}"
 BRANCH="${BRANCH:-claude/design-studio-finance-app-cuden1}"
@@ -144,6 +148,7 @@ ExecStart=/usr/bin/node server/server.js
 Environment=HOST=127.0.0.1
 Environment=PORT=${APP_PORT}
 Environment=DATA_DIR=${APP_DATA}
+Environment=AUTH_DISABLED=${AUTH_DISABLED}
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
@@ -236,7 +241,13 @@ else
   note "Приложение: http://$(hostname -I 2>/dev/null | awk '{print $1}')/finance/"
 fi
 
-if [ "$DRY_RUN" != "1" ] && [ -f "${APP_DATA}/ПАРОЛИ-ПРИ-ПЕРВОМ-ЗАПУСКЕ.txt" ]; then
+if [ "$AUTH_DISABLED" = "1" ]; then
+  note "Вход отключён: приложение откроется без логина и пароля."
+  note "Любой, кто знает адрес сервера, увидит и сможет изменить данные."
+  note "Включить обратно: AUTH_DISABLED=0 bash ${APP_DIR}/server/install.sh"
+fi
+
+if [ "$AUTH_DISABLED" != "1" ] && [ "$DRY_RUN" != "1" ] && [ -f "${APP_DATA}/ПАРОЛИ-ПРИ-ПЕРВОМ-ЗАПУСКЕ.txt" ]; then
   say "Логины и пароли учредителей (смените их после первого входа)"
   cat "${APP_DATA}/ПАРОЛИ-ПРИ-ПЕРВОМ-ЗАПУСКЕ.txt"
 fi

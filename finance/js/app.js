@@ -215,14 +215,15 @@ function openMoreMenu() {
       <a class="row" href="#/clients" data-close="1"><div class="row__main"><span class="row__title">Клиенты</span></div><span class="row__meta">›</span></a>
       <a class="row" href="#/payments" data-close="1"><div class="row__main"><span class="row__title">Платежи</span><span class="row__subtitle">Что получить и что выплатить</span></div><span class="row__meta">›</span></a>
       <a class="row" href="#/settings" data-close="1"><div class="row__main"><span class="row__title">Настройки</span><span class="row__subtitle">Курс, категории, пароль</span></div><span class="row__meta">›</span></a>
-      <div class="row"><div class="row__main"><span class="row__title">${user?.name || ''}</span><span class="row__subtitle">${user?.login || ''}</span></div>
-        <button class="btn btn--sm" data-act="logout">Выйти</button></div>
+      <div class="row"><div class="row__main"><span class="row__title">${user?.name || ''}</span>
+        <span class="row__subtitle">${store.isAuthDisabled() ? 'вход в приложение отключён' : (user?.login || '')}</span></div>
+        ${raw(store.isAuthDisabled() ? '' : '<button class="btn btn--sm" data-act="logout">Выйти</button>')}</div>
     </div>`,
     onMount: (panel) => {
-      panel.querySelector('[data-act="logout"]').onclick = async () => {
+      panel.querySelector('[data-act="logout"]')?.addEventListener('click', async () => {
         closeSheet();
         await store.signOut();
-      };
+      });
     },
   });
 }
@@ -264,7 +265,7 @@ function startApp() {
 }
 
 store.subscribe((_, reason) => {
-  if (reason === 'auth' && !store.getUser()) {
+  if (reason === 'auth' && !store.getUser() && !store.isAuthDisabled()) {
     renderAuth();
     return;
   }

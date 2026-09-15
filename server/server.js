@@ -16,6 +16,12 @@ import {
   loadUsers, createUser, changePassword, setName, loginBlocked,
 } from './auth.js';
 
+// Вход можно отключить: тогда приложение открывается сразу, без логина
+// и пароля. Включается обратно снятием этой настройки — данные и учётные
+// записи при этом сохраняются.
+const AUTH_DISABLED = process.env.AUTH_DISABLED === '1';
+const OPEN_USER = { id: 'usr_open', login: 'open', name: 'Студия' };
+
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = path.resolve(new URL('..', import.meta.url).pathname);
@@ -131,6 +137,10 @@ async function currentUser(req) {
 async function handleApi(req, res, url) {
   const route = url.pathname.replace(/^\/api/, '') || '/';
 
+  if (AUTH_DISABLED && (route === '/login' || route === '/logout') && req.method === 'POST') {
+    return send(res, 200, { user: OPEN_USER, authDisabled: true });
+  }
+
   if (route === '/login' && req.method === 'POST') {
     const ip = clientIp(req);
     if (loginBlocked(ip)) {
@@ -148,11 +158,11 @@ async function handleApi(req, res, url) {
     return send(res, 200, { ok: true }, { 'Set-Cookie': `${COOKIE}=; Path=/; HttpOnly; Max-Age=0` });
   }
 
-  const user = await currentUser(req);
+  const user = AUTH_DISABLED ? OPEN_USER : await currentUser(req);
   if (!user) return send(res, 401, { error: 'Требуется вход' });
 
   if (route === '/session' && req.method === 'GET') {
-    return send(res, 200, { user: publicUser(user) });
+    return send(res, 200, { user: publicUser(user), authDisabled: AUTH_DISABLED });
   }
 
   if (route === '/state' && req.method === 'GET') {
@@ -192,6 +202,9 @@ async function handleApi(req, res, url) {
   }
 
   if (route === '/users' && req.method === 'POST') {
+    if (AUTH_DISABLED) {
+      return send(res, 400, { error: 'Вход в приложение сейчас отключён' });
+    }
     const body = await readBody(req);
     if (body.id !== user.id) {
       return send(res, 403, { error: 'Можно менять только своё имя' });
@@ -201,6 +214,9 @@ async function handleApi(req, res, url) {
   }
 
   if (route === '/password' && req.method === 'POST') {
+    if (AUTH_DISABLED) {
+      return send(res, 400, { error: 'Вход в приложение сейчас отключён — пароль не используется' });
+    }
     const body = await readBody(req);
     try {
       await changePassword(user, body.currentPassword, body.newPassword);
@@ -291,5 +307,8 @@ await bootstrapUsers();
 await loadState();
 server.listen(PORT, HOST, () => {
   console.log(`Line Design — финансы студии: http://localhost:${PORT}/finance/`);
+  if (AUTH_DISABLED) {
+    console.log('ВНИМАНИЕ: вход отключён — приложение открыто всем, кто знает адрес.');
+  }
   console.log(`Данные хранятся в ${DATA_DIR}`);
 });

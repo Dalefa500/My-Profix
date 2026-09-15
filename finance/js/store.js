@@ -8,11 +8,15 @@
 import { emptyData, normalizeData, applyOps, op } from './ops.js';
 
 const CACHE_KEY = 'studio-finance/cache/v2';
+const NAME_KEY = 'studio-finance/name';
 const POLL_INTERVAL = 8000;
 
 let data = emptyData();
 let rev = 0;
 let user = null;
+// Когда вход отключён, приложение открывается сразу. Имя того, кто работает,
+// хранится в браузере — только чтобы было видно, кто внёс операцию.
+let authDisabled = false;
 let queue = [];
 let status = 'loading'; // loading | online | saving | offline
 let pollTimer = null;
@@ -31,7 +35,32 @@ export function getState() {
 }
 
 export function getUser() {
+  if (authDisabled) {
+    return { ...(user || {}), name: localName() || 'Учредитель', open: true };
+  }
   return user;
+}
+
+export function isAuthDisabled() {
+  return authDisabled;
+}
+
+export function localName() {
+  try {
+    return localStorage.getItem(NAME_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setLocalName(name) {
+  try {
+    localStorage.setItem(NAME_KEY, String(name || '').trim());
+  } catch {
+    /* приватный режим — имя просто не сохранится */
+  }
+  emit('change');
+  return getUser();
 }
 
 export function getStatus() {
@@ -124,6 +153,7 @@ export async function checkSession() {
   try {
     const payload = await api('/session');
     user = payload.user || null;
+    authDisabled = Boolean(payload.authDisabled);
     return user;
   } catch (error) {
     if (error.code === 401) return null;
@@ -135,6 +165,7 @@ export async function checkSession() {
 export async function signIn(login, password) {
   const payload = await api('/login', { method: 'POST', body: { login, password } });
   user = payload.user;
+  authDisabled = Boolean(payload.authDisabled);
   clearCache();
   data = emptyData();
   rev = 0;

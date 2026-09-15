@@ -61,8 +61,17 @@ function openCategoryForm() {
 function openNameForm(user) {
   openForm({
     title: 'Как вас подписывать',
+    intro: store.isAuthDisabled()
+      ? 'Имя хранится в этом браузере и подставляется в операции, которые вы вносите.'
+      : '',
     fields: [{ name: 'name', label: 'Имя', type: 'text', required: true, value: user?.name || '', wide: true }],
     onSubmit: async (values) => {
+      if (store.isAuthDisabled()) {
+        store.setLocalName(values.name);
+        toast('Имя сохранено', 'good');
+        refresh();
+        return true;
+      }
       try {
         await store.saveUserName(user.id, values.name);
         await store.pull();
@@ -101,6 +110,7 @@ export default function settings() {
   const state = store.getState();
   const user = store.getUser();
   const status = store.getStatus();
+  const openMode = store.isAuthDisabled();
   const groups = expenseGroups(state.settings);
   const planned = state.planned.filter((item) => item.status !== 'paid');
 
@@ -156,20 +166,24 @@ export default function settings() {
       ${raw(sectionTitle('Учётная запись'))}
       <div class="list">
         <div class="row">
-          <div class="row__main"><span class="row__subtitle">Вы вошли как</span>
-            <span class="row__title">${user?.name || ''} · ${user?.login || ''}</span></div>
+          <div class="row__main"><span class="row__subtitle">${openMode ? 'Операции подписываются именем' : 'Вы вошли как'}</span>
+            <span class="row__title">${user?.name || ''}${openMode ? '' : ` · ${user?.login || ''}`}</span></div>
           <button class="btn btn--sm" data-act="name">Имя</button>
         </div>
-        <div class="row">
-          <div class="row__main"><span class="row__subtitle">Пароль</span><span class="row__title">••••••••</span></div>
-          <button class="btn btn--sm" data-act="password">Сменить</button>
-        </div>
+        ${openMode ? '' : raw(html`
+          <div class="row">
+            <div class="row__main"><span class="row__subtitle">Пароль</span><span class="row__title">••••••••</span></div>
+            <button class="btn btn--sm" data-act="password">Сменить</button>
+          </div>`)}
         <div class="row">
           <div class="row__main"><span class="row__subtitle">Синхронизация</span><span class="row__title">${statusLabel}</span></div>
         </div>
       </div>
       <p class="muted">Данные хранятся на сервере студии. Оба учредителя видят одни и те же цифры.</p>
-      <button class="btn btn--block" data-act="logout">Выйти</button>
+      ${openMode ? raw(html`
+        <p class="form__error">Вход в приложение отключён: страницу может открыть любой, кто знает адрес сервера.
+          Включается обратно на сервере — см. finance/README.md.</p>`)
+        : raw(html`<button class="btn btn--block" data-act="logout">Выйти</button>`)}
     </div>`;
 
   return {
@@ -199,11 +213,11 @@ export default function settings() {
         };
       });
       root.querySelector('[data-act="name"]').onclick = () => openNameForm(user);
-      root.querySelector('[data-act="password"]').onclick = () => openPasswordForm();
-      root.querySelector('[data-act="logout"]').onclick = async () => {
+      root.querySelector('[data-act="password"]')?.addEventListener('click', () => openPasswordForm());
+      root.querySelector('[data-act="logout"]')?.addEventListener('click', async () => {
         const ok = await confirmDialog('Выйти из приложения?', { confirmLabel: 'Выйти', tone: 'danger' });
         if (ok) await store.signOut();
-      };
+      });
     },
   };
 }
