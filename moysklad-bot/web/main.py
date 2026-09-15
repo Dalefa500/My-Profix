@@ -340,7 +340,7 @@ async def shipment_detail(
     bonus: dict = {"total": 0.0, "rows": []}
     try:
         alltime, bonus = await asyncio.gather(
-            moysklad.get_agent_totals(href, datetime(2000, 1, 1), end),
+            moysklad.get_agent_totals_cached(href, end),
             moysklad.get_bonus_total(name),
         )
     except MoySkladError as exc:

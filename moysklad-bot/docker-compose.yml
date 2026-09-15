@@ -24,6 +24,7 @@ services:
     volumes:
       - ./bot:/app/bot:ro
       - ./web:/app/web:ro
+      - app-data:/app/data
     <<: *network-workarounds
 
   web:
@@ -37,6 +38,8 @@ services:
     volumes:
       - ./bot:/app/bot:ro
       - ./web:/app/web:ro
+      # Посчитанные итоги по контрагентам переживают перезапуск
+      - app-data:/app/data
     <<: *network-workarounds
 
   caddy:
@@ -57,3 +60,4 @@ services:
 volumes:
   caddy-data:
   caddy-config:
+  app-data:

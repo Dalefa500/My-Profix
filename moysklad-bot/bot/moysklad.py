@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -20,6 +22,35 @@ _STALE_SUFFIX = re.compile(r"\s*нов(?:ый|ая|ое|ые)\s*20\d\d\s*", re.I
 
 def clean_product_name(name: str) -> str:
     return _STALE_SUFFIX.sub(" ", name).strip()
+
+
+# Итоги за всё время лежат на диске: перечитывать всю историю на каждое
+# открытие карточки слишком дорого. Раз в неделю база пересчитывается —
+# этого хватает, чтобы подхватить правки задним числом.
+TOTALS_PATH = os.environ.get("TOTALS_CACHE", "/app/data/agent-totals.json")
+BASE_MAX_AGE_DAYS = 7
+
+
+def _load_totals() -> dict:
+    try:
+        with open(TOTALS_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_totals(data: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(TOTALS_PATH) or ".", exist_ok=True)
+        # Пишем через временный файл: оборванная запись не должна
+        # оставить после себя испорченный JSON.
+        tmp = f"{TOTALS_PATH}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, TOTALS_PATH)
+    except OSError as exc:
+        logger.warning("Не удалось сохранить итоги: %s", exc)
 
 
 class MoySkladError(RuntimeError):
@@ -541,6 +572,44 @@ class MoySkladClient:
             if "/counterparty/" in href:
                 return href.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
         return ""
+
+    async def get_agent_totals_cached(self, agent_href: str, end: datetime) -> dict:
+        """То же за всё время, но без перечитывания истории на каждое
+        открытие. Один раз считаем базу по вчерашний день включительно и
+        кладём на диск; дальше добавляем только документы с этого рубежа.
+        Раз в неделю база пересчитывается заново — на случай, если задним
+        числом поправили старый документ.
+        """
+        agent_id = agent_href.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+        boundary = datetime.combine(end.date(), datetime.min.time())
+        store = _load_totals()
+        entry = store.get(agent_id)
+
+        stale = True
+        if entry:
+            try:
+                age = boundary - datetime.fromisoformat(entry["boundary"])
+                stale = age > timedelta(days=BASE_MAX_AGE_DAYS)
+            except (KeyError, ValueError):
+                stale = True
+
+        if stale:
+            base = await self.get_agent_totals(agent_href, datetime(2000, 1, 1), boundary)
+            entry = {
+                "shipped": base["shipped"],
+                "paid": base["paid"],
+                "boundary": boundary.isoformat(),
+            }
+            store[agent_id] = entry
+            _save_totals(store)
+            logger.info("Пересчитана база по контрагенту %s", agent_id)
+
+        since = datetime.fromisoformat(entry["boundary"])
+        delta = await self.get_agent_totals(agent_href, since, end)
+        return {
+            "shipped": entry["shipped"] + delta["shipped"],
+            "paid": entry["paid"] + delta["paid"],
+        }
 
     async def get_agent_totals(
         self, agent_href: str, start: datetime, end: datetime
