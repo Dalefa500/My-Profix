@@ -537,6 +537,15 @@ svg { display: block; }
    сколько и почём. Название товара бывает длинным, в одну строку
    с цифрами не помещается. */
 .row--stacked { flex-wrap: wrap; }
+/* Фото товара — маленькое, но узнаваемое: мешок от мешка отличить */
+.row__photo {
+  flex: none;
+  width: 42px; height: 42px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid var(--hairline);
+}
 .row--stacked .row__label { flex: 1 1 60%; }
 .row__note {
   flex: 1 0 100%;
@@ -544,6 +553,13 @@ svg { display: block; }
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
+.row__note--debt { color: var(--warn); }
+/* Нижняя строка строки-документа: метка оплаты и дата рядом */
+.row__foot {
+  flex: 1 0 100%;
+  display: flex; align-items: center; gap: 8px;
+}
+.row__foot .row__note { flex: 0 1 auto; }
 
 /* Оплачено или нет — словом, а не только цветом: читается и при
    ярком солнце, и при дальтонизме. */

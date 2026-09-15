@@ -327,29 +327,47 @@ class MoySkladClient:
         per-day sums and a per-counterparty breakdown.
         """
         daily: dict[str, float] = {}
-        by_agent: dict[str, float] = {}
+        by_agent: dict[str, dict[str, float]] = {}
         total = 0.0
+        paid = 0.0
         count = 0
         for row in await self._documents_between("demand", start, end):
             amount = row.get("sum", 0) / 100
+            payed = row.get("payedSum", 0) / 100
             total += amount
+            paid += payed
             count += 1
             day = (row.get("moment") or "")[:10]
             if day:
                 daily[day] = daily.get(day, 0.0) + amount
             href = ((row.get("agent") or {}).get("meta") or {}).get("href")
             if href:
-                by_agent[href] = by_agent.get(href, 0.0) + amount
+                entry = by_agent.setdefault(href, {"total": 0.0, "paid": 0.0})
+                entry["total"] += amount
+                entry["paid"] += payed
 
         names = await self._counterparty_names() if by_agent else {}
         agents = sorted(
             (
-                {"name": names.get(href, "Без контрагента"), "href": href, "total": value}
+                {
+                    "name": names.get(href, "Без контрагента"),
+                    "href": href,
+                    "total": value["total"],
+                    "paid": value["paid"],
+                    "debt": value["total"] - value["paid"],
+                }
                 for href, value in by_agent.items()
             ),
             key=lambda a: -a["total"],
         )
-        return {"total": total, "count": count, "daily": daily, "agents": agents}
+        return {
+            "total": total,
+            "paid": paid,
+            "debt": total - paid,
+            "count": count,
+            "daily": daily,
+            "agents": agents,
+        }
 
     async def get_shipment_detail(
         self, agent_href: str, start: datetime, end: datetime
@@ -375,7 +393,7 @@ class MoySkladClient:
                 "/entity/demand",
                 params={
                     "filter": ";".join(filter_parts),
-                    "expand": "positions.assortment",
+                    "expand": "positions.assortment,payments",
                     "limit": limit,
                     "offset": offset,
                 },
@@ -386,12 +404,19 @@ class MoySkladClient:
                 payed = row.get("payedSum", 0) / 100
                 total += amount
                 paid += payed
+                # Когда оплатили: берём самый поздний из привязанных платежей
+                payments = [
+                    (payment.get("moment") or "")[:10]
+                    for payment in (row.get("payments") or [])
+                    if payment.get("moment")
+                ]
                 docs.append(
                     {
                         "date": (row.get("moment") or "")[:10],
                         "number": row.get("name", ""),
                         "sum": amount,
                         "paid": payed,
+                        "paidAt": max(payments) if payments else "",
                     }
                 )
                 for position in ((row.get("positions") or {}).get("rows") or []):
@@ -408,6 +433,7 @@ class MoySkladClient:
                             "qty": 0.0,
                             "sum": 0.0,
                             "uom": ((item.get("uom") or {}).get("name") or ""),
+                            "href": ((item.get("meta") or {}).get("href") or ""),
                         },
                     )
                     entry["qty"] += quantity
@@ -428,6 +454,26 @@ class MoySkladClient:
             "goods": sorted(goods.values(), key=lambda g: -g["sum"]),
             "docs": sorted(docs, key=lambda d: d["date"], reverse=True),
         }
+
+    async def get_product_image(self, assortment_href: str) -> tuple[bytes, str] | None:
+        """Миниатюра товара. Список картинок и сам файл лежат по разным
+        адресам: сперва спрашиваем список, потом скачиваем миниатюру.
+        Возвращает None, если фото у товара нет.
+        """
+        path = assortment_href[len(BASE_URL) :]
+        data = await self._request("GET", f"{path}/images", params={"limit": 1})
+        rows = data.get("rows") or []
+        if not rows:
+            return None
+        miniature = (rows[0].get("miniature") or {}).get("href")
+        if not miniature:
+            return None
+        # Ссылка на файл ведёт на хранилище и сама по себе уже подписана;
+        # httpx снимет заголовок авторизации на чужом хосте.
+        response = await self._client.get(miniature, follow_redirects=True)
+        if response.status_code >= 400:
+            return None
+        return response.content, response.headers.get("content-type", "image/jpeg")
 
     async def resolve_tracked_agents(self, names: dict[str, str]) -> list[dict]:
         """Resolve a fixed list of counterparties, keyed by the search term

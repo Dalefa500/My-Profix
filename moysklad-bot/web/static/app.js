@@ -708,7 +708,8 @@ async function renderShipments(container) {
   container.append(
     tiles([
       { label: "Отгружено", value: amount(data.total), tone: "income" },
-      { label: "Документов", value: nf.format(data.count), tone: "" },
+      { label: "Оплачено", value: amount(data.paid), tone: "pos" },
+      { label: "Не оплачено", value: amount(data.debt), tone: data.debt > 0 ? "neg" : "" },
     ]),
   );
 
@@ -725,6 +726,16 @@ async function renderShipments(container) {
       line.append(el("div", "person__name", agent.name));
       line.append(el("div", "person__total", money(agent.total)));
       line.append(chevron());
+      // Сразу видно, кто рассчитался, а кто должен
+      const owes = agent.debt > 0.01;
+      line.classList.add("row--stacked");
+      line.append(
+        el(
+          "div",
+          `row__note${owes ? " row__note--debt" : ""}`,
+          owes ? `не оплачено ${money(agent.debt)}` : "оплачено полностью",
+        ),
+      );
       line.addEventListener("click", () => {
         state.detail = { href: agent.href, name: agent.name };
         views.scrollTop = 0;
@@ -786,6 +797,7 @@ async function renderShipmentDetail(container) {
     const rows = el("div", "rows");
     data.goods.forEach((item) => {
       const line = el("div", "row row--stacked");
+      if (item.href) line.append(productPhoto(item.href));
       line.append(el("div", "row__label", item.name));
       const sum = el("div", "row__value", money(item.sum));
       line.append(sum);
@@ -810,20 +822,47 @@ async function renderShipmentDetail(container) {
     const rows = el("div", "rows");
     data.docs.forEach((doc) => {
       const line = el("div", "row");
-      line.append(el("div", "row__label", `${_docDate(doc.date)}${doc.number ? `  №${doc.number}` : ""}`));
       const paidOff = doc.sum - doc.paid < 0.01;
+      const label = el("div", "row__label", `${_docDate(doc.date)}${doc.number ? `  №${doc.number}` : ""}`);
+      line.append(label);
       // Цветом и словом сразу: оплачено — зелёным, нет — тревожным
       line.append(
         el("div", `row__value row__value--${paidOff ? "paid" : "unpaid"}`, money(doc.sum)),
       );
-      line.append(
-        el("div", `row__tag${paidOff ? " row__tag--paid" : ""}`, paidOff ? "оплачено" : "не оплачено"),
+      const tag = el(
+        "div",
+        `row__tag${paidOff ? " row__tag--paid" : ""}`,
+        paidOff ? "оплачено" : "не оплачено",
       );
+      if (doc.paidAt) {
+        // Метка и дата оплаты — одной нижней строкой, чтобы строка
+        // документа не растягивалась на три уровня.
+        line.classList.add("row--stacked");
+        const foot = el("div", "row__foot");
+        foot.append(tag);
+        foot.append(el("div", "row__note", `оплачено ${_docDate(doc.paidAt)}`));
+        line.append(foot);
+      } else {
+        line.append(tag);
+      }
       rows.append(line);
     });
     docs.append(rows);
   }
   container.append(docs);
+}
+
+/* Фото товара из МойСклада. Грузится лениво и только когда строка
+   на экране; если фото у товара нет — картинка молча убирается, чтобы
+   не оставлять пустую рамку. */
+function productPhoto(href) {
+  const img = el("img", "row__photo");
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.alt = "";
+  img.src = `/api/product-image?href=${encodeURIComponent(href)}`;
+  img.addEventListener("error", () => img.remove());
+  return img;
 }
 
 // 2026-09-13 -> 13.09

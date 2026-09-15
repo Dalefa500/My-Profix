@@ -303,6 +303,8 @@ async def shipments(request: Request, days: int = Query(30, ge=1, le=400)) -> di
     return {
         "granularity": granularity,
         "total": data["total"],
+        "paid": data["paid"],
+        "debt": data["debt"],
         "count": data["count"],
         "rows": rows,
         "agents": data["agents"][:25],
@@ -334,6 +336,29 @@ async def shipment_detail(
         "goods": data["goods"][:60],
         "docs": data["docs"][:60],
     }
+
+
+@app.get("/api/product-image", dependencies=authed)
+async def product_image(request: Request, href: str) -> Response:
+    """Фото товара из МойСклада. Файл отдаётся только по токену, поэтому
+    приложение забирает его через нас, а не напрямую.
+    """
+    if not href.startswith(f"{BASE_URL}/entity/"):
+        raise HTTPException(status_code=400, detail="Неизвестный товар")
+
+    moysklad: MoySkladClient = request.app.state.moysklad
+    try:
+        found = await moysklad.get_product_image(href)
+    except MoySkladError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    if not found:
+        raise HTTPException(status_code=404, detail="У товара нет фото")
+
+    content, media_type = found
+    # Картинка товара меняется редко — пусть телефон держит её у себя.
+    return Response(
+        content, media_type=media_type, headers={"Cache-Control": "private, max-age=604800"}
+    )
 
 
 @app.get("/api/stock", dependencies=authed)
