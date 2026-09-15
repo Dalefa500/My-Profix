@@ -5,7 +5,17 @@ set -e
 cd "$(dirname "$0")"
 
 echo "── Забираем свежий код ──"
+before=$(git rev-parse HEAD)
 git pull
+after=$(git rev-parse HEAD)
+
+# git pull может обновить и сам этот скрипт, а оболочка дочитывает файл
+# по ходу выполнения — и дальше пойдут вперемешку старые и новые строки.
+# Поэтому после обновления перезапускаем себя, уже свежего, один раз.
+if [ "$before" != "$after" ] && [ -z "$DEPLOY_REEXEC" ]; then
+    echo "── Скрипт обновился, перезапускаю его ──"
+    DEPLOY_REEXEC=1 exec "$0" "$@"
+fi
 
 cd moysklad-bot
 
