@@ -69,6 +69,10 @@ const amount = (n) => nf.format(Math.round(n || 0));
 // Знак суммы: минус красным, плюс зелёным, ноль обычным.
 const sign = (n) => (n < 0 ? "neg" : n > 0 ? "pos" : "");
 const qty = (n) => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 }).format(n || 0);
+// Цена за единицу — с копейками: округление до целого здесь заметно
+// врёт (48,50 превращается в 49).
+const unitPrice = (n) =>
+  `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(n || 0)} с.`;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -498,7 +502,10 @@ async function render() {
   try {
     if (state.tab === "balance") await renderBalance(container);
     else if (state.tab === "report") await renderReport(container);
-    else if (state.tab === "shipments") await renderShipments(container);
+    else if (state.tab === "shipments") {
+      if (state.detail) await renderShipmentDetail(container);
+      else await renderShipments(container);
+    }
     else if (state.tab === "stock") await renderStock(container);
     else if (state.detail) await renderTeamDetail(container);
     else await renderTeam(container);
@@ -551,6 +558,17 @@ function chips(current, onPick) {
     if (at > 0) wrap.scrollLeft = all[Math.floor(at / 4) * 4].offsetLeft;
   });
   return wrap;
+}
+
+// Галочка «вправо» в конце строки, по которой можно провалиться внутрь
+function chevron() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", "chev");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M9 5l7 7-7 7");
+  svg.append(path);
+  return svg;
 }
 
 function tiles(items) {
@@ -702,9 +720,16 @@ async function renderShipments(container) {
   } else {
     const rows = el("div", "rows");
     data.agents.forEach((agent) => {
-      const line = el("div", "row");
-      line.append(el("div", "row__label", agent.name));
-      line.append(el("div", "row__value", money(agent.total)));
+      const line = el("button", "row row--tap person");
+      line.type = "button";
+      line.append(el("div", "person__name", agent.name));
+      line.append(el("div", "person__total", money(agent.total)));
+      line.append(chevron());
+      line.addEventListener("click", () => {
+        state.detail = { href: agent.href, name: agent.name };
+        views.scrollTop = 0;
+        render();
+      });
       rows.append(line);
     });
     who.append(rows);
@@ -733,6 +758,76 @@ async function renderShipments(container) {
   }
   container.append(card);
 }
+
+async function renderShipmentDetail(container) {
+  const data = await api(
+    `/api/shipments/detail?days=${state.shipmentDays}&href=${encodeURIComponent(state.detail.href)}`,
+  );
+
+  resetWithChips(container, state.shipmentDays, (days) => {
+    state.shipmentDays = days;
+    quietEntry = true;
+    render();
+  });
+
+  container.append(
+    tiles([
+      { label: "Отгружено", value: amount(data.total), tone: "income" },
+      { label: "Оплачено", value: amount(data.paid), tone: "pos" },
+      { label: "Долг", value: amount(data.debt), tone: data.debt > 0 ? "neg" : "" },
+    ]),
+  );
+
+  const goods = el("div", "card");
+  goods.append(el("div", "card__title", "Что отгружено"));
+  if (!data.goods.length) {
+    goods.append(el("div", "empty", "За этот период отгрузок нет"));
+  } else {
+    const rows = el("div", "rows");
+    data.goods.forEach((item) => {
+      const line = el("div", "row row--stacked");
+      line.append(el("div", "row__label", item.name));
+      const sum = el("div", "row__value", money(item.sum));
+      line.append(sum);
+      // Вторая строка — сколько штук и почём, мелким
+      const note = el(
+        "div",
+        "row__note",
+        `${qty(item.qty)}${item.uom ? ` ${item.uom}` : ""} × ${unitPrice(item.price)}`,
+      );
+      line.append(note);
+      rows.append(line);
+    });
+    goods.append(rows);
+  }
+  container.append(goods);
+
+  const docs = el("div", "card");
+  docs.append(el("div", "card__title", "Документы"));
+  if (!data.docs.length) {
+    docs.append(el("div", "empty", "Документов нет"));
+  } else {
+    const rows = el("div", "rows");
+    data.docs.forEach((doc) => {
+      const line = el("div", "row");
+      line.append(el("div", "row__label", `${_docDate(doc.date)}${doc.number ? `  №${doc.number}` : ""}`));
+      const paidOff = doc.sum - doc.paid < 0.01;
+      // Цветом и словом сразу: оплачено — зелёным, нет — тревожным
+      line.append(
+        el("div", `row__value row__value--${paidOff ? "paid" : "unpaid"}`, money(doc.sum)),
+      );
+      line.append(
+        el("div", `row__tag${paidOff ? " row__tag--paid" : ""}`, paidOff ? "оплачено" : "не оплачено"),
+      );
+      rows.append(line);
+    });
+    docs.append(rows);
+  }
+  container.append(docs);
+}
+
+// 2026-09-13 -> 13.09
+const _docDate = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : "");
 
 /* ── Остатки ──────────────────────────────────────────── */
 
@@ -833,13 +928,7 @@ async function renderTeam(container) {
       row.type = "button";
       row.append(el("div", "person__name", person.name));
       row.append(el("div", "person__total", money(person.total)));
-      const chev = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      chev.setAttribute("viewBox", "0 0 24 24");
-      chev.setAttribute("class", "chev");
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", "M9 5l7 7-7 7");
-      chev.append(path);
-      row.append(chev);
+      row.append(chevron());
       row.addEventListener("click", () => {
         state.detail = { href: person.href, name: person.name };
         views.scrollTop = 0;

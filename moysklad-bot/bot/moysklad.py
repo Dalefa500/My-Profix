@@ -344,12 +344,90 @@ class MoySkladClient:
         names = await self._counterparty_names() if by_agent else {}
         agents = sorted(
             (
-                {"name": names.get(href, "Без контрагента"), "total": value}
+                {"name": names.get(href, "Без контрагента"), "href": href, "total": value}
                 for href, value in by_agent.items()
             ),
             key=lambda a: -a["total"],
         )
         return {"total": total, "count": count, "daily": daily, "agents": agents}
+
+    async def get_shipment_detail(
+        self, agent_href: str, start: datetime, end: datetime
+    ) -> dict:
+        """One counterparty's shipments in the period: what was shipped
+        (summed up by product) and what is paid for.
+        """
+        docs: list[dict] = []
+        goods: dict[str, dict] = {}
+        total = 0.0
+        paid = 0.0
+        offset = 0
+        # С раскрытием позиций страница ограничена сотней документов.
+        limit = 100
+        filter_parts = [
+            f"moment>={start.strftime('%Y-%m-%d')} 00:00:00",
+            f"moment<={end.strftime('%Y-%m-%d')} 23:59:59",
+            f"agent={agent_href}",
+        ]
+        while True:
+            data = await self._request(
+                "GET",
+                "/entity/demand",
+                params={
+                    "filter": ";".join(filter_parts),
+                    "expand": "positions.assortment",
+                    "limit": limit,
+                    "offset": offset,
+                },
+            )
+            rows = data.get("rows", [])
+            for row in rows:
+                amount = row.get("sum", 0) / 100
+                payed = row.get("payedSum", 0) / 100
+                total += amount
+                paid += payed
+                docs.append(
+                    {
+                        "date": (row.get("moment") or "")[:10],
+                        "number": row.get("name", ""),
+                        "sum": amount,
+                        "paid": payed,
+                    }
+                )
+                for position in ((row.get("positions") or {}).get("rows") or []):
+                    item = position.get("assortment") or {}
+                    name = item.get("name", "?")
+                    quantity = position.get("quantity", 0) or 0
+                    price = (position.get("price", 0) or 0) / 100
+                    discount = position.get("discount", 0) or 0
+                    line = quantity * price * (1 - discount / 100)
+                    entry = goods.setdefault(
+                        name,
+                        {
+                            "name": name,
+                            "qty": 0.0,
+                            "sum": 0.0,
+                            "uom": ((item.get("uom") or {}).get("name") or ""),
+                        },
+                    )
+                    entry["qty"] += quantity
+                    entry["sum"] += line
+            if len(rows) < limit:
+                break
+            offset += limit
+
+        for entry in goods.values():
+            # Цена за единицу — средняя по периоду: одна и та же позиция
+            # могла уходить по разной цене.
+            entry["price"] = entry["sum"] / entry["qty"] if entry["qty"] else 0.0
+
+        return {
+            "total": total,
+            "paid": paid,
+            "debt": total - paid,
+            "goods": sorted(goods.values(), key=lambda g: -g["sum"]),
+            "docs": sorted(docs, key=lambda d: d["date"], reverse=True),
+        }
 
     async def resolve_tracked_agents(self, names: dict[str, str]) -> list[dict]:
         """Resolve a fixed list of counterparties, keyed by the search term

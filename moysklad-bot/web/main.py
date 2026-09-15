@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel
 
-from bot.moysklad import MoySkladClient, MoySkladError
+from bot.moysklad import BASE_URL, MoySkladClient, MoySkladError
 from bot.people import KEY_MATERIALS, TRACKED_COUNTERPARTIES
 
 load_dotenv()
@@ -306,6 +306,33 @@ async def shipments(request: Request, days: int = Query(30, ge=1, le=400)) -> di
         "count": data["count"],
         "rows": rows,
         "agents": data["agents"][:25],
+    }
+
+
+@app.get("/api/shipments/detail", dependencies=authed)
+async def shipment_detail(
+    request: Request, href: str, days: int = Query(30, ge=1, le=400)
+) -> dict:
+    """Что именно отгрузили одному контрагенту за период и что оплачено."""
+    # href приходит с клиента и уходит в фильтр запроса — принимаем только
+    # ссылку на контрагента в самом МойСкладе, не произвольную строку.
+    if not href.startswith(f"{BASE_URL}/entity/counterparty/"):
+        raise HTTPException(status_code=400, detail="Неизвестный контрагент")
+
+    moysklad: MoySkladClient = request.app.state.moysklad
+    start, end, _granularity = _period(days)
+
+    try:
+        data = await moysklad.get_shipment_detail(href, start, end)
+    except MoySkladError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    return {
+        "total": data["total"],
+        "paid": data["paid"],
+        "debt": data["debt"],
+        "goods": data["goods"][:60],
+        "docs": data["docs"][:60],
     }
 
 
