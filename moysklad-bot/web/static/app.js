@@ -815,16 +815,18 @@ async function renderShipmentDetail(container) {
 
     line("Отгружено всего", money(data.shippedAll));
     line("Занёс денег", `− ${money(data.paidAll)}`, "row__value--muted");
-    line("Бонусы покупателю", `− ${money(data.bonus)}`, "row__value--muted");
 
-    const net = data.balance - data.bonus;
+    /* Бонусы здесь не вычитаются: их проводят и расходом по «Бонус
+       покупатель», и приходом от самого покупателя — то есть в «занёс
+       денег» они уже сидят, и второй вычет ушёл бы в минус. Сумму
+       показываем отдельной карточкой, для сверки. */
     const netRow = el("div", "row row--total");
     netRow.append(el("div", "row__label", "Итого должен"));
     netRow.append(
       el(
         "div",
-        `row__value row__value--${net > 0.01 ? "unpaid" : "paid"}`,
-        money(net),
+        `row__value row__value--${data.balance > 0.01 ? "unpaid" : "paid"}`,
+        money(data.balance),
       ),
     );
     debtRows.append(netRow);
@@ -907,7 +909,9 @@ async function renderShipmentDetail(container) {
 
   if (data.balance !== null && data.bonusRows.length) {
     const bonuses = el("div", "card");
-    bonuses.append(el("div", "card__title", "Выданные бонусы"));
+    bonuses.append(
+      el("div", "card__title", `Выданные бонусы · всего ${money(data.bonus)}`),
+    );
     const rows = el("div", "rows");
     data.bonusRows.forEach((row) => {
       const line = el("div", "row");
