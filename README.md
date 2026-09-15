@@ -10,3 +10,4 @@ Official website for PowerMix construction materials
 Запуск: `node server/server.js`, затем откройте `http://localhost:3000/finance/`.
 
 Подробности: [finance/README.md](finance/README.md).
+Размещение на сервере TimeWeb: [finance/deploy-timeweb.md](finance/deploy-timeweb.md).
