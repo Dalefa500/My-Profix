@@ -26,6 +26,7 @@ APP_DIR="/opt/line-design-app"
 APP_DATA="/var/lib/line-design-finance"
 APP_PORT="3000"
 NODE_MAJOR="22"
+NODE_MIN="18"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
@@ -65,15 +66,31 @@ run apt-get update -y
 run apt-get upgrade -y
 run apt-get install -y git nginx ufw ca-certificates curl
 
-say "2/9 Устанавливаем Node.js ${NODE_MAJOR}"
+say "2/9 Устанавливаем Node.js"
+node_major_installed() {
+  command -v node >/dev/null || return 1
+  node --version | sed 's/^v\([0-9]*\).*/\1/'
+}
 if [ "$DRY_RUN" = "1" ]; then
-  note "+ установка Node.js из репозитория NodeSource"
-elif command -v node >/dev/null && node --version | grep -q "^v${NODE_MAJOR}"; then
+  note "+ установка Node.js (NodeSource, при неудаче — из репозитория системы)"
+elif [ "$(node_major_installed || echo 0)" -ge "$NODE_MIN" ] 2>/dev/null; then
   note "Node.js уже установлен: $(node --version)"
 else
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
-  apt-get install -y nodejs
-  note "Установлен Node.js $(node --version)"
+  # Сначала пробуем NodeSource — там всегда свежая версия.
+  # Если для этой версии системы пакета нет, ставим Node.js из репозитория
+  # самой Ubuntu: приложению достаточно версии ${NODE_MIN} и новее.
+  if curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - && apt-get install -y nodejs; then
+    note "Установлен Node.js $(node --version) (NodeSource)"
+  else
+    note "Репозиторий NodeSource недоступен для этой версии системы — ставим Node.js из репозитория Ubuntu"
+    apt-get install -y nodejs npm
+    note "Установлен Node.js $(node --version)"
+  fi
+  installed="$(node_major_installed || echo 0)"
+  if [ "$installed" -lt "$NODE_MIN" ]; then
+    echo "Нужен Node.js ${NODE_MIN} или новее, установлен ${installed}. Установите вручную и запустите скрипт снова." >&2
+    exit 1
+  fi
 fi
 
 say "3/9 Создаём отдельного пользователя для приложения"
