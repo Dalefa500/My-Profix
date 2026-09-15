@@ -333,17 +333,23 @@ async def shipment_detail(
     # висят на своём контрагенте и в этот остаток не попадают. Считается
     # по другим отчётам, поэтому их отказ не должен уносить всю карточку —
     # отгрузки и платежи важнее, их и покажем.
-    balance: float | None = None
+    # Долг за всё время считаем сами по документам: отгружено минус
+    # занесено минус бонусы. Отчёт «Взаиморасчёты» на этом аккаунте
+    # опознать контрагента не даёт, а так каждая строка проверяема.
+    alltime: dict | None = None
     bonus: dict = {"total": 0.0, "rows": []}
     try:
-        balance, bonus = await asyncio.gather(
-            moysklad.get_counterparty_balance(href, name),
+        alltime, bonus = await asyncio.gather(
+            moysklad.get_agent_totals(href, datetime(2000, 1, 1), end),
             moysklad.get_bonus_total(name),
         )
     except MoySkladError as exc:
         logger.warning("Не удалось посчитать долг по %s: %s", name or href, exc)
 
+    balance = None if alltime is None else alltime["shipped"] - alltime["paid"]
     return {
+        "shippedAll": None if alltime is None else alltime["shipped"],
+        "paidAll": None if alltime is None else alltime["paid"],
         "balance": balance,
         "bonus": bonus["total"],
         "balanceNet": None if balance is None else balance - bonus["total"],

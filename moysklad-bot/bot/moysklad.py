@@ -542,6 +542,28 @@ class MoySkladClient:
                 return href.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
         return ""
 
+    async def get_agent_totals(
+        self, agent_href: str, start: datetime, end: datetime
+    ) -> dict:
+        """Отгружено и занесено денег по контрагенту за период — без
+        разбора позиций. Годится и для «за всё время»: фильтр по
+        контрагенту делает сервер, документов возвращается немного.
+        """
+        shipped = sum(
+            row.get("sum", 0) / 100
+            for row in await self._documents_between(
+                "demand", start, end, agent_href=agent_href
+            )
+        )
+        paid = 0.0
+        for entities, factor in ((self.MONEY_IN, 1), (self.MONEY_OUT, -1)):
+            for entity in entities:
+                for row in await self.get_cash_rows(
+                    entity, start, end, agent_href=agent_href
+                ):
+                    paid += factor * row.get("sum", 0) / 100
+        return {"shipped": shipped, "paid": paid}
+
     async def get_counterparty_balance(self, agent_href: str, agent_name: str = "") -> float:
         """Конечный остаток контрагента за всё время — та же цифра, что в
         «Деньги → Взаиморасчёты». Плюс означает, что должен он нам.

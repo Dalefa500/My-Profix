@@ -795,33 +795,36 @@ async function renderShipmentDetail(container) {
      работы. Бонусы в неё не входят: в учёте они висят на отдельном
      контрагенте, а кому выданы — написано только в назначении. Поэтому
      считаем и показываем оба слагаемых и итог. */
+  /* Долг за всё время считается по документам и показывается целиком,
+     строка за строкой: отгружено минус занесено минус бонусы. Бонусы в
+     учёте висят на отдельном контрагенте, поэтому в поступления они не
+     попадают и вычитаются отдельно. */
   const debt = el("div", "card");
   debt.append(el("div", "card__title", "Долг за всё время"));
   if (data.balance === null) {
-    // Остаток считается по другому отчёту МойСклада; если он не ответил,
-    // карточка всё равно должна показать отгрузки и платежи.
-    debt.append(el("div", "empty", "Остаток сейчас недоступен"));
+    debt.append(el("div", "empty", "Не удалось посчитать"));
   } else {
     const debtRows = el("div", "rows");
 
-    const balanceRow = el("div", "row");
-    balanceRow.append(el("div", "row__label", "По взаиморасчётам"));
-    balanceRow.append(el("div", "row__value", money(data.balance)));
-    debtRows.append(balanceRow);
+    const line = (label, value, cls) => {
+      const row = el("div", "row");
+      row.append(el("div", "row__label", label));
+      row.append(el("div", `row__value${cls ? ` ${cls}` : ""}`, value));
+      debtRows.append(row);
+    };
 
-    const bonusRow = el("div", "row");
-    bonusRow.append(el("div", "row__label", "Бонусы покупателю"));
-    bonusRow.append(el("div", "row__value row__value--muted", `− ${money(data.bonus)}`));
-    debtRows.append(bonusRow);
+    line("Отгружено всего", money(data.shippedAll));
+    line("Занёс денег", `− ${money(data.paidAll)}`, "row__value--muted");
+    line("Бонусы покупателю", `− ${money(data.bonus)}`, "row__value--muted");
 
-    // Красным — только если после вычета он всё ещё должен
+    const net = data.balance - data.bonus;
     const netRow = el("div", "row row--total");
     netRow.append(el("div", "row__label", "Итого должен"));
     netRow.append(
       el(
         "div",
-        `row__value row__value--${data.balanceNet > 0.01 ? "unpaid" : "paid"}`,
-        money(data.balanceNet),
+        `row__value row__value--${net > 0.01 ? "unpaid" : "paid"}`,
+        money(net),
       ),
     );
     debtRows.append(netRow);
