@@ -14,7 +14,7 @@ BASE_URL = "https://api.moysklad.ru/api/remap/1.2"
 
 # В каталоге остались хвосты вроде «Клей профикс 800 новый 2018» —
 # метка давней переоценки, в отчётах она только мешает читать.
-_STALE_SUFFIX = re.compile(r"\s*новый\s*20\d\d\s*", re.IGNORECASE)
+_STALE_SUFFIX = re.compile(r"\s*нов(?:ый|ая|ое|ые)\s*20\d\d\s*", re.IGNORECASE)
 
 
 def clean_product_name(name: str) -> str:
@@ -207,12 +207,14 @@ class MoySkladClient:
             uom = row.get("uom") or {}
             result.append(
                 {
-                    "name": row.get("name", "?"),
+                    "name": clean_product_name(row.get("name", "?")),
                     "stock": row.get("stock", 0),
                     "reserve": row.get("reserve", 0),
                     "folder": folder.get("name") or "Без категории",
                     # Единица измерения из карточки товара: кг, шт, л…
                     "uom": uom.get("name", ""),
+                    # Ссылка на товар — по ней приложение тянет фото
+                    "href": (row.get("meta") or {}).get("href", ""),
                 }
             )
         return result
@@ -332,6 +334,26 @@ class MoySkladClient:
             offset += limit
         return names
 
+    # Касса и банк: в «Платежах» МойСклада они лежат вперемешку, и
+    # оплата от покупателя может прийти любым из четырёх документов.
+    MONEY_IN = ("cashin", "paymentin")
+    MONEY_OUT = ("cashout", "paymentout")
+
+    async def _money_by_agent(self, start: datetime, end: datetime) -> dict[str, float]:
+        """Сколько каждый контрагент занёс за период (приход минус возвраты).
+        Оплаты у нас не привязаны к отгрузкам — деньги приходят отдельным
+        документом на контрагента, поэтому считать надо отсюда.
+        """
+        totals: dict[str, float] = {}
+        for entities, factor in ((self.MONEY_IN, 1), (self.MONEY_OUT, -1)):
+            for entity in entities:
+                for row in await self._documents_between(entity, start, end):
+                    href = ((row.get("agent") or {}).get("meta") or {}).get("href")
+                    if not href:
+                        continue
+                    totals[href] = totals.get(href, 0.0) + factor * row.get("sum", 0) / 100
+        return totals
+
     async def get_shipment_summary(self, start: datetime, end: datetime) -> dict:
         """Shipments (отгрузки) in the period: total, document count,
         per-day sums and a per-counterparty breakdown.
@@ -343,9 +365,7 @@ class MoySkladClient:
         count = 0
         for row in await self._documents_between("demand", start, end):
             amount = row.get("sum", 0) / 100
-            payed = row.get("payedSum", 0) / 100
             total += amount
-            paid += payed
             count += 1
             day = (row.get("moment") or "")[:10]
             if day:
@@ -354,7 +374,14 @@ class MoySkladClient:
             if href:
                 entry = by_agent.setdefault(href, {"total": 0.0, "paid": 0.0})
                 entry["total"] += amount
-                entry["paid"] += payed
+
+        if by_agent:
+            money = await self._money_by_agent(start, end)
+            for href, entry in by_agent.items():
+                # Занести могли и больше отгруженного — гасили старый долг;
+                # для этой вкладки считаем только в пределах периода.
+                entry["paid"] = max(0.0, min(entry["total"], money.get(href, 0.0)))
+                paid += entry["paid"]
 
         names = await self._counterparty_names() if by_agent else {}
         agents = sorted(
@@ -400,7 +427,6 @@ class MoySkladClient:
         docs: list[dict] = []
         goods: dict[str, dict] = {}
         total = 0.0
-        paid = 0.0
         offset = 0
         # С раскрытием позиций страница ограничена сотней документов.
         limit = 100
@@ -415,7 +441,7 @@ class MoySkladClient:
                 "/entity/demand",
                 params={
                     "filter": ";".join(filter_parts),
-                    "expand": "positions.assortment,payments",
+                    "expand": "positions.assortment",
                     "limit": limit,
                     "offset": offset,
                 },
@@ -423,22 +449,12 @@ class MoySkladClient:
             rows = data.get("rows", [])
             for row in rows:
                 amount = row.get("sum", 0) / 100
-                payed = row.get("payedSum", 0) / 100
                 total += amount
-                paid += payed
-                # Когда оплатили: берём самый поздний из привязанных платежей
-                payments = [
-                    (payment.get("moment") or "")[:10]
-                    for payment in (row.get("payments") or [])
-                    if payment.get("moment")
-                ]
                 docs.append(
                     {
                         "date": (row.get("moment") or "")[:10],
                         "number": row.get("name", ""),
                         "sum": amount,
-                        "paid": payed,
-                        "paidAt": max(payments) if payments else "",
                     }
                 )
                 for position in ((row.get("positions") or {}).get("rows") or []):
@@ -467,6 +483,25 @@ class MoySkladClient:
                 break
             offset += limit
 
+        # Деньги от контрагента — отдельными документами, поэтому
+        # тянем их своим запросом и показываем рядом с отгрузками.
+        payments: list[dict] = []
+        paid = 0.0
+        for entities, kind in ((self.MONEY_IN, "in"), (self.MONEY_OUT, "out")):
+            for entity in entities:
+                for row in await self.get_cash_rows(entity, start, end, agent_href=agent_href):
+                    amount = row.get("sum", 0) / 100
+                    paid += amount if kind == "in" else -amount
+                    payments.append(
+                        {
+                            "date": (row.get("moment") or "")[:10],
+                            "sum": amount,
+                            "kind": kind,
+                            "purpose": row.get("description") or "",
+                        }
+                    )
+        payments.sort(key=lambda p: p["date"], reverse=True)
+
         uoms = await self._uom_names() if goods else {}
         for entry in goods.values():
             # Цена за единицу — средняя по периоду: одна и та же позиция
@@ -480,6 +515,7 @@ class MoySkladClient:
             "debt": total - paid,
             "goods": sorted(goods.values(), key=lambda g: -g["sum"]),
             "docs": sorted(docs, key=lambda d: d["date"], reverse=True),
+            "payments": payments,
         }
 
     async def get_product_image(self, assortment_href: str) -> tuple[bytes, str] | None:

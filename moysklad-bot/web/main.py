@@ -335,6 +335,7 @@ async def shipment_detail(
         "debt": data["debt"],
         "goods": data["goods"][:60],
         "docs": data["docs"][:60],
+        "payments": data["payments"][:60],
     }
 
 
@@ -378,6 +379,7 @@ async def stock(request: Request) -> dict:
             "name": item["name"],
             "stock": item["stock"],
             "uom": item["uom"],
+            "href": item.get("href", ""),
             "low": in_kg and item["stock"] < LOW_STOCK_KG,
         }
         by_folder[item["folder"]].append(entry)

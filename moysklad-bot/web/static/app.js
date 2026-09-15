@@ -784,7 +784,7 @@ async function renderShipmentDetail(container) {
   container.append(
     tiles([
       { label: "Отгружено", value: amount(data.total), tone: "income" },
-      { label: "Оплачено", value: amount(data.paid), tone: "pos" },
+      { label: "Занёс денег", value: amount(data.paid), tone: "pos" },
       { label: "Долг", value: amount(data.debt), tone: data.debt > 0 ? "neg" : "" },
     ]),
   );
@@ -815,41 +815,52 @@ async function renderShipmentDetail(container) {
   container.append(goods);
 
   const docs = el("div", "card");
-  docs.append(el("div", "card__title", "Документы"));
+  docs.append(el("div", "card__title", "Отгрузки"));
   if (!data.docs.length) {
-    docs.append(el("div", "empty", "Документов нет"));
+    docs.append(el("div", "empty", "Отгрузок нет"));
   } else {
     const rows = el("div", "rows");
     data.docs.forEach((doc) => {
       const line = el("div", "row");
-      const paidOff = doc.sum - doc.paid < 0.01;
-      const label = el("div", "row__label", `${_docDate(doc.date)}${doc.number ? `  №${doc.number}` : ""}`);
-      line.append(label);
-      // Цветом и словом сразу: оплачено — зелёным, нет — тревожным
       line.append(
-        el("div", `row__value row__value--${paidOff ? "paid" : "unpaid"}`, money(doc.sum)),
+        el("div", "row__label", `${_docDate(doc.date)}${doc.number ? `  №${doc.number}` : ""}`),
       );
-      const tag = el(
-        "div",
-        `row__tag${paidOff ? " row__tag--paid" : ""}`,
-        paidOff ? "оплачено" : "не оплачено",
-      );
-      if (doc.paidAt) {
-        // Метка и дата оплаты — одной нижней строкой, чтобы строка
-        // документа не растягивалась на три уровня.
-        line.classList.add("row--stacked");
-        const foot = el("div", "row__foot");
-        foot.append(tag);
-        foot.append(el("div", "row__note", `оплачено ${_docDate(doc.paidAt)}`));
-        line.append(foot);
-      } else {
-        line.append(tag);
-      }
+      line.append(el("div", "row__value", money(doc.sum)));
       rows.append(line);
     });
     docs.append(rows);
   }
   container.append(docs);
+
+  /* Деньги отдельной карточкой: оплаты у нас не привязаны к отгрузкам,
+     контрагент просто заносит суммы — поэтому показываем движение как
+     есть, а сходится оно наверху, в плитках. */
+  const cash = el("div", "card");
+  cash.append(el("div", "card__title", "Приход и расход"));
+  if (!data.payments.length) {
+    cash.append(el("div", "empty", "Платежей за период нет"));
+  } else {
+    const rows = el("div", "rows");
+    data.payments.forEach((payment) => {
+      const income = payment.kind === "in";
+      const line = el("div", "row");
+      line.append(el("div", "row__label", _docDate(payment.date)));
+      line.append(
+        el(
+          "div",
+          `row__value row__value--${income ? "paid" : "unpaid"}`,
+          `${income ? "+" : "−"}${money(payment.sum)}`,
+        ),
+      );
+      if (payment.purpose) {
+        line.classList.add("row--stacked");
+        line.append(el("div", "row__note", payment.purpose));
+      }
+      rows.append(line);
+    });
+    cash.append(rows);
+  }
+  container.append(cash);
 }
 
 /* Фото товара из МойСклада. Грузится лениво и только когда строка
@@ -923,6 +934,7 @@ async function renderStock(container) {
       items.forEach((item) => {
         const row = el("div", "row");
         if (item.low) row.append(el("span", "dot"));
+        if (item.href) row.append(productPhoto(item.href));
         row.append(el("div", "row__label", item.name));
         const value = el(
           "div",
