@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Any
 
@@ -52,6 +53,11 @@ class MoySkladClient:
         self._organization_href: str | None = None
         self._store_href: str | None = None
         self._default_agent_href: str | None = None
+        # Отчёт по взаиморасчётам приходится вычитывать целиком: на этом
+        # аккаунте контрагентов десятки тысяч, а фильтра по одному нет.
+        # Держим разобранный ответ недолго, чтобы ждать пришлось однажды.
+        self._balances: dict[str, float] = {}
+        self._balances_at: float = 0.0
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -518,22 +524,70 @@ class MoySkladClient:
             "payments": payments,
         }
 
+    @staticmethod
+    def _row_agent_href(row: dict) -> str:
+        return ((row.get("agent") or {}).get("meta") or {}).get("href") or ""
+
     async def get_counterparty_balance(self, agent_href: str) -> float:
         """Конечный остаток контрагента за всё время — та же цифра, что в
         «Деньги → Взаиморасчёты». Плюс означает, что должен он нам.
 
-        Отчёт не умеет фильтроваться по agent (API отвечает 412), зато
-        принимает выборочный запрос: POST со списком нужных контрагентов.
+        Отчёт не принимает фильтр по agent (отвечает 412), а выборочный
+        запрос через POST на этом аккаунте вернул не того контрагента.
+        Поэтому пробуем по очереди и берём строку, только если она
+        действительно про нужного контрагента, — чужой ноль хуже, чем
+        честное «не смогли».
         """
-        data = await self._request(
-            "POST",
-            "/report/counterparty",
-            json={"counterparties": [self._meta(agent_href, "counterparty")]},
-        )
-        rows = data.get("rows") if isinstance(data, dict) else data
-        if not isinstance(rows, list) or not rows:
-            raise MoySkladError("Пустой ответ /report/counterparty")
-        return rows[0].get("balance", 0) / 100
+        agent_id = agent_href.rstrip("/").rsplit("/", 1)[-1]
+
+        # 1. Выборочный отчёт одним запросом
+        try:
+            data = await self._request(
+                "POST",
+                "/report/counterparty",
+                json={"counterparties": [self._meta(agent_href, "counterparty")]},
+            )
+            for row in data.get("rows") or []:
+                if self._row_agent_href(row).rstrip("/").rsplit("/", 1)[-1] == agent_id:
+                    logger.info("Остаток по %s взят выборочным отчётом", agent_id)
+                    return row.get("balance", 0) / 100
+        except MoySkladError as exc:
+            logger.info("Выборочный отчёт по контрагенту не сработал: %s", exc)
+
+        # 2. Полный отчёт — медленно, но наверняка; держим в памяти
+        balances = await self._all_balances()
+        if agent_id in balances:
+            logger.info("Остаток по %s взят из общего отчёта", agent_id)
+            return balances[agent_id]
+        raise MoySkladError("Контрагент не найден в отчёте по взаиморасчётам")
+
+    async def _all_balances(self, max_age: float = 600.0) -> dict[str, float]:
+        """Остатки по всем контрагентам, id -> сумма. Перечитываем не чаще
+        раза в десять минут: за один проход это десятки запросов.
+        """
+        if self._balances and time.monotonic() - self._balances_at < max_age:
+            return self._balances
+
+        balances: dict[str, float] = {}
+        offset = 0
+        limit = 1000
+        while offset < 100_000:
+            data = await self._request(
+                "GET", "/report/counterparty", params={"limit": limit, "offset": offset}
+            )
+            rows = data.get("rows") or []
+            for row in rows:
+                href = self._row_agent_href(row)
+                if href:
+                    balances[href.rstrip("/").rsplit("/", 1)[-1]] = row.get("balance", 0) / 100
+            if len(rows) < limit:
+                break
+            offset += limit
+
+        logger.info("Прочитан отчёт по взаиморасчётам: %d контрагентов", len(balances))
+        self._balances = balances
+        self._balances_at = time.monotonic()
+        return balances
 
     async def get_bonus_total(self, agent_name: str) -> dict:
         """Бонусы, выданные контрагенту. В учёте они висят на отдельном
