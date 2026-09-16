@@ -119,11 +119,13 @@
   }
 }
 
-/* Элементы управления не выделяются нигде. */
+/* Элементы управления не выделяются нигде, а браузер не ждёт второго
+   касания для увеличения — нажатие срабатывает сразу. */
 .tabbar__item, .chip, .btn, .fab, .icon-btn, .topbar__back,
-.quick__item, .segmented__item, .tabs__item {
+.quick__item, .segmented__item, .tabs__item, .row, .stat, .card {
   -webkit-user-select: none;
   user-select: none;
+  touch-action: manipulation;
 }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -209,7 +211,7 @@ h1, h2, h3 { line-height: 1.2; }
   color: var(--ink-2);
   transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1);
 }
-.topbar__back:active { transform: scale(0.9); }
+.topbar__back:active { transform: scale(0.88); opacity: 0.7; transition-duration: 0.06s; }
 .topbar__back svg { width: 18px; height: 18px; }
 
 .topbar__title { flex: 1; min-width: 0; }
@@ -226,7 +228,7 @@ h1, h2, h3 { line-height: 1.2; }
   position: relative;
   transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.2s;
 }
-.icon-btn:active { transform: scale(0.9); }
+.icon-btn:active { transform: scale(0.88); opacity: 0.7; transition-duration: 0.06s; }
 .icon-btn svg { width: 19px; height: 19px; }
 .icon-btn--plain { background: none; border: 0; }
 .icon-btn__dot {
@@ -309,7 +311,8 @@ h1, h2, h3 { line-height: 1.2; }
   color: var(--muted);
   transition: transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1), color 0.2s;
 }
-.tabbar__item:active { transform: scale(0.9); }
+.tabbar__item:active { transform: scale(0.88); opacity: 0.65; transition-duration: 0.06s; }
+.tabbar__item.is-active { color: var(--accent); }
 .tabbar__item.is-active svg { transform: scale(1.06); }
 .tabbar__item svg { transition: transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1); }
 .tabbar__item svg { width: 21px; height: 21px; }
@@ -450,7 +453,7 @@ a.row:active, button.row:active {
   white-space: nowrap;
   transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1), opacity 0.2s, background 0.2s;
 }
-.btn:active { transform: scale(0.955); opacity: 0.9; }
+.btn:active { transform: scale(0.955); opacity: 0.86; transition-duration: 0.06s; }
 .btn--primary { background: var(--accent); border-color: transparent; color: #fff; }
 .btn--good { background: var(--good); border-color: transparent; color: #fff; }
 .btn--danger { background: var(--danger); border-color: transparent; color: #fff; }
@@ -478,7 +481,7 @@ a.row:active, button.row:active {
   animation: quick-in 0.42s cubic-bezier(0.32, 0.72, 0, 1) backwards;
   animation-delay: calc(var(--i, 0) * 45ms);
 }
-.quick__item:active { transform: scale(0.955); }
+.quick__item:active { transform: scale(0.955); transition-duration: 0.06s; }
 .quick__item:active .quick__icon { transform: scale(0.88) rotate(-4deg); }
 .quick__label { line-height: 1.25; }
 
@@ -543,7 +546,7 @@ a.row:active, button.row:active {
   color: var(--ink-2);
   transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.2s, color 0.2s;
 }
-.chip:active { transform: scale(0.94); }
+.chip:active { transform: scale(0.94); transition-duration: 0.06s; }
 .chip.is-active { background: var(--ink); color: var(--bg); border-color: transparent; }
 
 .tabs { display: flex; gap: 4px; background: var(--surface-2); padding: 4px; border-radius: 12px; }

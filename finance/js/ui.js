@@ -7,6 +7,24 @@ import { CURRENCY_LIST, formatAmount, defaultRate, toBase } from './money.js';
 import { getState } from './store.js';
 import { formatDate } from './dates.js';
 
+// Мгновенное нажатие: действие выполняется по касанию, а не по отпусканию
+// пальца — так же ведут себя родные приложения iPhone.
+export function fastTap(element, handler) {
+  if (!element) return;
+  let handled = false;
+  element.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    handled = true;
+    handler(event);
+    setTimeout(() => { handled = false; }, 500);
+  });
+  element.addEventListener('click', (event) => {
+    event.preventDefault();
+    if (handled) return;
+    handler(event);
+  });
+}
+
 export function esc(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')

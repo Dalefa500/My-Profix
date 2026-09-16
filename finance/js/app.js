@@ -2,7 +2,7 @@
 
 import * as store from './store.js';
 import * as router from './router.js';
-import { html, raw, openSheet, closeSheet, money, toast } from './ui.js';
+import { html, raw, openSheet, closeSheet, money, toast, fastTap } from './ui.js';
 import { ensurePayrolls } from './actions.js';
 import { notifications } from './calc.js';
 import * as forms from './forms.js';
@@ -172,14 +172,19 @@ function shellHtml() {
 function renderShell() {
   root.className = store.canEdit() ? 'app' : 'app is-viewer';
   root.innerHTML = shellHtml();
-  root.querySelector('[data-quick]').addEventListener('click', openQuickActions);
-  root.querySelector('[data-more]').addEventListener('click', openMoreMenu);
-  root.querySelector('[data-notifications]').addEventListener('click', openNotifications);
-  root.querySelector('[data-back]').addEventListener('click', () => window.history.back());
+  fastTap(root.querySelector('[data-quick]'), openQuickActions);
+  fastTap(root.querySelector('[data-more]'), openMoreMenu);
+  fastTap(root.querySelector('[data-notifications]'), openNotifications);
+  fastTap(root.querySelector('[data-back]'), () => window.history.back());
+
   root.querySelectorAll('[data-tab]').forEach((tab) => {
-    tab.addEventListener('click', (event) => {
-      event.preventDefault();
-      router.go(tab.dataset.tab, { replace: true });
+    fastTap(tab, () => {
+      if (tab.classList.contains('is-active')) return;
+      // подсветка переключается сразу, экран рисуется следующим кадром —
+      // палец чувствует отклик раньше, чем успевает подняться
+      root.querySelectorAll('[data-tab]').forEach((item) => item.classList.remove('is-active'));
+      tab.classList.add('is-active');
+      requestAnimationFrame(() => router.go(tab.dataset.tab, { replace: true }));
     });
   });
   setupSwipe();
