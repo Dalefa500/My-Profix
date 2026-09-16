@@ -238,15 +238,15 @@ h1, h2, h3 { line-height: 1.2; }
   min-width: 0;
   flex: 1 1 0;
   /* длинный заголовок обрезается, не доходя до знака студии по центру */
-  max-width: calc(50% - 80px);
+  max-width: calc(50% - 84px);
 }
 .topbar__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 .topbar__title { min-width: 0; }
 .topbar__title h1 {
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-2);
   white-space: nowrap;
@@ -263,33 +263,29 @@ h1, h2, h3 { line-height: 1.2; }
   text-overflow: ellipsis;
 }
 
-/* Знак студии стоит ровно по центру экрана, независимо от длины заголовка. */
+/* Знак студии стоит ровно по центру экрана, независимо от длины заголовка.
+   Он намеренно вынесен из шапки: у неё размытие фона, из-за которого
+   тонкий рукописный шрифт рисовался мягко и выглядел затуманенным. */
 .brand {
-  position: absolute;
+  position: fixed;
+  z-index: 21;
   left: 50%;
-  top: calc(env(safe-area-inset-top) + 3px);
+  top: env(safe-area-inset-top);
+  height: 64px;
   transform: translateX(-50%);
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 1px;
   pointer-events: none;
 }
 .brand__name {
   font-family: var(--font-brand);
-  font-size: 35px;
+  font-size: 38px;
   font-weight: 500;
-  line-height: 1.05;
+  line-height: 1;
   color: var(--brand-signature);
-}
-.brand__sub {
-  margin-top: -2px;
-  font-size: 8px;
-  font-weight: 500;
-  letter-spacing: 0.42em;
-  text-indent: 0.42em;
-  text-transform: uppercase;
-  color: var(--muted);
+  /* обводка своим же цветом делает росчерк чуть плотнее и заметнее */
+  -webkit-text-stroke: 0.5px currentColor;
+  paint-order: stroke fill;
 }
 
 .icon-btn {
@@ -870,10 +866,12 @@ td.danger, .danger-text { color: var(--danger); }
 }
 .auth__script {
   font-family: var(--font-brand);
-  font-size: 58px;
+  font-size: 62px;
   font-weight: 500;
   line-height: 1.05;
   color: var(--signature-on-dark);
+  -webkit-text-stroke: 0.6px currentColor;
+  paint-order: stroke fill;
 }
 .auth__studio {
   font-size: 12px;

@@ -147,17 +147,15 @@ function shellHtml() {
         </div>
       </div>
 
-      <div class="brand" aria-hidden="true">
-        <span class="brand__name">Line design</span>
-        <span class="brand__sub">Studio</span>
-      </div>
-
       <div class="topbar__actions">
         <button class="icon-btn" data-notifications aria-label="Уведомления">
           ${raw(ICONS.bell)}<span class="icon-btn__dot" data-bell hidden></span></button>
         <button class="icon-btn" data-more aria-label="Ещё">${raw(ICONS.more)}</button>
       </div>
     </header>
+    <!-- Знак студии живёт отдельно от шапки: внутри неё стоит размытие фона,
+         и тонкий рукописный шрифт из-за него терял чёткость. -->
+    <div class="brand" aria-hidden="true"><span class="brand__name">Line design</span></div>
     <main class="viewport" id="viewport">
       <div class="view" id="view"></div>
       <div class="view view--ghost" id="viewGhost" aria-hidden="true"></div>
