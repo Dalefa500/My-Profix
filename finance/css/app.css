@@ -282,10 +282,25 @@ h1, h2, h3 { line-height: 1.2; }
   font-size: 38px;
   font-weight: 500;
   line-height: 1;
-  color: var(--brand-signature);
-  /* обводка своим же цветом делает росчерк чуть плотнее и заметнее */
-  -webkit-text-stroke: 0.5px currentColor;
+  /* Глянец: блик по верхней кромке росчерка и уход в тень к низу,
+     плюс мягкая тень под буквами — знак выглядит объёмным, как эмаль.
+     Обводка своим же цветом делает росчерк чуть плотнее. */
+  background-image: linear-gradient(168deg,
+    color-mix(in srgb, var(--brand-signature) 74%, #ffffff) 0%,
+    color-mix(in srgb, var(--brand-signature) 94%, #ffffff) 30%,
+    var(--brand-signature) 52%,
+    color-mix(in srgb, var(--brand-signature) 78%, #000000) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 0.5px var(--brand-signature);
   paint-order: stroke fill;
+  /* Выпуклость: светлая кромка по верху росчерка, тёмная по низу,
+     и мягкая тень, отброшенная на панель. */
+  text-shadow:
+    0 -0.5px 0 color-mix(in srgb, var(--brand-signature) 66%, #ffffff),
+    0 1px 0.5px color-mix(in srgb, var(--brand-signature) 50%, #000000),
+    0 3px 6px rgba(0, 0, 0, 0.55);
 }
 
 .icon-btn {
@@ -869,9 +884,21 @@ td.danger, .danger-text { color: var(--danger); }
   font-size: 62px;
   font-weight: 500;
   line-height: 1.05;
-  color: var(--signature-on-dark);
-  -webkit-text-stroke: 0.6px currentColor;
+  /* тот же глянец, что и в шапке, только крупнее */
+  background-image: linear-gradient(168deg,
+    color-mix(in srgb, var(--signature-on-dark) 70%, #ffffff) 0%,
+    color-mix(in srgb, var(--signature-on-dark) 92%, #ffffff) 30%,
+    var(--signature-on-dark) 52%,
+    color-mix(in srgb, var(--signature-on-dark) 76%, #000000) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 0.6px var(--signature-on-dark);
   paint-order: stroke fill;
+  text-shadow:
+    0 -0.8px 0 color-mix(in srgb, var(--signature-on-dark) 62%, #ffffff),
+    0 1.5px 0.5px color-mix(in srgb, var(--signature-on-dark) 48%, #000000),
+    0 5px 10px rgba(0, 0, 0, 0.6);
 }
 .auth__studio {
   font-size: 12px;
