@@ -6,6 +6,7 @@ import { projectFinance } from '../calc.js';
 import { PROJECT_STATUSES, labelOf, toneOf } from '../model.js';
 import * as forms from '../forms.js';
 import { refresh } from '../refresh.js';
+import { go } from '../router.js';
 
 const filters = { query: '', status: 'all', client: 'all' };
 
@@ -85,7 +86,7 @@ export default function projects() {
       });
       root.querySelectorAll('[data-act="add"]').forEach((button) => {
         button.onclick = () => forms.openProjectForm(null, (project) => {
-          window.location.hash = `#/projects/${project.id}`;
+          go(`#/projects/${project.id}`);
         });
       });
     },

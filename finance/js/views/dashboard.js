@@ -8,6 +8,7 @@ import { rangeFor, today, formatDate, monthLabel, monthKey } from '../dates.js';
 import { categoryLabel } from '../model.js';
 import * as forms from '../forms.js';
 import { refresh } from '../refresh.js';
+import { go } from '../router.js';
 import { quickAction } from '../icons.js';
 import { formatUsdRate } from '../money.js';
 
@@ -189,7 +190,7 @@ export default function dashboard() {
       root.querySelector('[data-act="income"]').onclick = () => forms.openIncomeForm({}, refresh);
       root.querySelector('[data-act="expense"]').onclick = () => forms.openExpenseForm({}, refresh);
       root.querySelector('[data-act="project"]').onclick = () => forms.openProjectForm(null, (project) => {
-        window.location.hash = `#/projects/${project.id}`;
+        go(`#/projects/${project.id}`);
       });
       root.querySelector('[data-act="employee"]').onclick = () => forms.openEmployeeForm(null, refresh);
     },
