@@ -156,7 +156,19 @@
   touch-action: manipulation;
 }
 
-html { -webkit-text-size-adjust: 100%; }
+/* Долгое нажатие на строку списка или вкладку не должно открывать
+   предпросмотр ссылки с адресом сервера. На теле страницы одного правила
+   iPhone не хватает — нужно указать его и на самих ссылках. */
+a, a *, .row, .tabbar__item, .card, .stat, .quick__item {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  /* Двойное нажатие не увеличивает страницу: приложение всегда одного размера. */
+  touch-action: manipulation;
+}
 
 body {
   font-family: var(--font);
@@ -474,7 +486,9 @@ h1, h2, h3 { line-height: 1.2; }
   transition: transform 0.34s cubic-bezier(0.34, 1.4, 0.64, 1);
 }
 /* Нажатие чувствуется: элемент слегка проседает и пружинит обратно. */
-a.stat:active, .card:active { transform: scale(0.972); transition-duration: 0.06s; }
+/* Вдавливается только то, что действительно нажали. Карточка — просто
+   подложка: раньше она проседала целиком, когда нажимали строку внутри неё. */
+a.stat:active, a.card:active, button.card:active { transform: scale(0.972); transition-duration: 0.06s; }
 .stat__label { font-size: 12px; color: var(--muted); font-weight: 500; }
 .stat__value { font-size: 21px; font-weight: 600; letter-spacing: -0.03em; }
 .stat__hint { font-size: 11.5px; color: var(--muted); }
@@ -1029,6 +1043,8 @@ td.danger, .danger-text { color: var(--danger); }
 .is-viewer [data-edit-plan],
 .is-viewer [data-edit-assignment],
 .is-viewer [data-remove-category],
+.is-viewer [data-status],
+.is-viewer [data-stage],
 .is-viewer [data-locked],
 .is-viewer .sheet__foot [data-act="edit"],
 .is-viewer .sheet__foot [data-act="delete"] { display: none !important; }

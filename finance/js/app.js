@@ -171,7 +171,8 @@ function shellHtml() {
 }
 
 function renderShell() {
-  root.className = store.canEdit() ? 'app' : 'app is-viewer';
+  root.className = 'app';
+  applyRole();
   root.innerHTML = shellHtml();
   fastTap(root.querySelector('[data-quick]'), openQuickActions);
   fastTap(root.querySelector('[data-more]'), openMoreMenu);
@@ -359,7 +360,7 @@ function renderView() {
   result.mount?.(host);
   mountCharts(host);
   updateBell();
-  root.classList.toggle('is-viewer', !store.canEdit());
+  applyRole();
 
   if (searchValue !== null) {
     const input = host.querySelector('[data-search]');
@@ -475,6 +476,28 @@ store.subscribe((_, reason) => {
     return;
   }
   if (root.classList.contains('app')) renderView();
+});
+
+// Права отмечаем на корне документа, а не только на самом приложении:
+// всплывающие листы («Приход», «Расход», карточка операции) лежат отдельно
+// от него, и иначе кнопки правки оставались бы видны тому, кто только смотрит.
+function applyRole() {
+  const viewer = !store.canEdit();
+  root.classList.toggle('is-viewer', viewer);
+  document.documentElement.classList.toggle('is-viewer', viewer);
+}
+
+// Разведение пальцев и двойное нажатие не должны менять масштаб экрана:
+// приложение всегда показывается в одном размере.
+for (const name of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(name, (event) => event.preventDefault());
+}
+
+// Долгое нажатие на строку списка открывало системный предпросмотр ссылки
+// с адресом сервера. Приложение — не веб-страница, такого меню быть не должно.
+document.addEventListener('contextmenu', (event) => {
+  if (event.target.closest('input, textarea')) return;
+  event.preventDefault();
 });
 
 // Android и компьютеры умеют закреплять ориентацию по-настоящему.
