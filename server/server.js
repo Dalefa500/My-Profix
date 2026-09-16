@@ -119,6 +119,32 @@ async function fixLegacyOwner() {
   });
 }
 
+// Партнёров студии заводим из учётных записей: обычно это те же два
+// человека, что входят в приложение. Один раз, дальше список правится вручную.
+async function ensureFounders() {
+  const current = await loadState();
+  if (current.state.founders?.length || current.state.settings.foundersSeeded) return;
+
+  const users = await loadUsers();
+  if (!users.length) return;
+
+  await withLock(async () => {
+    const state = normalizeData((await loadState()).state);
+    if (!state.founders.length) {
+      state.founders = users.map((user, index) => ({
+        id: `fnd_seed${index + 1}`,
+        name: user.name || user.login,
+        role: user.role === 'admin' ? 'Полный доступ' : 'Только просмотр',
+        note: '',
+      }));
+    }
+    state.settings = { ...state.settings, foundersSeeded: true };
+    const rev = (await loadState()).rev + 1;
+    await saveState({ rev, state, updatedAt: new Date().toISOString() });
+    console.log(`Партнёры студии заведены: ${state.founders.map((item) => item.name).join(', ')}.`);
+  });
+}
+
 // ------------------------------------------- курс Национального банка
 
 // Последняя попытка обращения к НБТ — чтобы не дёргать сайт на каждый заход.
@@ -650,6 +676,7 @@ await bootstrapUsers();
 await loadState();
 
 await fixLegacyOwner().catch((error) => console.log('Подписи не поправились:', error.message));
+await ensureFounders().catch((error) => console.log('Партнёры не завелись:', error.message));
 
 // Курс подтягиваем при запуске и затем несколько раз в сутки: НБТ публикует
 // его раз в день, но сервер может оказаться выключенным в момент публикации.

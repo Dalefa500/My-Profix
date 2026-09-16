@@ -108,6 +108,9 @@ export default function dashboard() {
         <span class="hero__cell">Доход<b>${money(totals.incomeBase)}</b></span>
         <span class="hero__cell">Расход<b>${money(totals.expenseBase)}</b></span>
       </div>
+      ${totals.incomeBarterBase > 0 ? raw(html`
+        <p class="hero__note">Из дохода ${money(totals.incomeBarterBase)} — взаимозачётом,
+          деньгами пришло ${money(totals.incomeCashBase)}</p>`) : ''}
     </div>
 
     <div class="stats">

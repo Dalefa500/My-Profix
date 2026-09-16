@@ -1205,3 +1205,12 @@ td.danger, .danger-text { color: var(--danger); }
 
 /* Кнопка выгрузки отчёта стоит над цифрами периода. */
 .btn--block[data-report] { margin-bottom: 12px; }
+
+
+/* Пояснение под главными цифрами: часть дохода приходит не деньгами. */
+.hero__note {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.78);
+}

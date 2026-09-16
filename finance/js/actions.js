@@ -19,7 +19,7 @@ function money(values, settings) {
   return { amount, currency, fx, base: toBase(amount, currency, fx) };
 }
 
-// Имя того, кто внёс операцию (оба учредителя работают с одними данными).
+// Имя того, кто внёс операцию (оба партнёра работают с одними данными).
 function currentOwner() {
   return store.getUser()?.name || '';
 }
@@ -383,6 +383,8 @@ export function saveIncome(values, id = null) {
     projectId: values.projectId || null,
     type: values.type || (values.projectId ? 'advance' : 'other'),
     method: values.method || 'cash',
+    // Приход по взаимозачёту привязан к имуществу, с которого списывается.
+    barterId: values.method === 'barter' ? (values.barterId || null) : null,
     comment: values.comment?.trim() || '',
   };
   if (id) return store.patch('incomes', id, record);
@@ -519,6 +521,78 @@ export function payPlanned(plannedId, values = {}) {
   }
   store.commit(ops);
   return { ok: true, expense };
+}
+
+// --------------------------------------------------------- взаиморасчёты
+
+// Имущество, которым рассчитывается клиент: квартира, машина, материалы.
+// Записываем его оценку, а дальше выполненные работы списываются с неё.
+export function saveBarter(values, id = null) {
+  const settings = getState().settings;
+  const value = money(values, settings);
+  const record = {
+    clientId: values.clientId || null,
+    title: values.title?.trim() || 'Взаимозачёт',
+    kind: values.kind || 'property',
+    ...value,
+    date: values.date || today(),
+    note: values.note?.trim() || '',
+  };
+  if (id) return store.patch('barters', id, record);
+  return store.insert('barters', { ...record, createdBy: currentOwner() }, 'brt');
+}
+
+export function deleteBarter(id) {
+  const state = getState();
+  // Уже зачтённые работы остаются доходом — просто перестают быть
+  // привязанными к имуществу.
+  const ops = [op.remove('barters', id)];
+  for (const income of state.incomes.filter((item) => item.barterId === id)) {
+    ops.push(op.patch('incomes', income.id, { barterId: null }));
+  }
+  return store.commit(ops);
+}
+
+// -------------------------------------------------------------- партнёры
+
+export function saveFounder(values, id = null) {
+  const record = {
+    name: values.name?.trim() || 'Партнёр',
+    role: values.role?.trim() || '',
+    note: values.note?.trim() || '',
+  };
+  if (id) return store.patch('founders', id, record);
+  return store.insert('founders', record, 'fnd');
+}
+
+export function deleteFounder(id) {
+  const state = getState();
+  const ops = [op.remove('founders', id)];
+  for (const draw of state.draws.filter((item) => item.founderId === id)) {
+    ops.push(op.remove('draws', draw.id));
+  }
+  return store.commit(ops);
+}
+
+// Партнёр взял деньги из кассы как свою долю прибыли.
+// Это не расход студии: прибыль от такого изъятия не уменьшается.
+export function saveDraw(values, id = null) {
+  const settings = getState().settings;
+  const payment = money(values, settings);
+  const record = {
+    founderId: values.founderId || null,
+    date: values.date || today(),
+    ...payment,
+    method: values.method || 'cash',
+    comment: values.comment?.trim() || '',
+  };
+  if (!record.founderId) return { ok: false, error: 'Выберите партнёра' };
+  if (id) return store.patch('draws', id, record);
+  return store.insert('draws', { ...record, createdBy: currentOwner() }, 'drw');
+}
+
+export function deleteDraw(id) {
+  return store.remove('draws', id);
 }
 
 // ------------------------------------------------------------ настройки

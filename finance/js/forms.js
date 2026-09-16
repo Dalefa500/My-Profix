@@ -8,9 +8,9 @@ import { today, monthLabel } from './dates.js';
 import { formatAmount } from './money.js';
 import {
   PROJECT_STATUSES, OBJECT_TYPES, PROJECT_ROLES, INCOME_TYPES, PAYMENT_METHODS,
-  EMPLOYEE_PAY_TYPES, expenseGroups, SYSTEM_CATEGORIES, categoryLabel,
+  EMPLOYEE_PAY_TYPES, BARTER_KINDS, expenseGroups, SYSTEM_CATEGORIES, categoryLabel,
 } from './model.js';
-import { assignmentState, assignmentTotals, payrollState } from './calc.js';
+import { assignmentState, assignmentTotals, payrollState, barterState } from './calc.js';
 
 const option = (value, label) => ({ value, label });
 
@@ -24,6 +24,21 @@ function projectOptions(state, { allowEmpty = true } = {}) {
     .filter((item) => item.status !== 'cancelled')
     .map((item) => option(item.id, item.name));
   return allowEmpty ? [option('', 'Без проекта'), ...options] : options;
+}
+
+// Взаимозачёты, по которым ещё осталось что списывать.
+// Закрытые не прячем, если операция уже на них ссылается, — иначе
+// при исправлении старой записи выбор потеряется.
+function barterOptions(state, currentId = '') {
+  const rows = state.barters
+    .map((item) => barterState(state, item))
+    .filter((row) => !row.done || row.barter.id === currentId)
+    .map((row) => {
+      const client = byId('clients', row.barter.clientId);
+      const left = formatAmount(row.leftBase);
+      return option(row.barter.id, `${row.barter.title}${client ? ` · ${client.name}` : ''} · осталось ${left}`);
+    });
+  return [option('', 'Не выбран'), ...rows];
 }
 
 function employeeOptions(state, filter = () => true) {
@@ -332,11 +347,21 @@ export function openIncomeForm(prefill = {}, onDone) {
       {
         name: 'method', label: 'Способ оплаты', type: 'select',
         options: PAYMENT_METHODS.map((item) => option(item.id, item.label)),
-        value: income?.method || 'cash',
+        value: income?.method || prefill.method || 'cash',
+      },
+      {
+        name: 'barterId', label: 'В счёт какого имущества', type: 'select',
+        options: barterOptions(state, income?.barterId || ''),
+        value: income?.barterId || prefill.barterId || '',
+        hint: 'Заполняется, когда способ оплаты — взаимозачёт.',
       },
       { name: 'comment', label: 'Комментарий', type: 'textarea', value: income?.comment || '', wide: true },
     ],
     onSubmit: (values) => {
+      if (values.method === 'barter' && !values.barterId) {
+        toast('Выберите, с какого имущества списать', 'danger');
+        return false;
+      }
       actions.saveIncome({
         ...values,
         currency: values.amountCurrency,
@@ -553,6 +578,128 @@ export function openPlannedPayment(plannedId, onDone) {
         return false;
       }
       toast('Платёж проведён', 'good');
+      onDone?.();
+      return true;
+    },
+  });
+}
+
+// --------------------------------------------------------- взаиморасчёты
+
+// Клиент-застройщик рассчитывается не деньгами, а квартирой или машиной.
+// Здесь записывается, что именно передано и во сколько это оценили;
+// дальше выполненные работы списываются с этой оценки.
+export function openBarterForm(id = null, prefill = {}, onDone) {
+  const state = getState();
+  const barter = id ? byId('barters', id) : null;
+
+  openForm({
+    title: barter ? 'Взаимозачёт' : 'Новый взаимозачёт',
+    fields: [
+      {
+        name: 'title', label: 'Что передаётся', type: 'text', required: true, wide: true,
+        value: barter?.title || '',
+        placeholder: 'Квартира, 3 комнаты, ЖК «Сомон»',
+      },
+      {
+        name: 'amount', label: 'Оценка', type: 'money', required: true,
+        value: barter?.amount ?? '',
+        currency: barter?.currency,
+        fx: barter?.fx,
+        hint: 'Сумма, на которую стороны договорились. С неё списываются работы.',
+      },
+      {
+        name: 'clientId', label: 'Клиент', type: 'select', required: true,
+        options: clientOptions(state), value: barter?.clientId || prefill.clientId || '',
+      },
+      {
+        name: 'kind', label: 'Вид', type: 'select',
+        options: BARTER_KINDS.map((item) => option(item.id, item.label)),
+        value: barter?.kind || 'property',
+      },
+      { name: 'date', label: 'Дата договорённости', type: 'date', value: barter?.date || today() },
+    ],
+    advanced: [
+      { name: 'note', label: 'Заметка', type: 'textarea', value: barter?.note || '', wide: true },
+    ],
+    onSubmit: (values) => {
+      if (!values.clientId) {
+        toast('Выберите клиента', 'danger');
+        return false;
+      }
+      actions.saveBarter({
+        ...values,
+        currency: values.amountCurrency,
+        fx: values.amountFx,
+      }, id);
+      toast(barter ? 'Взаимозачёт изменён' : 'Взаимозачёт добавлен', 'good');
+      onDone?.();
+      return true;
+    },
+  });
+}
+
+// -------------------------------------------------------------- партнёры
+
+export function openFounderForm(id = null, onDone) {
+  const founder = id ? byId('founders', id) : null;
+  openForm({
+    title: founder ? 'Партнёр' : 'Новый партнёр',
+    fields: [
+      { name: 'name', label: 'Имя', type: 'text', required: true, value: founder?.name || '', wide: true },
+      { name: 'role', label: 'Роль в студии', type: 'text', value: founder?.role || '', wide: true },
+    ],
+    advanced: [
+      { name: 'note', label: 'Заметка', type: 'textarea', value: founder?.note || '', wide: true },
+    ],
+    onSubmit: (values) => {
+      actions.saveFounder(values, id);
+      toast(founder ? 'Сохранено' : 'Партнёр добавлен', 'good');
+      onDone?.();
+      return true;
+    },
+  });
+}
+
+// Партнёр взял деньги из кассы — это его доля прибыли, а не расход студии.
+export function openDrawForm(founderId = '', id = null, onDone) {
+  const state = getState();
+  const draw = id ? byId('draws', id) : null;
+
+  openForm({
+    title: draw ? 'Выдача партнёру' : 'Партнёр взял деньги',
+    fields: [
+      {
+        name: 'amount', label: 'Сумма', type: 'money', required: true,
+        value: draw?.amount ?? '', currency: draw?.currency, fx: draw?.fx,
+      },
+      { name: 'date', label: 'Дата', type: 'date', required: true, value: draw?.date || today() },
+      {
+        name: 'founderId', label: 'Кто взял', type: 'select', required: true,
+        options: state.founders.map((item) => option(item.id, item.name)),
+        value: draw?.founderId || founderId || state.founders[0]?.id || '',
+      },
+    ],
+    advanced: [
+      {
+        name: 'method', label: 'Чем выдано', type: 'select',
+        options: PAYMENT_METHODS.filter((item) => item.id !== 'barter')
+          .map((item) => option(item.id, item.label)),
+        value: draw?.method || 'cash',
+      },
+      { name: 'comment', label: 'Комментарий', type: 'textarea', value: draw?.comment || '', wide: true },
+    ],
+    onSubmit: (values) => {
+      const result = actions.saveDraw({
+        ...values,
+        currency: values.amountCurrency,
+        fx: values.amountFx,
+      }, id);
+      if (result?.ok === false) {
+        toast(result.error, 'danger');
+        return false;
+      }
+      toast('Записано', 'good');
       onDone?.();
       return true;
     },

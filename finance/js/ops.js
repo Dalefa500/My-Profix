@@ -5,6 +5,10 @@
 export const COLLECTIONS = [
   'clients', 'projects', 'employees', 'assignments',
   'incomes', 'expenses', 'payrolls', 'planned',
+  // barters — взаиморасчёты: застройщик рассчитывается квартирой или машиной,
+  // и стоимость выполненных работ списывается с её оценки.
+  // founders — партнёры студии, draws — деньги, которые они берут из кассы.
+  'barters', 'founders', 'draws',
 ];
 
 // Версия устройства данных. Меняется, когда старые записи нужно
@@ -36,6 +40,9 @@ export function emptyData() {
     expenses: [],
     payrolls: [],
     planned: [],
+    barters: [],
+    founders: [],
+    draws: [],
   };
 }
 

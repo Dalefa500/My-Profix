@@ -3,7 +3,7 @@
 import { html, raw, money, sectionTitle, emptyState, openForm, toast } from '../ui.js';
 import { formatPlain } from '../money.js';
 import { getState } from '../store.js';
-import { periodTotals, monthlySeries, yearSummary } from '../calc.js';
+import { periodTotals, monthlySeries, yearSummary, foundersSummary, barterTotals } from '../calc.js';
 import { monthlyChart, breakdownBars } from '../charts.js';
 import {
   today, monthKey, monthLabel, lastMonthKeys, monthKeysBetween, rangeFor, formatDate, parse,
@@ -137,6 +137,49 @@ function openCustomPeriod() {
   });
 }
 
+// Сколько партнёры взяли из кассы за период. Это не расход студии,
+// поэтому стоит отдельным блоком, а не в структуре расходов.
+function partnersBlock(state, range) {
+  const summary = foundersSummary(state, range.from, range.to);
+  if (!summary.rows.length) return '';
+  return html`
+    <div class="card">
+      ${raw(sectionTitle('Партнёры', '<a class="btn btn--sm btn--ghost" href="#/founders">Подробно</a>'))}
+      <div class="list">
+        ${raw(summary.rows.map((row) => html`
+          <div class="row">
+            <div class="row__main"><span class="row__title">${row.founder.name}</span>
+              <span class="row__subtitle">всего за всё время ${money(row.totalBase)}</span></div>
+            <span class="row__amount">${money(row.periodBase)}</span>
+          </div>`).join(''))}
+        <div class="row">
+          <div class="row__main"><span class="row__title">Итого за период</span></div>
+          <span class="row__amount">${money(summary.periodBase)}</span>
+        </div>
+      </div>
+      <p class="muted">Доля прибыли, а не расход студии: на прибыль эти суммы не влияют.</p>
+    </div>`;
+}
+
+// Расчёты имуществом: сколько получено и сколько ещё предстоит отработать.
+function barterBlock(state) {
+  const totals = barterTotals(state);
+  if (!totals.rows.length) return '';
+  return html`
+    <div class="card">
+      ${raw(sectionTitle('Взаиморасчёты'))}
+      <div class="list">
+        ${raw(totals.rows.map((row) => html`
+          <a class="row" href="#/clients/${row.barter.clientId}">
+            <div class="row__main"><span class="row__title">${row.barter.title}</span>
+              <span class="row__subtitle">оценка ${money(row.totalBase)} · зачтено ${money(row.usedBase)}</span></div>
+            <span class="row__amount ${raw(row.done ? 'good' : 'warn')}">${money(row.leftBase)}</span>
+          </a>`).join(''))}
+      </div>
+      <p class="muted">Осталось отработать по имуществу, полученному от клиентов.</p>
+    </div>`;
+}
+
 export default function reports() {
   const state = getState();
   const range = activeRange();
@@ -185,6 +228,9 @@ export default function reports() {
       ${raw(sectionTitle('Структура доходов'))}
       ${raw(breakdownBars(incomes, { total: totals.incomeBase }))}
     </div>
+
+    ${raw(partnersBlock(state, range))}
+    ${raw(barterBlock(state))}
 
     ${isYear ? raw(yearBlock(state)) : ''}`;
 

@@ -211,6 +211,87 @@ export function projectFinance(state, project) {
   };
 }
 
+// ------------------------------------------------------------ взаиморасчёты
+
+// Взаимозачёт: клиент рассчитывается не деньгами, а имуществом —
+// квартирой, машиной, материалами. Мы записываем оценку этого имущества,
+// а дальше стоимость выполненных работ списывается с неё.
+export function barterState(state, barter) {
+  if (!barter) return null;
+  const incomes = state.incomes.filter((item) => item.barterId === barter.id);
+  const usedBase = sum(incomes, (item) => item.base);
+  const totalBase = toBase(barter.amount, barter.currency, barter.fx);
+  return {
+    barter,
+    incomes,
+    totalBase,
+    usedBase,
+    leftBase: round(Math.max(0, totalBase - usedBase)),
+    // Списали больше, чем стоит имущество: клиент остался должен деньгами.
+    overBase: round(Math.max(0, usedBase - totalBase)),
+    done: usedBase >= totalBase - 0.01,
+  };
+}
+
+export function clientBarters(state, clientId) {
+  return state.barters
+    .filter((item) => item.clientId === clientId)
+    .map((item) => barterState(state, item));
+}
+
+export function openBarters(state) {
+  return state.barters
+    .map((item) => barterState(state, item))
+    .filter((item) => !item.done)
+    .sort((a, b) => b.leftBase - a.leftBase);
+}
+
+// Сколько всего имущества получено и сколько по нему ещё не отработано.
+export function barterTotals(state) {
+  const rows = state.barters.map((item) => barterState(state, item));
+  return {
+    rows,
+    totalBase: sum(rows, (item) => item.totalBase),
+    usedBase: sum(rows, (item) => item.usedBase),
+    leftBase: sum(rows, (item) => item.leftBase),
+  };
+}
+
+// -------------------------------------------------------------- партнёры
+
+// Партнёры берут деньги из кассы как свою долю прибыли. Это не расход
+// студии: прибыль от таких изъятий не уменьшается, поэтому они живут
+// отдельно от расходов и считаются здесь.
+export function founderDraws(state, founderId, from, to) {
+  return state.draws
+    .filter((item) => item.founderId === founderId)
+    .filter((item) => (from && to ? inRange(item.date, from, to) : true))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+export function founderState(state, founder, from, to) {
+  if (!founder) return null;
+  const all = founderDraws(state, founder.id);
+  const period = from && to ? all.filter((item) => inRange(item.date, from, to)) : all;
+  return {
+    founder,
+    draws: all,
+    periodDraws: period,
+    totalBase: sum(all, (item) => item.base),
+    periodBase: sum(period, (item) => item.base),
+    lastDate: all[0]?.date || '',
+  };
+}
+
+export function foundersSummary(state, from, to) {
+  const rows = state.founders.map((founder) => founderState(state, founder, from, to));
+  return {
+    rows,
+    totalBase: sum(rows, (item) => item.totalBase),
+    periodBase: sum(rows, (item) => item.periodBase),
+  };
+}
+
 // ------------------------------------------------------------------ клиенты
 
 export function clientFinance(state, clientId) {
@@ -327,6 +408,10 @@ export function periodTotals(state, from, to) {
   const expenses = expensesInRange(state, from, to);
   const incomeBase = sum(incomes, (item) => item.base);
   const expenseBase = sum(expenses, (item) => item.base);
+  // Часть дохода приходит не деньгами, а взаимозачётом — это видно отдельно,
+  // иначе непонятно, сколько на самом деле пришло в кассу.
+  const barterIncomes = incomes.filter((item) => item.method === 'barter' || item.barterId);
+  const incomeBarterBase = sum(barterIncomes, (item) => item.base);
 
   const expenseByCategory = new Map();
   for (const expense of expenses) {
@@ -350,6 +435,8 @@ export function periodTotals(state, from, to) {
     incomes,
     expenses,
     incomeBase,
+    incomeBarterBase,
+    incomeCashBase: round(incomeBase - incomeBarterBase),
     expenseBase,
     profitBase: round(incomeBase - expenseBase),
     expenseByCategory,

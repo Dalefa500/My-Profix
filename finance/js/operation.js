@@ -23,6 +23,7 @@ export function openOperation(tab, id) {
   if (!item) return;
   const project = byId('projects', item.projectId);
   const client = byId('clients', item.clientId);
+  const barter = item.barterId ? byId('barters', item.barterId) : null;
   const system = !isIncome && Boolean(item.source);
 
   openSheet({
@@ -43,6 +44,8 @@ export function openOperation(tab, id) {
           <span class="row__title">${labelOf(PAYMENT_METHODS, item.method, 'Наличные')}</span></div></div>
         ${item.currency !== 'USD' ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Введено в сомони</span>
           <span class="row__title">${formatAmount(item.amount, item.currency)} по курсу ${formatUsdRate(rateToHuman(item.fx))}</span></div></div>`) : ''}
+        ${barter ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Зачтено с имущества</span>
+          <span class="row__title">${barter.title}</span></div></div>`) : ''}
         ${item.comment ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Комментарий</span>
           <span class="row__title">${item.comment}</span></div></div>`) : ''}
         ${item.createdBy ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Внёс</span>

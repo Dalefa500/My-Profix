@@ -23,6 +23,7 @@ import clients from './views/clients.js';
 import clientDetail from './views/client.js';
 import payments from './views/payments.js';
 import settings from './views/settings.js';
+import founders, { founderDetail } from './views/founders.js';
 
 const root = document.getElementById('app');
 let currentView = null;
@@ -335,6 +336,8 @@ const VIEWS = {
   '/clients/:id': clientDetail,
   '/payments': payments,
   '/payments/:tab': payments,
+  '/founders': founders,
+  '/founders/:id': founderDetail,
   '/settings': settings,
 };
 
@@ -441,6 +444,7 @@ function openMoreMenu() {
     body: html`<div class="list">
       <a class="row" href="#/clients" data-close="1"><div class="row__main"><span class="row__title">Клиенты</span></div><span class="row__meta">›</span></a>
       <a class="row" href="#/payments" data-close="1"><div class="row__main"><span class="row__title">Платежи</span><span class="row__subtitle">Что получить и что выплатить</span></div><span class="row__meta">›</span></a>
+      <a class="row" href="#/founders" data-close="1"><div class="row__main"><span class="row__title">Партнёры</span><span class="row__subtitle">Сколько взяли из кассы</span></div><span class="row__meta">›</span></a>
       <a class="row" href="#/settings" data-close="1"><div class="row__main"><span class="row__title">Настройки</span><span class="row__subtitle">Курс, категории, пароль</span></div><span class="row__meta">›</span></a>
       <div class="row"><div class="row__main"><span class="row__title">${user?.name || ''}</span>
         <span class="row__subtitle">${store.isAuthDisabled() ? 'вход в приложение отключён'

@@ -9,11 +9,14 @@ import path from 'node:path';
 import { Pdf, PAGE } from './pdf.js';
 import { formatAmount, formatUsdRate, rateToHuman } from '../finance/js/money.js';
 import { formatDate, monthLabel, inRange } from '../finance/js/dates.js';
-import { categoryLabel, labelOf, PROJECT_STATUSES, INCOME_TYPES } from '../finance/js/model.js';
+import {
+  categoryLabel, labelOf, PROJECT_STATUSES, INCOME_TYPES, PAYMENT_METHODS, BARTER_KINDS,
+} from '../finance/js/model.js';
 import {
   employeeFinance, clientFinance, projectFinance,
   projectIncomes, periodTotals, employeePayrolls,
-  payrollState, projectPlan,
+  payrollState, projectPlan, founderState, foundersSummary,
+  clientBarters, barterTotals,
 } from '../finance/js/calc.js';
 
 const FONT_DIR = path.resolve(new URL('./fonts', import.meta.url).pathname);
@@ -328,6 +331,29 @@ function clientReport(state, client) {
     { empty: 'У клиента пока нет проектов' },
   );
 
+  const barters = clientBarters(state, client.id);
+  if (barters.length) {
+    sheet.heading('Взаиморасчёты');
+    sheet.table(
+      [
+        { title: 'Что передано', width: 180 },
+        { title: 'Вид', width: 90 },
+        { title: 'Оценка', width: 80, align: 'right' },
+        { title: 'Зачтено', width: 80, align: 'right' },
+        { title: 'Осталось', width: 80, align: 'right' },
+      ],
+      barters.map((row) => [
+        row.barter.title,
+        labelOf(BARTER_KINDS, row.barter.kind, 'Имущество'),
+        money(row.totalBase),
+        { text: money(row.usedBase), color: GOOD },
+        { text: money(row.leftBase), color: row.done ? MUTED : BURGUNDY },
+      ]),
+    );
+    sheet.note('Клиент рассчитывается имуществом: стоимость выполненных работ'
+      + ' списывается с его оценки.');
+  }
+
   const incomes = state.incomes
     .filter((item) => item.clientId === client.id
       || finance.projects.some((project) => project.id === item.projectId))
@@ -455,6 +481,48 @@ function projectReport(state, project) {
   return { buffer: sheet.build(), name: fileName(['Отчёт', project.name, todayIso()]) };
 }
 
+// --------------------------------------------------------------- партнёр
+
+function founderReport(state, founder, from, to) {
+  const info = founderState(state, founder, from, to);
+  const period = from && to;
+  const sheet = new Sheet({
+    title: `Отчёт по партнёру — ${founder.name}`,
+    subtitle: [founder.role, period ? `${formatDate(from)} — ${formatDate(to)}` : 'за всё время']
+      .filter(Boolean).join(' · '),
+    settings: state.settings,
+  });
+
+  const totals = period ? periodTotals(state, from, to) : null;
+  sheet.totals([
+    { label: period ? 'Взял за период' : 'Взял всего', value: period ? info.periodBase : info.totalBase },
+    { label: 'Взял за всё время', value: info.totalBase, color: BURGUNDY },
+    ...(totals ? [{ label: 'Прибыль студии за период', value: totals.profitBase, color: GOOD }] : []),
+  ]);
+
+  sheet.heading('Выдачи');
+  sheet.table(
+    [
+      { title: 'Дата', width: 70 },
+      { title: 'Назначение', width: 230 },
+      { title: 'Чем выдано', width: 90 },
+      { title: 'Сумма', width: 80, align: 'right' },
+    ],
+    (period ? info.periodDraws : info.draws).map((item) => [
+      formatDate(item.date, { short: true }),
+      item.comment || '—',
+      labelOf(PAYMENT_METHODS, item.method, 'Наличные'),
+      { text: money(item.base), font: 'bold' },
+    ]),
+    { empty: 'Выдач за этот период не было' },
+  );
+
+  sheet.note('Деньги, которые партнёр берёт для себя, — это его доля прибыли,'
+    + ' а не расход студии: на прибыль они не влияют.');
+
+  return { buffer: sheet.build(), name: fileName(['Отчёт', founder.name, todayIso()]) };
+}
+
 // ----------------------------------------------------------------- период
 
 function periodReport(state, from, to) {
@@ -470,6 +538,11 @@ function periodReport(state, from, to) {
     { label: 'Расход', value: totals.expenseBase, color: BURGUNDY },
     { label: 'Прибыль', value: totals.profitBase },
   ]);
+
+  if (totals.incomeBarterBase > 0) {
+    sheet.note(`Из дохода ${money(totals.incomeBarterBase)} получено взаимозачётом —`
+      + ` деньгами пришло ${money(totals.incomeCashBase)}.`);
+  }
 
   sheet.heading('Доходы по типам');
   sheet.table(
@@ -494,6 +567,43 @@ function periodReport(state, from, to) {
       ]),
     { empty: 'Расходов за период не было' },
   );
+
+  const partners = foundersSummary(state, from, to);
+  if (partners.rows.length && partners.periodBase > 0) {
+    sheet.heading('Партнёры взяли из кассы');
+    sheet.table(
+      [
+        { title: 'Партнёр', width: 220 },
+        { title: 'За период', width: 90, align: 'right' },
+        { title: 'За всё время', width: 90, align: 'right' },
+      ],
+      partners.rows.map((row) => [
+        row.founder.name,
+        { text: money(row.periodBase), font: 'bold' },
+        { text: money(row.totalBase), color: MUTED },
+      ]),
+    );
+    sheet.note('Доля прибыли, а не расход студии: в расходы выше эти суммы не входят.');
+  }
+
+  const barters = barterTotals(state);
+  if (barters.rows.length) {
+    sheet.heading('Расчёты имуществом');
+    sheet.table(
+      [
+        { title: 'Что передано', width: 200 },
+        { title: 'Клиент', width: 120 },
+        { title: 'Оценка', width: 80, align: 'right' },
+        { title: 'Осталось', width: 80, align: 'right' },
+      ],
+      barters.rows.map((row) => [
+        row.barter.title,
+        state.clients.find((item) => item.id === row.barter.clientId)?.name || '—',
+        money(row.totalBase),
+        { text: money(row.leftBase), color: row.done ? MUTED : BURGUNDY },
+      ]),
+    );
+  }
 
   sheet.heading('Все операции периода');
   const moves = [
@@ -540,6 +650,11 @@ export function buildReport(state, { type, id, from, to }) {
     const project = state.projects.find((item) => item.id === id);
     if (!project) return null;
     return projectReport(state, project);
+  }
+  if (type === 'founder') {
+    const founder = state.founders.find((item) => item.id === id);
+    if (!founder) return null;
+    return founderReport(state, founder, from, to);
   }
   if (type === 'period') {
     if (!from || !to) return null;
