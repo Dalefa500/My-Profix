@@ -230,13 +230,15 @@ h1, h2, h3 { line-height: 1.2; }
   color: var(--ink-2);
   transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1);
 }
-.topbar__back:active { transform: scale(0.88); opacity: 0.7; transition-duration: 0.06s; }
+.topbar__back:active { transform: scale(0.86); transition-duration: 0.06s; }
 .topbar__back svg { width: 18px; height: 18px; }
 
 .topbar__side {
   display: flex; align-items: center; gap: 8px;
   min-width: 0;
   flex: 1 1 0;
+  /* длинный заголовок обрезается, не доходя до знака студии по центру */
+  max-width: calc(50% - 80px);
 }
 .topbar__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
@@ -265,7 +267,7 @@ h1, h2, h3 { line-height: 1.2; }
 .brand {
   position: absolute;
   left: 50%;
-  top: calc(env(safe-area-inset-top) + 6px);
+  top: calc(env(safe-area-inset-top) + 3px);
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
@@ -275,13 +277,14 @@ h1, h2, h3 { line-height: 1.2; }
 }
 .brand__name {
   font-family: var(--font-brand);
-  font-size: 27px;
+  font-size: 35px;
   font-weight: 500;
   line-height: 1.05;
   color: var(--brand-signature);
 }
 .brand__sub {
-  font-size: 8.5px;
+  margin-top: -2px;
+  font-size: 8px;
   font-weight: 500;
   letter-spacing: 0.42em;
   text-indent: 0.42em;
@@ -299,7 +302,7 @@ h1, h2, h3 { line-height: 1.2; }
   position: relative;
   transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.2s;
 }
-.icon-btn:active { transform: scale(0.88); opacity: 0.7; transition-duration: 0.06s; }
+.icon-btn:active { transform: scale(0.86); transition-duration: 0.06s; }
 .icon-btn svg { width: 19px; height: 19px; }
 .icon-btn--plain { background: none; border: 0; }
 .icon-btn__dot {
@@ -383,7 +386,7 @@ h1, h2, h3 { line-height: 1.2; }
   color: var(--muted);
   transition: transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1), color 0.2s;
 }
-.tabbar__item:active { transform: scale(0.88); opacity: 0.65; transition-duration: 0.06s; }
+.tabbar__item:active { transform: scale(0.88); transition-duration: 0.06s; }
 .tabbar__item.is-active { color: var(--accent); }
 .tabbar__item svg {
   transition: transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.2s;
@@ -410,7 +413,9 @@ h1, h2, h3 { line-height: 1.2; }
   font-size: 26px; font-weight: 300;
   display: grid; place-items: center;
   box-shadow: 0 14px 30px -10px color-mix(in srgb, var(--accent) 65%, transparent);
+  transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1);
 }
+.fab:active { transform: scale(0.88); transition-duration: 0.06s; }
 
 /* ---------------------------------------------------------------- карточки */
 
@@ -448,7 +453,7 @@ h1, h2, h3 { line-height: 1.2; }
   transition: transform 0.34s cubic-bezier(0.34, 1.4, 0.64, 1);
 }
 /* Нажатие чувствуется: элемент слегка проседает и пружинит обратно. */
-a.stat:active, .card:active { transform: scale(0.985); }
+a.stat:active, .card:active { transform: scale(0.972); transition-duration: 0.06s; }
 .stat__label { font-size: 12px; color: var(--muted); font-weight: 500; }
 .stat__value { font-size: 21px; font-weight: 600; letter-spacing: -0.03em; }
 .stat__hint { font-size: 11.5px; color: var(--muted); }
@@ -484,8 +489,8 @@ a.stat:active, .card:active { transform: scale(0.985); }
   border-radius: 12px;
 }
 a.row:active, button.row:active {
-  transform: scale(0.985);
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  transform: scale(0.975);
+  transition-duration: 0.06s;
 }
 .row__main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .row__title { font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
@@ -533,7 +538,7 @@ a.row:active, button.row:active {
   white-space: nowrap;
   transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1), opacity 0.2s, background 0.2s;
 }
-.btn:active { transform: scale(0.955); opacity: 0.86; transition-duration: 0.06s; }
+.btn:active { transform: scale(0.94); transition-duration: 0.06s; }
 .btn--primary { background: var(--accent); border-color: transparent; color: #fff; }
 .btn--good { background: var(--good); border-color: transparent; color: #fff; }
 .btn--danger { background: var(--danger); border-color: transparent; color: #fff; }
@@ -561,7 +566,7 @@ a.row:active, button.row:active {
   animation: quick-in 0.42s cubic-bezier(0.32, 0.72, 0, 1) backwards;
   animation-delay: calc(var(--i, 0) * 45ms);
 }
-.quick__item:active { transform: scale(0.955); transition-duration: 0.06s; }
+.quick__item:active { transform: scale(0.94); transition-duration: 0.06s; }
 .quick__item:active .quick__icon { transform: scale(0.88) rotate(-4deg); }
 .quick__label { line-height: 1.25; }
 
@@ -628,7 +633,7 @@ a.row:active, button.row:active {
   color: var(--ink-2);
   transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.2s, color 0.2s;
 }
-.chip:active { transform: scale(0.94); transition-duration: 0.06s; }
+.chip:active { transform: scale(0.92); transition-duration: 0.06s; }
 .chip.is-active { background: var(--ink); color: var(--bg); border-color: transparent; }
 
 .tabs { display: flex; gap: 4px; background: var(--surface-2); padding: 4px; border-radius: 12px; }
@@ -781,7 +786,11 @@ a.row:active, button.row:active {
 .chart__zero { stroke: color-mix(in srgb, var(--muted) 60%, transparent); stroke-width: 1; }
 .chart__x { font-size: 9px; fill: var(--muted); font-weight: 600; }
 .chart__bar { transition: opacity 0.15s; }
-.chart__bar:hover, .chart__bar:focus { opacity: 0.75; outline: none; }
+.chart__bar:focus { outline: none; }
+/* подсветка столбика — только там, где есть мышь: на телефоне она «залипает» */
+@media (hover: hover) {
+  .chart__bar:hover { opacity: 0.75; }
+}
 .chart__tip {
   position: absolute; top: -4px;
   transform: translateX(-50%);
