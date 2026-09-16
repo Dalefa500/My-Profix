@@ -1088,3 +1088,36 @@ td.danger, .danger-text { color: var(--danger); }
   .fab { bottom: 26px; right: 26px; }
   .toast { left: auto; right: 26px; bottom: 96px; max-width: 360px; }
 }
+
+/* ------------------------------------------------------- поворот телефона */
+
+/* Приложение свёрстано под вертикальный экран: в шапке знак студии по центру,
+   внизу пять вкладок. В горизонтальном положении всё это выглядит перекошенно,
+   поэтому на телефоне показываем просьбу вернуть телефон обратно.
+   На планшетах и компьютерах (там экран высокий даже «лёжа») ничего не меняем. */
+.rotate-lock { display: none; }
+
+@media (orientation: landscape) and (max-height: 540px) and (hover: none) and (pointer: coarse) {
+  .rotate-lock {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 14px;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--ink-2);
+    text-align: center;
+  }
+  .rotate-lock svg {
+    width: 44px; height: 44px;
+    color: var(--brand-signature);
+  }
+  .rotate-lock p {
+    font-size: 14px;
+    letter-spacing: 0.04em;
+  }
+  #app, #sheet, #toast, .brand { display: none !important; }
+}

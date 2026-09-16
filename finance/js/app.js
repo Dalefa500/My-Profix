@@ -477,8 +477,17 @@ store.subscribe((_, reason) => {
   if (root.classList.contains('app')) renderView();
 });
 
+// Android и компьютеры умеют закреплять ориентацию по-настоящему.
+// iPhone такую команду игнорирует, поэтому там работает подсказка в вёрстке.
+function lockPortrait() {
+  try {
+    screen.orientation?.lock?.('portrait')?.catch?.(() => {});
+  } catch { /* ориентация не закрепляется — это не ошибка */ }
+}
+
 async function boot() {
   applyTheme();
+  lockPortrait();
   root.className = 'auth';
   root.innerHTML = `
     <div class="auth__scene" aria-hidden="true">${PLAN_ART}</div>
