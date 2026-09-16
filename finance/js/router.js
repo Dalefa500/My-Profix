@@ -16,7 +16,16 @@ export function currentRoute() {
   return current;
 }
 
-export function go(path) {
+// replace: true — переход без новой записи в истории.
+// Разделы переключаются именно так: иначе в полноэкранном режиме iPhone
+// системный жест «назад» уводил бы приложение по истории и перезапускал его.
+export function go(path, { replace = false } = {}) {
+  if (replace) {
+    const url = `${window.location.pathname}${window.location.search}${path}`;
+    window.history.replaceState(null, '', url);
+    resolve();
+    return;
+  }
   if (window.location.hash === path) {
     resolve();
     return;

@@ -92,7 +92,7 @@ function setStatus(next) {
 
 function cache() {
   try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ rev, data, queue }));
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ rev, data, queue, user }));
   } catch {
     /* переполнение или приватный режим — работаем без кэша */
   }
@@ -106,7 +106,8 @@ function restoreCache() {
     data = normalizeData(saved.data);
     rev = Number(saved.rev) || 0;
     queue = Array.isArray(saved.queue) ? saved.queue : [];
-    return true;
+    user = saved.user || null;
+    return Boolean(user);
   } catch {
     return false;
   }
@@ -172,13 +173,13 @@ export async function checkSession() {
 // доступа из командной строки.
 export async function signIn(code, password) {
   const body = password === undefined ? { code } : { login: code, password };
-  const payload = await api('/login', { method: 'POST', body });
-  user = payload.user;
-  authDisabled = Boolean(payload.authDisabled);
   clearCache();
   data = emptyData();
   rev = 0;
   queue = [];
+  const payload = await api('/login', { method: 'POST', body });
+  user = payload.user;
+  authDisabled = Boolean(payload.authDisabled);
   await pull();
   return user;
 }
@@ -297,7 +298,21 @@ export function stopSync() {
 }
 
 export async function init() {
-  restoreCache();
+  // Если в браузере есть прошлая сессия, приложение открывается сразу
+  // с сохранёнными данными, а связь с сервером проверяется следом —
+  // так запуск с экрана «Домой» не ждёт сеть.
+  const restored = restoreCache();
+  if (restored) {
+    startSync();
+    void (async () => {
+      const session = await checkSession(); // при отказе сервера покажется экран кода
+      if (!session) return;
+      await pull();
+      if (queue.length) scheduleFlush(0);
+    })();
+    return user;
+  }
+
   const session = await checkSession();
   if (!session) return null;
   await pull();

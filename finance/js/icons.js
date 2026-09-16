@@ -38,6 +38,13 @@ export const ICONS = {
     <path d="M3.5 8.5A2.5 2.5 0 0 1 6 6h12a2.5 2.5 0 0 1 2.5 2.5v8A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z" />
     <path d="M16.5 12.5h1.5" />`),
   chart: svg('<path d="M5 20V12M12 20V5M19 20v-6" />'),
+
+  // Шапка приложения
+  bell: svg(`
+    <path d="M6.5 9.5a5.5 5.5 0 0 1 11 0c0 3.2.8 4.8 1.5 5.7.4.5 0 1.3-.7 1.3H5.7c-.7 0-1.1-.8-.7-1.3.7-.9 1.5-2.5 1.5-5.7Z" />
+    <path d="M10 19.5a2.2 2.2 0 0 0 4 0" />`),
+  more: svg('<circle cx="5.5" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none" />'),
+  back: svg('<path d="M14.5 5.5 8 12l6.5 6.5" />'),
 };
 
 // Кнопка быстрого действия с анимированной иконкой.

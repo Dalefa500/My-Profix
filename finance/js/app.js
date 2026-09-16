@@ -36,26 +36,54 @@ const TABS = [
 // ------------------------------------------------------------------ вход
 
 // Вход по коду: логин вводить не нужно — код сам определяет, кто вошёл
-// и что ему разрешено.
+// и что ему разрешено. Экран оформлен как обложка студии: фирменные цвета,
+// чертёжная графика, спокойная типографика.
+const PLAN_ART = `
+  <svg class="auth__plan" viewBox="0 0 320 320" fill="none" stroke="currentColor"
+    stroke-width="1" aria-hidden="true">
+    <rect x="28" y="40" width="150" height="112" />
+    <rect x="178" y="40" width="114" height="60" />
+    <rect x="178" y="100" width="114" height="52" />
+    <rect x="28" y="152" width="96" height="128" />
+    <rect x="124" y="152" width="168" height="128" />
+    <path d="M124 196h-24M124 236h-24" />
+    <path d="M178 152v24M232 280v-24" />
+    <path d="M60 152a28 28 0 0 0 28 28" stroke-dasharray="3 4" />
+    <path d="M232 100a26 26 0 0 1-26 26" stroke-dasharray="3 4" />
+    <path d="M28 300h264M28 294v12M292 294v12" />
+    <circle cx="208" cy="216" r="26" stroke-dasharray="2 5" />
+  </svg>`;
+
 function renderAuth(error = '') {
   document.body.classList.remove('is-locked');
   root.className = 'auth';
   root.innerHTML = html`
-    <div class="auth__card">
-      <div class="auth__logo" aria-hidden="true">
-        <span>LD</span>
-        <div><i style="height:38%"></i><i style="height:68%"></i><i style="height:100%"></i></div>
+    <div class="auth__scene" aria-hidden="true">
+      <span class="auth__glow"></span>
+      ${raw(PLAN_ART)}
+    </div>
+
+    <div class="auth__inner">
+      <div class="auth__brand">
+        <div class="auth__logo" aria-hidden="true">
+          <span>LD</span>
+          <div><i style="height:38%"></i><i style="height:68%"></i><i style="height:100%"></i></div>
+        </div>
+        <h1 class="auth__word">Line <b>Design</b></h1>
+        <span class="auth__rule"></span>
+        <p class="auth__tagline">Студия дизайна интерьеров</p>
       </div>
-      <h1>Line Design</h1>
-      <p>Финансы студии</p>
+
       <form class="auth__form">
-        <label class="auth__label" for="code">Введите код</label>
+        <label class="auth__label" for="code">Код входа</label>
         <input id="code" name="code" class="auth__code" type="password" inputmode="numeric"
           autocomplete="one-time-code" maxlength="12" placeholder="••••••" required>
         ${error ? raw(html`<div class="form__error">${error}</div>`) : ''}
         <button class="btn btn--primary btn--block" type="submit">Войти</button>
       </form>
-      <p class="auth__hint">У каждого свой код: он определяет, кто вносит данные, а кто только смотрит.</p>
+
+      <p class="auth__hint">Финансы студии · внутренняя система<br>
+        У каждого свой код: он определяет, кто вносит данные, а кто только смотрит.</p>
     </div>`;
 
   const form = root.querySelector('form');
@@ -83,13 +111,14 @@ function shellHtml() {
   const state = store.getState();
   return html`
     <header class="topbar">
-      <div class="topbar__back" data-back hidden>‹</div>
+      <button class="topbar__back" data-back hidden aria-label="Назад">${raw(ICONS.back)}</button>
       <div class="topbar__title">
         <h1 data-title>Главная</h1>
         <span data-subtitle></span>
       </div>
-      <button class="icon-btn" data-notifications aria-label="Уведомления">🔔<span class="icon-btn__dot" data-bell hidden></span></button>
-      <button class="icon-btn" data-more aria-label="Ещё">⋯</button>
+      <button class="icon-btn" data-notifications aria-label="Уведомления">
+        ${raw(ICONS.bell)}<span class="icon-btn__dot" data-bell hidden></span></button>
+      <button class="icon-btn" data-more aria-label="Ещё">${raw(ICONS.more)}</button>
     </header>
     <main class="viewport" id="viewport">
       <div class="view" id="view"></div>
@@ -112,6 +141,12 @@ function renderShell() {
   root.querySelector('[data-more]').addEventListener('click', openMoreMenu);
   root.querySelector('[data-notifications]').addEventListener('click', openNotifications);
   root.querySelector('[data-back]').addEventListener('click', () => window.history.back());
+  root.querySelectorAll('[data-tab]').forEach((tab) => {
+    tab.addEventListener('click', (event) => {
+      event.preventDefault();
+      router.go(tab.dataset.tab, { replace: true });
+    });
+  });
   setupSwipe();
 }
 
@@ -138,6 +173,8 @@ function setupSwipe() {
     viewport.classList.remove('is-swiping', 'is-animating');
     current.style.transform = '';
     ghost.style.transform = '';
+    current.style.transitionDuration = '';
+    ghost.style.transitionDuration = '';
     ghost.innerHTML = '';
     tracking = false;
     active = false;
@@ -196,6 +233,15 @@ function setupSwipe() {
     const target = TABS[index + delta];
     const passed = delta !== 0 && Math.abs(shift) > width * THRESHOLD;
 
+    // чем ближе палец довёл страницу, тем короче доводка — жест ощущается сразу
+    const remaining = passed
+      ? Math.max(0, width - Math.abs(shift)) / width
+      : Math.abs(shift) / width;
+    const duration = Math.max(0.14, Math.min(0.32, 0.32 * remaining));
+    current.style.transitionDuration = `${duration}s`;
+    ghost.style.transitionDuration = `${duration}s`;
+    const guard = duration * 1000 + 90;
+
     viewport.classList.add('is-animating');
     if (passed && target) {
       current.style.transform = `translate3d(${-delta * width}px, 0, 0)`;
@@ -206,10 +252,10 @@ function setupSwipe() {
         // а затем отдаём управление маршрутизатору — он вернёт обработчики
         current.innerHTML = ghost.innerHTML;
         finish();
-        router.go(target.href);
+        router.go(target.href, { replace: true });
       };
       current.addEventListener('transitionend', done, { once: true });
-      setTimeout(() => { if (viewport.classList.contains('is-animating')) done(); }, 420);
+      setTimeout(() => { if (viewport.classList.contains('is-animating')) done(); }, guard);
     } else {
       current.style.transform = 'translate3d(0, 0, 0)';
       if (delta !== 0) ghost.style.transform = `translate3d(${delta * width}px, 0, 0)`;
@@ -218,7 +264,7 @@ function setupSwipe() {
         finish();
       };
       current.addEventListener('transitionend', back, { once: true });
-      setTimeout(() => { if (viewport.classList.contains('is-animating')) finish(); }, 420);
+      setTimeout(() => { if (viewport.classList.contains('is-animating')) finish(); }, guard);
     }
   };
 
@@ -392,10 +438,18 @@ store.subscribe((_, reason) => {
 
 async function boot() {
   root.className = 'auth';
-  root.innerHTML = `<div class="auth__card">
-    <div class="auth__logo" aria-hidden="true"><span>LD</span>
-      <div><i style="height:38%"></i><i style="height:68%"></i><i style="height:100%"></i></div></div>
-    <h1>Line Design</h1><p>Загружаем данные…</p></div>`;
+  root.innerHTML = `
+    <div class="auth__scene" aria-hidden="true"><span class="auth__glow"></span>${PLAN_ART}</div>
+    <div class="auth__inner">
+      <div class="auth__brand">
+        <div class="auth__logo" aria-hidden="true"><span>LD</span>
+          <div><i style="height:38%"></i><i style="height:68%"></i><i style="height:100%"></i></div></div>
+        <h1 class="auth__word">Line <b>Design</b></h1>
+        <span class="auth__rule"></span>
+        <p class="auth__tagline">Студия дизайна интерьеров</p>
+      </div>
+      <p class="auth__hint">Загружаем данные…</p>
+    </div>`;
   const user = await store.init();
   if (!user) {
     renderAuth();

@@ -3,28 +3,36 @@
 
 :root {
   color-scheme: light;
-  --bg: #f4f6f9;
-  --surface: #ffffff;
-  --surface-2: #f8fafc;
-  --ink: #0f172a;
-  --ink-2: #475569;
-  --muted: #7c8798;
-  --line: #e6eaf0;
-  --accent: #2a78d6;
-  --accent-soft: #e8f1fd;
-  --good: #16794f;
-  --good-soft: #e3f5ec;
-  --warn: #9a6100;
-  --warn-soft: #fdf0dc;
-  --danger: #c0362f;
-  --danger-soft: #fdeceb;
-  --info: #1f5fa8;
-  --info-soft: #e9f1fb;
 
-  /* Цвета графиков: проверенная палитра, различимая при дальтонизме. */
+  /* Фирменные цвета студии:
+     Alice Blue #ECF4F7 — фон, Charcoal #393F4B — текст и тёмные плоскости,
+     Burgundy #910029 — акцент. Остальные оттенки выведены из них. */
+  --brand-alice: #ecf4f7;
+  --brand-charcoal: #393f4b;
+  --brand-burgundy: #910029;
+
+  --bg: #ecf4f7;
+  --surface: #ffffff;
+  --surface-2: #f3f8fa;
+  --ink: #252b34;
+  --ink-2: #4a5261;
+  --muted: #79828f;
+  --line: #d9e3e9;
+  --accent: #910029;
+  --accent-soft: #f8e5ea;
+  --good: #14795a;
+  --good-soft: #e0f2ec;
+  --warn: #8a5a00;
+  --warn-soft: #fbeeda;
+  --danger: #a8102f;
+  --danger-soft: #fae7eb;
+  --info: #2a6099;
+  --info-soft: #e8f0f9;
+
+  /* Цвета графиков проверены на различимость при дальтонизме. */
   --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --series-3: #1baf7a;
+  --series-2: #b3123c;
+  --series-3: #8a63d2;
 
   /* Системный шрифт iPhone: тонкий, современный, отлично читается.
      Inter подхватывается на Android и компьютерах как замена. */
@@ -34,34 +42,34 @@
 
   --radius: 18px;
   --radius-sm: 12px;
-  --shadow: 0 10px 30px -18px rgba(15, 23, 42, 0.45);
-  --shadow-lg: 0 24px 60px -24px rgba(15, 23, 42, 0.5);
+  --shadow: 0 10px 30px -18px rgba(37, 43, 52, 0.45);
+  --shadow-lg: 0 24px 60px -24px rgba(37, 43, 52, 0.5);
   --tabbar: 64px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #0e1116;
-    --surface: #161b22;
-    --surface-2: #1c222b;
-    --ink: #f2f5f8;
-    --ink-2: #b6c0cd;
-    --muted: #8b95a3;
-    --line: #262d38;
-    --accent: #3987e5;
-    --accent-soft: #16263c;
-    --good: #48c58c;
-    --good-soft: #10291f;
+    --bg: #1b1f26;
+    --surface: #242a33;
+    --surface-2: #2c333d;
+    --ink: #ecf4f7;
+    --ink-2: #b9c4ce;
+    --muted: #8a95a2;
+    --line: #333b46;
+    --accent: #c41340;
+    --accent-soft: #3a141f;
+    --good: #44be97;
+    --good-soft: #12302a;
     --warn: #e0a54a;
-    --warn-soft: #2a2113;
-    --danger: #ef7a72;
-    --danger-soft: #2c1715;
+    --warn-soft: #2c2214;
+    --danger: #e4677f;
+    --danger-soft: #341a21;
     --info: #6aa9ee;
-    --info-soft: #14212f;
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --series-3: #199e70;
+    --info-soft: #152232;
+    --series-1: #4b93e8;
+    --series-2: #d1466a;
+    --series-3: #9075d4;
     --shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.8);
     --shadow-lg: 0 24px 60px -24px rgba(0, 0, 0, 0.9);
   }
@@ -143,9 +151,13 @@ h1, h2, h3 { line-height: 1.2; }
   width: 34px; height: 34px;
   display: grid; place-items: center;
   border-radius: 50%;
-  background: var(--surface);
-  box-shadow: var(--shadow);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 0.5px solid var(--line);
+  color: var(--ink-2);
+  transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1);
 }
+.topbar__back:active { transform: scale(0.9); }
+.topbar__back svg { width: 18px; height: 18px; }
 
 .topbar__title { flex: 1; min-width: 0; }
 .topbar__title h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
@@ -155,11 +167,14 @@ h1, h2, h3 { line-height: 1.2; }
   width: 38px; height: 38px;
   display: grid; place-items: center;
   border-radius: 50%;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 0.5px solid var(--line);
+  color: var(--ink-2);
   position: relative;
-  font-size: 16px;
+  transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.2s;
 }
+.icon-btn:active { transform: scale(0.9); }
+.icon-btn svg { width: 19px; height: 19px; }
 .icon-btn--plain { background: none; border: 0; }
 .icon-btn__dot {
   position: absolute; top: 6px; right: 6px;
@@ -197,8 +212,13 @@ h1, h2, h3 { line-height: 1.2; }
 .viewport.is-swiping .view--ghost { visibility: visible; }
 .viewport.is-animating .view,
 .viewport.is-animating .view--ghost {
-  transition: transform 0.34s cubic-bezier(0.32, 0.72, 0, 1);
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  transition-duration: 0.28s; /* переопределяется по остатку пути */
 }
+/* во время жеста браузер не пересчитывает раскладку соседних слоёв */
+.viewport.is-swiping .view,
+.viewport.is-swiping .view--ghost { will-change: transform; }
 
 .sync {
   font-size: 12px;
@@ -253,7 +273,7 @@ h1, h2, h3 { line-height: 1.2; }
   color: #fff;
   font-size: 26px; font-weight: 300;
   display: grid; place-items: center;
-  box-shadow: 0 14px 30px -10px color-mix(in srgb, var(--accent) 70%, transparent);
+  box-shadow: 0 14px 30px -10px color-mix(in srgb, var(--accent) 65%, transparent);
 }
 
 /* ---------------------------------------------------------------- карточки */
@@ -303,7 +323,7 @@ a.stat:active, .card:active { transform: scale(0.985); }
 .stat--accent .stat__label, .stat--accent .stat__hint { color: rgba(255, 255, 255, 0.82); }
 
 .hero {
-  background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #14306b));
+  background: linear-gradient(135deg, #a3062f 0%, var(--brand-burgundy) 45%, #4a1420 100%);
   color: #fff;
   border-radius: var(--radius);
   padding: 16px;
@@ -667,53 +687,133 @@ td.danger, .danger-text { color: var(--danger); }
 /* -------------------------------------------------------------------- вход */
 
 .auth {
-  min-height: 100svh;
-  display: grid; place-items: center;
-  padding: 24px 18px;
+  position: relative;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: calc(env(safe-area-inset-top) + 32px) 22px calc(env(safe-area-inset-bottom) + 32px);
+  background: linear-gradient(165deg, #474f5f 0%, var(--brand-charcoal) 42%, #1d222a 100%);
+  color: var(--brand-alice);
+  overflow: hidden;
 }
-.auth__card {
-  width: 100%; max-width: 380px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 22px;
-  padding: 24px;
-  box-shadow: var(--shadow-lg);
-}
-.auth__card { text-align: center; }
-.auth__card h1 { font-size: 23px; font-weight: 600; letter-spacing: -0.03em; }
 
-/* Знак приложения — тот же, что на иконке на экране «Домой». */
+/* Чертёжная графика на фоне — сразу понятно, чья это система. */
+.auth__scene { position: absolute; inset: 0; pointer-events: none; }
+.auth__glow {
+  position: absolute;
+  top: -18%; right: -28%;
+  width: 78vw; height: 78vw;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--brand-burgundy) 62%, transparent), transparent 68%);
+  filter: blur(18px);
+}
+.auth__plan {
+  position: absolute;
+  left: 50%; bottom: -6%;
+  width: min(150vw, 680px);
+  transform: translateX(-50%);
+  color: var(--brand-alice);
+  opacity: 0.09;
+}
+
+.auth__inner { position: relative; width: 100%; max-width: 360px; text-align: center; }
+
+.auth__brand { margin-bottom: 30px; }
+.auth__word {
+  margin-top: 16px;
+  font-size: 27px;
+  font-weight: 200;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--brand-alice);
+}
+.auth__word b { font-weight: 500; }
+.auth__rule {
+  display: block;
+  width: 46px; height: 2px;
+  margin: 14px auto 12px;
+  background: var(--brand-burgundy);
+}
+.auth__tagline {
+  font-size: 12.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--brand-alice) 68%, transparent);
+}
+
 .auth__logo {
-  width: 74px; height: 74px;
-  margin: 0 auto 18px;
-  border-radius: 21px;
-  background: linear-gradient(150deg, #4b96f0 0%, #2a78d6 42%, #14306b 100%);
+  width: 68px; height: 68px;
+  margin: 0 auto;
+  border-radius: 20px;
+  background: linear-gradient(150deg, #5a6272 0%, #3d434f 55%, #272c35 100%);
+  border: 0.5px solid rgba(236, 244, 247, 0.16);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 5px;
-  box-shadow: 0 16px 32px -16px rgba(42, 120, 214, 0.85);
+  box-shadow: 0 18px 38px -18px rgba(0, 0, 0, 0.8);
 }
-.auth__logo span { color: #fff; font-size: 23px; font-weight: 300; letter-spacing: 0.5px; line-height: 1; }
-.auth__logo div { display: flex; align-items: flex-end; gap: 3px; height: 13px; }
-.auth__logo i { display: block; width: 4px; background: #fff; border-radius: 2px; opacity: 0.9; }
-.auth__card p { font-size: 13.5px; color: var(--muted); margin-top: 6px; }
-.auth__form { margin-top: 20px; display: grid; gap: 12px; }
-.auth__label { font-size: 13px; font-weight: 500; color: var(--ink-2); text-align: left; }
+.auth__logo span { color: var(--brand-alice); font-size: 22px; font-weight: 300; letter-spacing: 1px; line-height: 1; }
+.auth__logo div { display: flex; align-items: flex-end; gap: 3px; height: 12px; }
+.auth__logo i { display: block; width: 4px; border-radius: 2px; background: var(--brand-alice); opacity: 0.8; }
+.auth__logo i:last-child { background: var(--brand-burgundy); opacity: 1; }
+
+.auth__form {
+  display: grid;
+  gap: 12px;
+  padding: 22px 20px;
+  border-radius: 22px;
+  background: rgba(236, 244, 247, 0.07);
+  border: 0.5px solid rgba(236, 244, 247, 0.16);
+  backdrop-filter: saturate(160%) blur(20px);
+  -webkit-backdrop-filter: saturate(160%) blur(20px);
+  box-shadow: 0 26px 60px -30px rgba(0, 0, 0, 0.9);
+}
+.auth__label {
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-align: left;
+  color: color-mix(in srgb, var(--brand-alice) 62%, transparent);
+}
 .auth__code {
   width: 100%;
   min-height: 58px;
   padding: 10px 16px;
   border-radius: 15px;
-  border: 0.5px solid var(--line);
-  background: var(--surface-2);
+  border: 0.5px solid rgba(236, 244, 247, 0.22);
+  background: rgba(20, 24, 30, 0.45);
+  color: var(--brand-alice);
   font-size: 26px;
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: 0.32em;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-.auth__code:focus { outline: 2px solid var(--accent); outline-offset: -1px; background: var(--surface); }
-.auth__hint { font-size: 12.5px; color: var(--muted); margin-top: 16px; line-height: 1.4; }
-.auth__card h1 { font-weight: 600; letter-spacing: -0.03em; }
+.auth__code::placeholder { color: rgba(236, 244, 247, 0.35); letter-spacing: 0.3em; }
+.auth__code:focus {
+  outline: none;
+  border-color: var(--brand-burgundy);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-burgundy) 35%, transparent);
+}
+.auth .btn--primary {
+  background: var(--brand-burgundy);
+  color: #fff;
+  border: 0;
+  min-height: 50px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.auth .form__error {
+  background: rgba(196, 19, 64, 0.22);
+  color: #ffd7de;
+  border: 0.5px solid rgba(255, 215, 222, 0.28);
+}
+.auth__hint {
+  margin-top: 20px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--brand-alice) 55%, transparent);
+}
 
 /* ------------------------------------------- доступ только для просмотра */
 
