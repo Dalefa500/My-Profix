@@ -12,6 +12,9 @@ import {
   ensureDir, readJSON, writeJSON, appendLine, withLock, DATA_DIR,
 } from './storage.js';
 import {
+  createChallenge, verifyRegistration, verifyAssertion, b64url,
+} from './webauthn.js';
+import {
   authenticate, authenticateByCode, createSession, destroySession, userForToken,
   publicUser, loadUsers, createUser, changePassword, setName, loginBlocked, canEdit,
 } from './auth.js';
@@ -26,6 +29,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = path.resolve(new URL('..', import.meta.url).pathname);
 const STATE_FILE = 'state.json';
+const PASSKEY_FILE = 'passkeys.json';
 const COOKIE = 'sf_session';
 const MAX_BODY = 4 * 1024 * 1024;
 
@@ -58,6 +62,47 @@ async function loadState() {
 async function saveState(next) {
   cache = next;
   await writeJSON(STATE_FILE, next);
+}
+
+// --------------------------------------------------------- вход по Face ID
+
+// Одноразовые запросы живут пять минут — этого хватает, чтобы поднести лицо.
+const challenges = new Map();
+
+function rememberChallenge(challenge, payload = {}) {
+  challenges.set(challenge, { ...payload, expiresAt: Date.now() + 5 * 60 * 1000 });
+  for (const [key, item] of challenges) {
+    if (item.expiresAt < Date.now()) challenges.delete(key);
+  }
+}
+
+function takeChallenge(challenge) {
+  const item = challenges.get(challenge);
+  challenges.delete(challenge);
+  if (!item || item.expiresAt < Date.now()) return null;
+  return item;
+}
+
+// Адрес, для которого создаются ключи. Ключ, созданный на одном домене,
+// на другом не работает — это и защищает от поддельных страниц.
+function rpFromRequest(req) {
+  const host = String(req.headers.host || 'localhost');
+  const hostname = host.split(':')[0];
+  const secure = isSecure(req) || hostname === 'localhost' || hostname === '127.0.0.1';
+  return {
+    id: hostname,
+    host,
+    origins: [`https://${host}`, `https://${hostname}`, `http://${host}`],
+    secure,
+  };
+}
+
+async function loadPasskeys() {
+  return (await readJSON(PASSKEY_FILE, [])) || [];
+}
+
+async function savePasskeys(list) {
+  await writeJSON(PASSKEY_FILE, list);
 }
 
 // ------------------------------------------------------------------ утилиты
@@ -158,6 +203,53 @@ async function handleApi(req, res, url) {
     return send(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(req, token, maxAge) });
   }
 
+  // Запрос на вход по Face ID — доступен без входа в приложение.
+  if (route === '/passkey/login/options' && req.method === 'POST') {
+    const rp = rpFromRequest(req);
+    const passkeys = await loadPasskeys();
+    const challenge = createChallenge();
+    rememberChallenge(challenge, { kind: 'login' });
+    return send(res, 200, {
+      challenge,
+      rpId: rp.id,
+      available: passkeys.length > 0,
+      allowCredentials: passkeys.map((item) => ({ id: item.id, type: 'public-key' })),
+    });
+  }
+
+  if (route === '/passkey/login/verify' && req.method === 'POST') {
+    const body = await readBody(req);
+    const rp = rpFromRequest(req);
+    const passkeys = await loadPasskeys();
+    const credential = passkeys.find((item) => item.id === body.id);
+    if (!credential) return send(res, 401, { error: 'Этот телефон не привязан' });
+
+    const clientData = JSON.parse(b64url.decode(body.response.clientDataJSON).toString('utf8'));
+    if (!takeChallenge(clientData.challenge)) {
+      return send(res, 401, { error: 'Запрос устарел, попробуйте ещё раз' });
+    }
+    try {
+      const result = verifyAssertion({
+        response: body.response,
+        challenge: clientData.challenge,
+        origins: rp.origins,
+        rpId: rp.id,
+        credential,
+      });
+      credential.signCount = result.signCount;
+      credential.usedAt = new Date().toISOString();
+      await savePasskeys(passkeys);
+    } catch (error) {
+      return send(res, 401, { error: error.message });
+    }
+
+    const users = await loadUsers();
+    const owner = users.find((item) => item.id === credential.userId);
+    if (!owner) return send(res, 401, { error: 'Учётная запись не найдена' });
+    const { token, maxAge } = await createSession(owner.id);
+    return send(res, 200, { user: publicUser(owner) }, { 'Set-Cookie': sessionCookie(req, token, maxAge) });
+  }
+
   if (route === '/logout' && req.method === 'POST') {
     await destroySession(readCookie(req, COOKIE));
     return send(res, 200, { ok: true }, { 'Set-Cookie': `${COOKIE}=; Path=/; HttpOnly; Max-Age=0` });
@@ -204,6 +296,83 @@ async function handleApi(req, res, url) {
     } catch (error) {
       return send(res, 422, { error: error.message || 'Операция отклонена' });
     }
+  }
+
+  // Привязка Face ID — только для того, кто уже вошёл по коду.
+  if (route === '/passkey/register/options' && req.method === 'POST') {
+    const rp = rpFromRequest(req);
+    if (!rp.secure) {
+      return send(res, 400, { error: 'Face ID работает только по защищённому адресу (https)' });
+    }
+    const passkeys = await loadPasskeys();
+    const challenge = createChallenge();
+    rememberChallenge(challenge, { kind: 'register', userId: user.id });
+    return send(res, 200, {
+      challenge,
+      rp: { id: rp.id, name: 'Line Design' },
+      user: {
+        id: b64url.encode(Buffer.from(user.id)),
+        name: user.login,
+        displayName: user.name,
+      },
+      excludeCredentials: passkeys
+        .filter((item) => item.userId === user.id)
+        .map((item) => ({ id: item.id, type: 'public-key' })),
+    });
+  }
+
+  if (route === '/passkey/register/verify' && req.method === 'POST') {
+    const body = await readBody(req);
+    const rp = rpFromRequest(req);
+    const clientData = JSON.parse(b64url.decode(body.response.clientDataJSON).toString('utf8'));
+    const pending = takeChallenge(clientData.challenge);
+    if (!pending || pending.userId !== user.id) {
+      return send(res, 400, { error: 'Запрос устарел, попробуйте ещё раз' });
+    }
+    try {
+      const credential = verifyRegistration({
+        response: body.response,
+        challenge: clientData.challenge,
+        origins: rp.origins,
+        rpId: rp.id,
+      });
+      const passkeys = await loadPasskeys();
+      if (passkeys.some((item) => item.id === credential.credentialId)) {
+        return send(res, 200, { ok: true, already: true });
+      }
+      passkeys.push({
+        id: credential.credentialId,
+        userId: user.id,
+        publicKey: credential.publicKey,
+        alg: credential.alg,
+        signCount: credential.signCount,
+        label: String(body.label || 'Телефон').slice(0, 40),
+        createdAt: new Date().toISOString(),
+      });
+      await savePasskeys(passkeys);
+      return send(res, 200, { ok: true });
+    } catch (error) {
+      return send(res, 400, { error: error.message });
+    }
+  }
+
+  if (route === '/passkey' && req.method === 'GET') {
+    const rp = rpFromRequest(req);
+    const passkeys = await loadPasskeys();
+    return send(res, 200, {
+      secure: rp.secure,
+      passkeys: passkeys
+        .filter((item) => item.userId === user.id)
+        .map((item) => ({ id: item.id, label: item.label, createdAt: item.createdAt, usedAt: item.usedAt })),
+    });
+  }
+
+  if (route === '/passkey/delete' && req.method === 'POST') {
+    const body = await readBody(req);
+    const passkeys = await loadPasskeys();
+    const next = passkeys.filter((item) => !(item.id === body.id && item.userId === user.id));
+    await savePasskeys(next);
+    return send(res, 200, { ok: true });
   }
 
   if (route === '/users' && req.method === 'GET') {

@@ -822,6 +822,18 @@ td.danger, .danger-text { color: var(--danger); }
   -webkit-backdrop-filter: saturate(160%) blur(20px);
   box-shadow: 0 26px 60px -30px rgba(0, 0, 0, 0.9);
 }
+.auth__faceid {
+  width: 100%;
+  min-height: 50px;
+  gap: 9px;
+  background: rgba(236, 244, 247, 0.1);
+  border: 0.5px solid rgba(236, 244, 247, 0.28);
+  color: var(--brand-alice);
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.auth__faceid svg { width: 21px; height: 21px; }
+
 .auth__label {
   font-size: 11.5px;
   font-weight: 500;

@@ -9,6 +9,7 @@ import * as forms from './forms.js';
 import { mountCharts } from './charts.js';
 import { setRefresh } from './refresh.js';
 import { applyTheme } from './theme.js';
+import * as passkey from './passkey.js';
 import { ICONS, quickAction } from './icons.js';
 
 import dashboard from './views/dashboard.js';
@@ -39,6 +40,13 @@ const TABS = [
 // Вход по коду: логин вводить не нужно — код сам определяет, кто вошёл
 // и что ему разрешено. Экран оформлен как обложка студии: фирменные цвета,
 // чертёжная графика, спокойная типографика.
+const FACE_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2" />
+  <path d="M9 10v1.5M15 10v1.5M12 10v3l-1 1" />
+  <path d="M9.5 15.5a3.5 3.5 0 0 0 5 0" />
+</svg>`;
+
 const PLAN_ART = `
   <svg class="auth__plan" viewBox="0 0 320 320" fill="none" stroke="currentColor"
     stroke-width="1" aria-hidden="true">
@@ -76,6 +84,9 @@ function renderAuth(error = '') {
       </div>
 
       <form class="auth__form">
+        <button type="button" class="btn auth__faceid" data-faceid hidden>
+          ${raw(FACE_ICON)} Войти по Face ID
+        </button>
         <label class="auth__label" for="code">Код входа</label>
         <input id="code" name="code" class="auth__code" type="password" inputmode="numeric"
           autocomplete="one-time-code" maxlength="12" placeholder="••••••" required>
@@ -103,6 +114,29 @@ function renderAuth(error = '') {
       renderAuth(requestError.message || 'Не удалось войти');
     }
   });
+  const faceButton = root.querySelector('[data-faceid]');
+  if (faceButton) {
+    // Кнопка появляется, только если телефон умеет Face ID и на сервере
+    // уже есть привязанное устройство.
+    passkey.isPhoneReady().then(async (ready) => {
+      if (!ready || !(await passkey.isAvailable())) return;
+      faceButton.hidden = false;
+      faceButton.addEventListener('click', async () => {
+        faceButton.disabled = true;
+        try {
+          const signed = await passkey.signIn();
+          await store.completeLogin(signed);
+          store.startSync();
+          startApp();
+        } catch (error) {
+          faceButton.disabled = false;
+          const message = error?.name === 'NotAllowedError' ? 'Вход отменён' : error.message;
+          toast(message || 'Не удалось войти по Face ID', 'danger');
+        }
+      });
+    });
+  }
+
   root.querySelector('#code')?.focus();
 }
 

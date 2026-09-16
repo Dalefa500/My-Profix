@@ -9,6 +9,7 @@ import { expenseGroups, SYSTEM_CATEGORIES, categoryLabel } from '../model.js';
 import { formatAmount } from '../money.js';
 import { formatDate } from '../dates.js';
 import { THEMES, getTheme, setTheme } from '../theme.js';
+import * as passkey from '../passkey.js';
 import { refresh } from '../refresh.js';
 
 function openCompanyForm(settings) {
@@ -111,6 +112,65 @@ function openPasswordForm() {
   });
 }
 
+// Раздел Face ID заполняется после ответа сервера: нужно знать,
+// защищён ли адрес и какие телефоны уже привязаны.
+async function renderPasskeys(host, user) {
+  if (!passkey.isSupported()) {
+    host.innerHTML = html`
+      <p class="muted">Face ID включится после того, как приложение откроется
+      по защищённому адресу с доменом. По IP-адресу браузер эту возможность не даёт —
+      это его правило, обойти нельзя.</p>`;
+    return;
+  }
+  if (!(await passkey.isPhoneReady())) {
+    host.innerHTML = html`<p class="muted">Это устройство не поддерживает Face ID или Touch ID.</p>`;
+    return;
+  }
+
+  const { passkeys = [] } = await passkey.list();
+  host.innerHTML = html`
+    ${passkeys.length ? raw(html`<div class="list">${raw(passkeys.map((item) => html`
+      <div class="row">
+        <div class="row__main">
+          <span class="row__title">${item.label}</span>
+          <span class="row__subtitle">Привязан ${formatDate(String(item.createdAt).slice(0, 10), { short: true })}</span>
+        </div>
+        <button class="btn btn--sm btn--ghost" data-remove-key="${item.id}">Отвязать</button>
+      </div>`).join(''))}</div>`)
+      : raw(html`<p class="muted">Телефон пока не привязан — вход только по коду.</p>`)}
+    <button class="btn btn--primary btn--block" data-add-key>Привязать этот телефон</button>
+    <p class="muted">После привязки на экране входа появится кнопка «Войти по Face ID».
+      Код останется запасным способом.</p>`;
+
+  host.querySelector('[data-add-key]').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = 'Поднесите лицо…';
+    try {
+      const label = /iPhone|iPad/.test(navigator.userAgent)
+        ? `iPhone · ${user?.name || ''}`.trim()
+        : `Устройство · ${user?.name || ''}`.trim();
+      await passkey.register(label);
+      toast('Face ID подключён', 'good');
+      renderPasskeys(host, user);
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = 'Привязать этот телефон';
+      toast(error?.name === 'NotAllowedError' ? 'Привязка отменена' : (error.message || 'Не получилось'), 'danger');
+    }
+  });
+
+  host.querySelectorAll('[data-remove-key]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const ok = await confirmDialog('Отвязать это устройство? Вход по коду сохранится.', { confirmLabel: 'Отвязать' });
+      if (!ok) return;
+      await passkey.remove(button.dataset.removeKey);
+      toast('Устройство отвязано');
+      renderPasskeys(host, user);
+    });
+  });
+}
+
 export default function settings() {
   const state = store.getState();
   const user = store.getUser();
@@ -139,6 +199,12 @@ export default function settings() {
       </div>
       <p class="muted">Курс сохраняется вместе с операцией: старые операции не пересчитываются при изменении курса.</p>
     </div>
+
+    ${openMode ? '' : raw(html`
+      <div class="card">
+        ${raw(sectionTitle('Вход по Face ID'))}
+        <div data-passkeys><p class="muted">Проверяем…</p></div>
+      </div>`)}
 
     <div class="card">
       ${raw(sectionTitle('Оформление'))}
@@ -213,6 +279,9 @@ export default function settings() {
     back: '#/',
     body,
     mount(root) {
+      const passkeyHost = root.querySelector('[data-passkeys]');
+      if (passkeyHost) renderPasskeys(passkeyHost, user);
+
       root.querySelector('[data-theme-switch]')?.addEventListener('click', (event) => {
         const button = event.target.closest('.segmented__item');
         if (!button) return;

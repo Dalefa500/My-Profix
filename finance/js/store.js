@@ -184,6 +184,18 @@ export async function signIn(code, password) {
   return user;
 }
 
+// Вход по Face ID выполняется отдельным модулем; сюда приходит уже
+// подтверждённый сервером пользователь.
+export async function completeLogin(nextUser) {
+  clearCache();
+  data = emptyData();
+  rev = 0;
+  queue = [];
+  user = nextUser;
+  await pull();
+  return user;
+}
+
 export async function signOut() {
   try {
     await api('/logout', { method: 'POST' });
