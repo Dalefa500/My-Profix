@@ -12,6 +12,7 @@ import * as actions from '../actions.js';
 import { refresh } from '../refresh.js';
 import { go } from '../router.js';
 import { openReport } from '../report.js';
+import { openOperation } from '../operation.js';
 
 function payrollCard(payroll) {
   const info = payrollState(payroll);
@@ -114,13 +115,13 @@ export default function employeeDetail(params) {
       ${raw(sectionTitle('История выплат'))}
       ${payments.length
         ? raw(html`<div class="list">${raw(payments.map((item) => html`
-          <div class="row">
+          <button class="row" data-open="${item.id}" style="width:100%;text-align:left">
             <div class="row__main">
               <span class="row__title">${item.comment || 'Выплата'}</span>
               <span class="row__subtitle">${formatDate(item.date, { short: true })}</span>
             </div>
             <span class="row__amount danger">−${money(item.base)}</span>
-          </div>`).join(''))}</div>`)
+          </button>`).join(''))}</div>`)
         : raw(emptyState('Выплат ещё не было'))}
     </div>`;
 
@@ -130,6 +131,11 @@ export default function employeeDetail(params) {
     back: '#/employees',
     body,
     mount(root) {
+      // Нажатие на выплату открывает её карточку: оттуда ошибочную запись
+      // можно сразу удалить, не разыскивая её в общем списке операций.
+      root.querySelectorAll('[data-open]').forEach((button) => {
+        button.onclick = () => openOperation('expense', button.dataset.open);
+      });
       root.querySelector('[data-report]').onclick = () => openReport({ type: 'employee', id: employee.id });
       root.querySelector('[data-act="edit"]').onclick = () => forms.openEmployeeForm(employee.id, refresh);
       root.querySelector('[data-act="delete"]').onclick = async () => {

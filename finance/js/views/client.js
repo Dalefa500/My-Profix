@@ -12,6 +12,7 @@ import * as actions from '../actions.js';
 import { refresh } from '../refresh.js';
 import { go } from '../router.js';
 import { openReport } from '../report.js';
+import { openOperation } from '../operation.js';
 
 export default function clientDetail(params) {
   const state = getState();
@@ -66,13 +67,13 @@ export default function clientDetail(params) {
     <div class="card card--flat">
       ${raw(sectionTitle('Платежи клиента'))}
       ${payments.length ? raw(html`<div class="list">${raw(payments.map((item) => html`
-        <div class="row">
+        <button class="row" data-open-income="${item.id}" style="width:100%;text-align:left">
           <div class="row__main">
             <span class="row__title">${byId('projects', item.projectId)?.name || 'Без проекта'}</span>
             <span class="row__subtitle">${formatDate(item.date, { short: true })}${item.comment ? ` · ${item.comment}` : ''}</span>
           </div>
           <span class="row__amount good">+${money(item.base)}</span>
-        </div>`).join(''))}</div>`) : raw(emptyState('Платежей ещё не было'))}
+        </button>`).join(''))}</div>`) : raw(emptyState('Платежей ещё не было'))}
     </div>`;
 
   return {
@@ -81,6 +82,9 @@ export default function clientDetail(params) {
     back: '#/clients',
     body,
     mount(root) {
+      root.querySelectorAll('[data-open-income]').forEach((button) => {
+        button.onclick = () => openOperation('income', button.dataset.openIncome);
+      });
       root.querySelector('[data-report]').onclick = () => openReport({ type: 'client', id: client.id });
       root.querySelector('[data-act="edit"]').onclick = () => forms.openClientForm(client.id, refresh);
       root.querySelector('[data-act="add-project"]').onclick = () => forms.openProjectForm(null, (project) => {

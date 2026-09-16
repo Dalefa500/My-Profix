@@ -6,6 +6,7 @@ import {
 } from '../ui.js';
 import { getState, byId } from '../store.js';
 import { openReport } from '../report.js';
+import { openOperation } from '../operation.js';
 import { projectFinance, assignmentState } from '../calc.js';
 import { PROJECT_STATUSES, WORK_STAGES, labelOf, categoryLabel } from '../model.js';
 import { formatAmount, formatWithOriginal } from '../money.js';
@@ -140,13 +141,13 @@ export default function projectDetail(params) {
       ${raw(sectionTitle('Расходы проекта', '<button class="btn btn--sm" data-act="add-expense">Добавить</button>'))}
       ${finance.directExpenses.length
         ? raw(html`<div class="list">${raw(finance.directExpenses.map((expense) => html`
-          <div class="row">
+          <button class="row" data-open-expense="${expense.id}" style="width:100%;text-align:left">
             <div class="row__main">
               <span class="row__title">${categoryLabel(expense.category, state.settings)}</span>
               <span class="row__subtitle">${expense.comment || formatDate(expense.date, { short: true })}</span>
             </div>
             <span class="row__amount danger">−${money(expense.base)}</span>
-          </div>`).join(''))}</div>`)
+          </button>`).join(''))}</div>`)
         : raw(emptyState('Прямых расходов по проекту нет'))}
     </div>
 
@@ -171,6 +172,9 @@ export default function projectDetail(params) {
     back: '#/projects',
     body,
     mount(root) {
+      root.querySelectorAll('[data-open-expense]').forEach((button) => {
+        button.onclick = () => openOperation('expense', button.dataset.openExpense);
+      });
       root.querySelector('[data-report]').onclick = () => openReport({ type: 'project', id: project.id });
       root.querySelector('[data-act="edit"]').onclick = () => forms.openProjectForm(project.id, refresh);
       root.querySelector('[data-act="income"]').onclick = () => forms.openIncomeForm({
