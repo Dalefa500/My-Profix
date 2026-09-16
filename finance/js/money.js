@@ -19,7 +19,7 @@ export const CURRENCIES = {
 export const CURRENCY_LIST = [CURRENCIES.USD, CURRENCIES.TJS];
 
 // Курс по умолчанию, если настройки ещё не заполнены.
-export const FALLBACK_USD_RATE = 10.9;
+export const FALLBACK_USD_RATE = 9.25;
 
 export function isBase(currency) {
   return (currency || BASE_CURRENCY) === BASE_CURRENCY;

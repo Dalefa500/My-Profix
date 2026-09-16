@@ -23,7 +23,8 @@ export function emptyData() {
       // Студия считает в долларах; сомони пересчитываются при вводе.
       baseCurrency: 'USD',
       // Курс Национального банка Таджикистана: сомони за один доллар.
-      usdRate: 10.9,
+      // Значение на случай, пока сервер не забрал курс с nbt.tj.
+      usdRate: 9.25,
       usdRateDate: '',
       usdRateSource: 'manual',
       usdRateCheckedAt: '',
@@ -90,6 +91,8 @@ function migrate(data, raw) {
   if (stored >= SCHEMA_VERSION) return data;
 
   // Курс, по которому в старой версии считались доллары.
+  // Запасное значение — историческое (курс времён первой версии),
+  // а не сегодняшнее: им пересчитываются старые записи.
   const oldRate = Number(raw?.settings?.rates?.USD);
   const rate = Number.isFinite(oldRate) && oldRate > 0 ? oldRate : 10.9;
 
