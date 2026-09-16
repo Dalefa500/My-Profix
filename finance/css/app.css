@@ -105,8 +105,21 @@
 
 [hidden] { display: none !important; }
 
-/* Элементы управления не выделяются при долгом нажатии, а вот суммы,
-   названия и комментарии выделить и скопировать по-прежнему можно. */
+/* На телефоне приложение ведёт себя как программа: удержание пальца
+   не выделяет текст синим и не показывает лупу с маркерами.
+   На компьютере выделение и копирование работают как обычно. */
+@media (hover: none) and (pointer: coarse) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  input, textarea, select, [contenteditable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/* Элементы управления не выделяются нигде. */
 .tabbar__item, .chip, .btn, .fab, .icon-btn, .topbar__back,
 .quick__item, .segmented__item, .tabs__item {
   -webkit-user-select: none;
