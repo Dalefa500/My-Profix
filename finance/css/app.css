@@ -75,15 +75,55 @@
   }
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1b1f26;
+  --surface: #242a33;
+  --surface-2: #2c333d;
+  --ink: #ecf4f7;
+  --ink-2: #b9c4ce;
+  --muted: #8a95a2;
+  --line: #333b46;
+  --accent: #c41340;
+  --accent-soft: #3a141f;
+  --good: #44be97;
+  --good-soft: #12302a;
+  --warn: #e0a54a;
+  --warn-soft: #2c2214;
+  --danger: #e4677f;
+  --danger-soft: #341a21;
+  --info: #6aa9ee;
+  --info-soft: #152232;
+  --series-1: #4b93e8;
+  --series-2: #d1466a;
+  --series-3: #9075d4;
+  --shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.8);
+  --shadow-lg: 0 24px 60px -24px rgba(0, 0, 0, 0.9);
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 [hidden] { display: none !important; }
+
+/* Элементы управления не выделяются при долгом нажатии, а вот суммы,
+   названия и комментарии выделить и скопировать по-прежнему можно. */
+.tabbar__item, .chip, .btn, .fab, .icon-btn, .topbar__back,
+.quick__item, .segmented__item, .tabs__item {
+  -webkit-user-select: none;
+  user-select: none;
+}
 
 html { -webkit-text-size-adjust: 100%; }
 
 body {
   font-family: var(--font);
   font-weight: 400;
+  /* Долгое нажатие не вызывает системное меню ссылки
+     («Открыть», «Скопировать ссылку»): приложение должно вести себя
+     как программа, а не как страница в браузере. */
+  -webkit-touch-callout: none;
+  /* Своя анимация нажатия вместо серой вспышки Safari. */
+  -webkit-tap-highlight-color: transparent;
   letter-spacing: -0.01em;
   background: var(--bg);
   color: var(--ink);
@@ -555,6 +595,8 @@ a.row:active, button.row:active {
 }
 .segmented__item.is-active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
 .segmented--sm .segmented__item { padding: 6px 9px; font-size: 12px; }
+.segmented--full { display: flex; width: 100%; }
+.segmented--full .segmented__item { flex: 1; text-align: center; }
 
 .switch { display: flex; align-items: center; gap: 9px; font-size: 13.5px; }
 .switch input { width: 20px; height: 20px; min-height: 0; flex-shrink: 0; }

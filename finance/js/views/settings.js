@@ -8,6 +8,7 @@ import * as actions from '../actions.js';
 import { expenseGroups, SYSTEM_CATEGORIES, categoryLabel } from '../model.js';
 import { formatAmount } from '../money.js';
 import { formatDate } from '../dates.js';
+import { THEMES, getTheme, setTheme } from '../theme.js';
 import { refresh } from '../refresh.js';
 
 function openCompanyForm(settings) {
@@ -115,6 +116,7 @@ export default function settings() {
   const user = store.getUser();
   const status = store.getStatus();
   const openMode = store.isAuthDisabled();
+  const theme = getTheme();
   const groups = expenseGroups(state.settings);
   const planned = state.planned.filter((item) => item.status !== 'paid');
 
@@ -136,6 +138,16 @@ export default function settings() {
           <span class="row__title">${state.settings.salaryDay} числа</span></div></div>
       </div>
       <p class="muted">Курс сохраняется вместе с операцией: старые операции не пересчитываются при изменении курса.</p>
+    </div>
+
+    <div class="card">
+      ${raw(sectionTitle('Оформление'))}
+      <div class="segmented segmented--full" data-theme-switch>
+        ${raw(THEMES.map((item) => html`
+          <button type="button" class="segmented__item ${raw(item.id === theme ? 'is-active' : '')}"
+            data-value="${item.id}">${item.label}</button>`).join(''))}
+      </div>
+      <p class="muted">Выбор сохраняется в этом телефоне — у второго учредителя может быть своё.</p>
     </div>
 
     <div class="card">
@@ -201,7 +213,13 @@ export default function settings() {
     back: '#/',
     body,
     mount(root) {
-      root.querySelector('[data-act="company"]').onclick = () => openCompanyForm(state.settings);
+      root.querySelector('[data-theme-switch]')?.addEventListener('click', (event) => {
+        const button = event.target.closest('.segmented__item');
+        if (!button) return;
+        setTheme(button.dataset.value);
+        refresh();
+      });
+      root.querySelector('[data-act="company"]')?.addEventListener('click', () => openCompanyForm(state.settings));
       root.querySelector('[data-act="add-category"]').onclick = () => openCategoryForm();
       root.querySelector('[data-act="add-planned"]').onclick = async () => {
         const { openPlannedForm } = await import('../forms.js');

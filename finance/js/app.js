@@ -8,6 +8,7 @@ import { notifications } from './calc.js';
 import * as forms from './forms.js';
 import { mountCharts } from './charts.js';
 import { setRefresh } from './refresh.js';
+import { applyTheme } from './theme.js';
 import { ICONS, quickAction } from './icons.js';
 
 import dashboard from './views/dashboard.js';
@@ -437,6 +438,7 @@ store.subscribe((_, reason) => {
 });
 
 async function boot() {
+  applyTheme();
   root.className = 'auth';
   root.innerHTML = `
     <div class="auth__scene" aria-hidden="true"><span class="auth__glow"></span>${PLAN_ART}</div>
