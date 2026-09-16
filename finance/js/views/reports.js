@@ -61,7 +61,7 @@ function monthsTable(series) {
   }), { income: 0, expense: 0, profit: 0 });
 
   return html`
-    <p class="table-caption">Суммы в сомони (TJS)</p>
+    <p class="table-caption">Суммы в долларах (USD)</p>
     <div class="table-wrap">
       <table class="data">
         <thead>

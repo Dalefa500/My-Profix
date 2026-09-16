@@ -2,12 +2,14 @@
 
 import { html, raw, statCard, sectionTitle, rowItem, emptyState, money, openForm, toast } from '../ui.js';
 import { getState, byId } from '../store.js';
+import * as store from '../store.js';
 import { dashboardTotals, notifications } from '../calc.js';
 import { rangeFor, today, formatDate, monthLabel, monthKey } from '../dates.js';
 import { categoryLabel } from '../model.js';
 import * as forms from '../forms.js';
 import { refresh } from '../refresh.js';
 import { quickAction } from '../icons.js';
+import { formatUsdRate } from '../money.js';
 
 const PERIODS = [
   { value: 'today', label: 'Сегодня' },
@@ -89,6 +91,15 @@ export default function dashboard() {
           data-value="${item.value}">${item.label}</button>`).join(''))}
     </div>
 
+    <!-- Курс на виду: по нему пересчитываются все суммы, введённые в сомони. -->
+    <div class="rate-bar" data-act="rate">
+      <span class="rate-bar__label">Курс НБТ</span>
+      <b class="rate-bar__value">${formatUsdRate(state.settings.usdRate)}</b>
+      <span class="rate-bar__note">${state.settings.usdRateDate
+        ? `на ${formatDate(state.settings.usdRateDate, { short: true })}`
+        : 'введён вручную'}</span>
+    </div>
+
     <div class="hero">
       <span class="hero__label">Прибыль · ${range.label}</span>
       <div class="hero__value">${money(totals.profitBase)}</div>
@@ -163,6 +174,18 @@ export default function dashboard() {
         periodState.preset = button.dataset.value;
         refresh();
       });
+      // Нажатие на строку курса просит сервер сходить на сайт НБТ за свежим.
+      root.querySelector('[data-act="rate"]').onclick = async (event) => {
+        const bar = event.currentTarget;
+        if (bar.dataset.busy) return;
+        bar.dataset.busy = '1';
+        bar.classList.add('is-busy');
+        const result = await store.refreshUsdRate();
+        delete bar.dataset.busy;
+        bar.classList.remove('is-busy');
+        if (!result.ok) toast(result.error || 'Сайт НБТ не ответил');
+        refresh();
+      };
       root.querySelector('[data-act="income"]').onclick = () => forms.openIncomeForm({}, refresh);
       root.querySelector('[data-act="expense"]').onclick = () => forms.openExpenseForm({}, refresh);
       root.querySelector('[data-act="project"]').onclick = () => forms.openProjectForm(null, (project) => {

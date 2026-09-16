@@ -6,11 +6,20 @@ import {
 import * as store from '../store.js';
 import * as actions from '../actions.js';
 import { expenseGroups, SYSTEM_CATEGORIES, categoryLabel } from '../model.js';
-import { formatAmount } from '../money.js';
+import { formatAmount, formatUsdRate } from '../money.js';
 import { formatDate } from '../dates.js';
 import { THEMES, getTheme, setTheme } from '../theme.js';
 import * as passkey from '../passkey.js';
 import { refresh } from '../refresh.js';
+
+// Откуда взялся курс: с сайта НБТ или введён руками.
+function rateSourceLabel(settings) {
+  const date = settings.usdRateDate ? formatDate(settings.usdRateDate, { short: true }) : '';
+  if (settings.usdRateSource === 'nbt') {
+    return date ? `Национальный банк, курс на ${date}` : 'Национальный банк Таджикистана';
+  }
+  return date ? `Введён вручную ${date}` : 'Введён вручную';
+}
 
 function openCompanyForm(settings) {
   openForm({
@@ -19,8 +28,8 @@ function openCompanyForm(settings) {
       { name: 'companyName', label: 'Название студии', type: 'text', value: settings.companyName, wide: true },
       {
         name: 'usdRate', label: 'Курс доллара, TJS за $1', type: 'number', step: '0.01',
-        value: settings.rates.USD,
-        hint: 'Применяется к новым операциям. Старые сохраняют свой курс.',
+        value: settings.usdRate,
+        hint: 'Запасной вариант, если сайт НБТ недоступен. Применяется к новым операциям — старые сохраняют свой курс.',
       },
       {
         name: 'defaultAdvancePercent', label: 'Аванс по умолчанию, %', type: 'number', min: 0, max: 100,
@@ -189,15 +198,19 @@ export default function settings() {
       ${raw(sectionTitle('Компания', '<button class="btn btn--sm" data-act="company">Изменить</button>'))}
       <div class="list">
         <div class="row"><div class="row__main"><span class="row__subtitle">Название</span><span class="row__title">${state.settings.companyName}</span></div></div>
-        <div class="row"><div class="row__main"><span class="row__subtitle">Базовая валюта</span><span class="row__title">TJS — сомони</span></div></div>
-        <div class="row"><div class="row__main"><span class="row__subtitle">Курс доллара</span>
-          <span class="row__title">1 $ = ${state.settings.rates.USD} TJS</span></div></div>
+        <div class="row"><div class="row__main"><span class="row__subtitle">Основная валюта</span><span class="row__title">USD — доллар</span></div></div>
+        <div class="row"><div class="row__main"><span class="row__subtitle">Курс НБТ</span>
+          <span class="row__title">${formatUsdRate(state.settings.usdRate)}</span>
+          <span class="row__subtitle">${rateSourceLabel(state.settings)}</span></div>
+          <button class="btn btn--sm btn--ghost" data-act="rate">Обновить</button></div>
         <div class="row"><div class="row__main"><span class="row__subtitle">Аванс по умолчанию</span>
           <span class="row__title">${state.settings.defaultAdvancePercent}%</span></div></div>
         <div class="row"><div class="row__main"><span class="row__subtitle">День зарплаты</span>
           <span class="row__title">${state.settings.salaryDay} числа</span></div></div>
       </div>
-      <p class="muted">Курс сохраняется вместе с операцией: старые операции не пересчитываются при изменении курса.</p>
+      <p class="muted">Приложение считает в долларах. Суммы, введённые в сомони, переводятся
+        по курсу НБТ на день операции; этот курс сохраняется вместе с записью
+        и при изменении курса задним числом не пересчитывается.</p>
     </div>
 
     ${openMode ? '' : raw(html`
@@ -308,6 +321,18 @@ export default function settings() {
           refresh();
         };
       });
+      root.querySelector('[data-act="rate"]').onclick = async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = 'Проверяем…';
+        const result = await store.refreshUsdRate();
+        button.disabled = false;
+        button.textContent = 'Обновить';
+        toast(result.ok
+          ? `Курс НБТ обновлён: ${formatUsdRate(store.getState().settings.usdRate)}`
+          : result.error || 'Сайт НБТ не ответил. Курс можно ввести вручную.');
+        refresh();
+      };
       root.querySelector('[data-act="name"]').onclick = () => openNameForm(user);
       root.querySelector('[data-act="password"]')?.addEventListener('click', () => openPasswordForm());
       root.querySelector('[data-act="logout"]')?.addEventListener('click', async () => {

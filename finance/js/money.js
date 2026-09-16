@@ -1,26 +1,56 @@
 // Деньги и валюты.
-// Правило системы: у каждой операции хранится валюта, сумма, курс и сумма
-// в базовой валюте. Курс фиксируется в момент операции и НЕ пересчитывается
-// задним числом при изменении текущего курса.
+//
+// Основная валюта студии — доллар. Всё, что показывает приложение
+// (прибыль, долги, зарплаты, отчёты), считается и выводится в долларах.
+//
+// Сомони можно выбрать при вводе любой суммы: она тут же пересчитывается
+// в доллары по курсу Национального банка Таджикистана. Курс, по которому
+// прошёл пересчёт, сохраняется вместе с операцией и НЕ пересматривается
+// задним числом, когда курс НБТ меняется.
 
-export const BASE_CURRENCY = 'TJS';
+export const BASE_CURRENCY = 'USD';
 
 export const CURRENCIES = {
+  USD: { code: 'USD', name: 'Доллар', symbol: '$', decimals: 2 },
   TJS: { code: 'TJS', name: 'Сомони', symbol: 'TJS', decimals: 0 },
-  USD: { code: 'USD', name: 'Доллар', symbol: '$', decimals: 0 },
 };
 
-export const CURRENCY_LIST = Object.values(CURRENCIES);
+// Порядок важен: доллар первым, потому что он основной.
+export const CURRENCY_LIST = [CURRENCIES.USD, CURRENCIES.TJS];
+
+// Курс по умолчанию, если настройки ещё не заполнены.
+export const FALLBACK_USD_RATE = 10.9;
 
 export function isBase(currency) {
-  return currency === BASE_CURRENCY;
+  return (currency || BASE_CURRENCY) === BASE_CURRENCY;
 }
 
-// Курс = сколько единиц базовой валюты стоит 1 единица указанной валюты.
+// Курс НБТ в привычном виде: сколько сомони дают за один доллар.
+export function usdRate(settings) {
+  const rate = Number(settings?.usdRate);
+  return Number.isFinite(rate) && rate > 0 ? rate : FALLBACK_USD_RATE;
+}
+
+// Множитель к основной валюте: сколько долларов стоит одна единица валюты.
+// Для доллара это 1, для сомони — 1 / курс НБТ.
 export function defaultRate(currency, settings) {
   if (isBase(currency)) return 1;
-  const rate = Number(settings?.rates?.[currency]);
-  return Number.isFinite(rate) && rate > 0 ? rate : 1;
+  if (currency === 'TJS') return 1 / usdRate(settings);
+  return 1;
+}
+
+// Обратное преобразование: из множителя обратно в курс «сомони за доллар».
+// Нужно везде, где курс показывается человеку.
+export function rateToHuman(fx) {
+  const value = Number(fx);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return round(1 / value, 4);
+}
+
+export function humanToRate(rate) {
+  const value = Number(rate);
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return 1 / value;
 }
 
 export function toBase(amount, currency, rate) {
@@ -40,7 +70,7 @@ export function makeMoney(amount, currency, rate) {
   const fx = isBase(currency) ? 1 : (Number(rate) > 0 ? Number(rate) : 1);
   return {
     amount: round(amount),
-    currency,
+    currency: currency || BASE_CURRENCY,
     fx,
     base: toBase(amount, currency, fx),
   };
@@ -48,8 +78,8 @@ export function makeMoney(amount, currency, rate) {
 
 const formatters = new Map();
 
-function formatterFor(currency, decimals) {
-  const key = `${currency}:${decimals}`;
+function formatterFor(decimals) {
+  const key = String(decimals);
   if (!formatters.has(key)) {
     formatters.set(key, new Intl.NumberFormat('ru-RU', {
       minimumFractionDigits: 0,
@@ -62,8 +92,9 @@ function formatterFor(currency, decimals) {
 export function formatAmount(amount, currency = BASE_CURRENCY, opts = {}) {
   const meta = CURRENCIES[currency] || CURRENCIES[BASE_CURRENCY];
   const value = Number(amount) || 0;
-  const decimals = opts.decimals ?? (Math.abs(value) < 1000 && value % 1 !== 0 ? 2 : 0);
-  const text = formatterFor(meta.code, decimals).format(Math.abs(value));
+  // Центы показываем только там, где они действительно есть.
+  const decimals = opts.decimals ?? (Math.abs(value % 1) > 0.004 ? meta.decimals : 0);
+  const text = formatterFor(decimals).format(Math.abs(value));
   const sign = value < 0 ? '−' : (opts.sign && value > 0 ? '+' : '');
   if (meta.code === 'USD') return `${sign}$${text}`;
   return `${sign}${text} ${meta.symbol}`;
@@ -72,17 +103,18 @@ export function formatAmount(amount, currency = BASE_CURRENCY, opts = {}) {
 // Число без обозначения валюты — для таблиц, где валюта указана в заголовке.
 export function formatPlain(amount, decimals = 0) {
   const value = Number(amount) || 0;
-  const text = formatterFor(BASE_CURRENCY, decimals).format(Math.abs(value));
+  const text = formatterFor(decimals).format(Math.abs(value));
   return value < 0 ? `−${text}` : text;
 }
 
-// Короткая запись для графиков и плиток: 250 000 -> 250 тыс.
+// Короткая запись для графиков и плиток: 250 000 -> $250 тыс.
 export function formatCompact(amount, currency = BASE_CURRENCY) {
   const value = Number(amount) || 0;
   const abs = Math.abs(value);
   const sign = value < 0 ? '−' : '';
-  const suffix = currency === 'USD' ? '' : ' TJS';
-  const prefix = currency === 'USD' ? '$' : '';
+  const isUsd = (currency || BASE_CURRENCY) === 'USD';
+  const suffix = isUsd ? '' : ' TJS';
+  const prefix = isUsd ? '$' : '';
   if (abs >= 1_000_000) return `${sign}${prefix}${round(abs / 1_000_000, 1)} млн${suffix}`;
   if (abs >= 10_000) return `${sign}${prefix}${Math.round(abs / 1000)} тыс.${suffix}`;
   return formatAmount(value, currency);
@@ -93,8 +125,14 @@ export function formatRate(amount, currency) {
   return `${formatAmount(amount, currency, { decimals: 2 })} / м²`;
 }
 
-// Подпись с исходной валютой, если операция была не в базовой валюте.
+// Курс в привычном виде: «1 $ = 10,95 TJS».
+export function formatUsdRate(rate, decimals = 2) {
+  return `1 $ = ${formatterFor(decimals).format(Number(rate) || 0)} TJS`;
+}
+
+// Подпись с исходной валютой, если операция была введена не в долларах.
 export function formatWithOriginal(entry) {
   if (!entry || isBase(entry.currency)) return formatAmount(entry?.base ?? 0);
-  return `${formatAmount(entry.base)} · ${formatAmount(entry.amount, entry.currency)} по курсу ${entry.fx}`;
+  return `${formatAmount(entry.base)} · введено ${formatAmount(entry.amount, entry.currency)}`
+    + ` по курсу ${formatterFor(2).format(rateToHuman(entry.fx))}`;
 }

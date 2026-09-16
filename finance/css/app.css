@@ -1137,3 +1137,41 @@ td.danger, .danger-text { color: var(--danger); }
   }
   #app, #sheet, #toast, .brand { display: none !important; }
 }
+
+
+/* --------------------------------------------------------------- курс НБТ */
+
+/* Курс стоит над главными цифрами: по нему пересчитывается всё,
+   что вводят в сомони, поэтому он должен быть заметен сразу. */
+.rate-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 0.5px solid var(--line);
+  text-align: left;
+  transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.rate-bar:active { transform: scale(0.985); transition-duration: 0.06s; }
+.rate-bar.is-busy { opacity: 0.6; }
+.rate-bar__label {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rate-bar__value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.rate-bar__note {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--muted);
+}

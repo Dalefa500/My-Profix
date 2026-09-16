@@ -236,6 +236,18 @@ export async function pull() {
   }
 }
 
+// Просит сервер сходить на сайт НБТ за свежим курсом.
+// Сервер сам сохраняет его в настройках, поэтому потом просто перечитываем.
+export async function refreshUsdRate() {
+  try {
+    const payload = await api('/rate', { method: 'POST', body: {} });
+    await pull();
+    return payload;
+  } catch (error) {
+    return { ok: false, error: error.message || 'Не удалось связаться с сервером' };
+  }
+}
+
 async function flush() {
   if (!queue.length || !user) return;
   const sending = queue.slice();

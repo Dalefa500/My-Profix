@@ -31,7 +31,7 @@ export function assignmentTotals(assignment) {
     area,
     rate,
     percent,
-    currency: assignment?.currency || 'TJS',
+    currency: assignment?.currency || 'USD',
     accrued,
     advance,
     remainder,

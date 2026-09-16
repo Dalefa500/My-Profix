@@ -288,8 +288,8 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
       <b>${raw(esc(formatAmount(totals.accrued, currency)))}</b> — начислено
       · аванс ${raw(esc(formatAmount(totals.advance, currency)))}
       · остаток ${raw(esc(formatAmount(totals.remainder, currency)))}
-      ${currency !== 'TJS'
-        ? raw(html`<br><span class="muted">= ${formatAmount(totals.accruedBase)} по курсу ${Number(data.get('rate__fx')) || 1}</span>`)
+      ${currency === 'TJS'
+        ? raw(html`<br><span class="muted">= ${formatAmount(totals.accruedBase)} по курсу ${Number(data.get('rate__rate')) || 0} TJS за доллар</span>`)
         : ''}`;
   };
   form.addEventListener('input', update);

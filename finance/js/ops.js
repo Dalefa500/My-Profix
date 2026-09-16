@@ -7,12 +7,22 @@ export const COLLECTIONS = [
   'incomes', 'expenses', 'payrolls', 'planned',
 ];
 
+// Версия устройства данных. Меняется, когда старые записи нужно
+// пересобрать по новым правилам (см. migrate ниже).
+export const SCHEMA_VERSION = 2;
+
 export function emptyData() {
   return {
     settings: {
+      schemaVersion: SCHEMA_VERSION,
       companyName: 'Line Design',
-      baseCurrency: 'TJS',
-      rates: { USD: 10.9 },
+      // Студия считает в долларах; сомони пересчитываются при вводе.
+      baseCurrency: 'USD',
+      // Курс Национального банка Таджикистана: сомони за один доллар.
+      usdRate: 10.9,
+      usdRateDate: '',
+      usdRateSource: 'manual',
+      usdRateCheckedAt: '',
       defaultAdvancePercent: 50,
       salaryDay: 5,
       notifyDaysAhead: 7,
@@ -36,6 +46,57 @@ export function normalizeData(raw) {
   for (const name of COLLECTIONS) {
     data[name] = Array.isArray(raw[name]) ? raw[name] : [];
   }
+  return migrate(data, raw);
+}
+
+// ------------------------------------------------- перевод базы на доллары
+
+function round2(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+// Раньше всё считалось в сомони, а доллар был дополнительной валютой.
+// Теперь наоборот. У каждой записи хранится своя сумма в той валюте,
+// в которой её вводили, — сами суммы не трогаем. Пересчитываем только
+// множитель перевода в основную валюту и производные от него итоги.
+function convertNode(node, fxUsd, fxTjs, seen) {
+  if (!node || typeof node !== 'object' || seen.has(node)) return;
+  seen.add(node);
+  if (Array.isArray(node)) {
+    for (const item of node) convertNode(item, fxUsd, fxTjs, seen);
+    return;
+  }
+  const pick = (currency) => (currency === 'TJS' ? fxTjs : fxUsd);
+  if (typeof node.currency === 'string' && node.fx !== undefined) {
+    node.fx = pick(node.currency);
+    if (node.base !== undefined) node.base = round2((Number(node.amount) || 0) * node.fx);
+    if (node.accruedBase !== undefined) node.accruedBase = round2((Number(node.amount) || 0) * node.fx);
+  }
+  // У сотрудника две независимые суммы: оклад и ставка за метр.
+  if (typeof node.salaryCurrency === 'string') node.salaryFx = pick(node.salaryCurrency);
+  if (typeof node.rateCurrency === 'string') node.rateFx = pick(node.rateCurrency);
+  for (const value of Object.values(node)) convertNode(value, fxUsd, fxTjs, seen);
+}
+
+function migrate(data, raw) {
+  const stored = Number(raw?.settings?.schemaVersion) || 1;
+  if (stored >= SCHEMA_VERSION) return data;
+
+  // Курс, по которому в старой версии считались доллары.
+  const oldRate = Number(raw?.settings?.rates?.USD);
+  const rate = Number.isFinite(oldRate) && oldRate > 0 ? oldRate : 10.9;
+
+  const seen = new WeakSet();
+  for (const name of COLLECTIONS) convertNode(data[name], 1, 1 / rate, seen);
+
+  data.settings = {
+    ...data.settings,
+    schemaVersion: SCHEMA_VERSION,
+    baseCurrency: 'USD',
+    usdRate: rate,
+    usdRateSource: data.settings.usdRateSource || 'manual',
+  };
+  delete data.settings.rates;
   return data;
 }
 

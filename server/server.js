@@ -7,7 +7,7 @@ import path from 'node:path';
 import { promises as fs, createReadStream } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 
-import { applyOps, normalizeData, emptyData } from '../finance/js/ops.js';
+import { applyOps, normalizeData, emptyData, SCHEMA_VERSION } from '../finance/js/ops.js';
 import {
   ensureDir, readJSON, writeJSON, appendLine, withLock, DATA_DIR,
 } from './storage.js';
@@ -18,6 +18,7 @@ import {
   authenticate, authenticateByCode, createSession, destroySession, userForToken,
   publicUser, loadUsers, createUser, changePassword, setName, loginBlocked, canEdit,
 } from './auth.js';
+import { fetchUsdRate } from './nbt.js';
 
 // Вход можно отключить: тогда приложение открывается сразу, без логина
 // и пароля. Включается обратно снятием этой настройки — данные и учётные
@@ -53,15 +54,83 @@ let cache = null; // { rev, state }
 async function loadState() {
   if (cache) return cache;
   const stored = await readJSON(STATE_FILE, null);
-  cache = stored && typeof stored.rev === 'number'
-    ? { rev: stored.rev, state: normalizeData(stored.state) }
-    : { rev: 0, state: emptyData() };
+  if (!stored || typeof stored.rev !== 'number') {
+    cache = { rev: 0, state: emptyData() };
+    return cache;
+  }
+
+  // Переход на доллар пересчитывает все суммы. Перед этим один раз
+  // откладываем копию исходных данных — на случай, если понадобится вернуться.
+  const version = Number(stored.state?.settings?.schemaVersion) || 1;
+  const needsMigration = version < SCHEMA_VERSION;
+  if (needsMigration) {
+    const backup = `state-before-v${SCHEMA_VERSION}.json`;
+    if (!(await readJSON(backup, null))) {
+      await writeJSON(backup, stored);
+      console.log(`Копия данных до перехода на доллар: ${path.join(DATA_DIR, backup)}`);
+    }
+  }
+
+  cache = { rev: stored.rev, state: normalizeData(stored.state) };
+
+  if (needsMigration) {
+    const next = { rev: cache.rev + 1, state: cache.state, updatedAt: new Date().toISOString() };
+    await saveState(next);
+    console.log('Суммы пересчитаны в доллары по курсу '
+      + `${next.state.settings.usdRate} TJS за $1.`);
+  }
   return cache;
 }
 
 async function saveState(next) {
   cache = next;
   await writeJSON(STATE_FILE, next);
+}
+
+// ------------------------------------------- курс Национального банка
+
+// Последняя попытка обращения к НБТ — чтобы не дёргать сайт на каждый заход.
+let rateCheck = { at: 0, error: '' };
+const RATE_MIN_INTERVAL = 30 * 60 * 1000;
+
+async function refreshUsdRate({ force = false } = {}) {
+  const current = await loadState();
+  const settings = current.state.settings || {};
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (!force) {
+    if (settings.usdRateSource === 'nbt' && settings.usdRateDate === today) {
+      return { ok: true, rate: { value: settings.usdRate, date: settings.usdRateDate }, cached: true };
+    }
+    if (Date.now() - rateCheck.at < RATE_MIN_INTERVAL) {
+      return { ok: false, error: rateCheck.error || 'Курс недавно уже проверяли' };
+    }
+  }
+
+  rateCheck = { at: Date.now(), error: '' };
+  const result = await fetchUsdRate();
+  if (!result.ok) {
+    rateCheck.error = result.error;
+    return result;
+  }
+
+  const rate = result.rate;
+  const same = settings.usdRate === rate.value && settings.usdRateDate === (rate.date || today);
+  if (!same) {
+    await withLock(async () => {
+      const state = normalizeData((await loadState()).state);
+      state.settings = {
+        ...state.settings,
+        usdRate: rate.value,
+        usdRateDate: rate.date || today,
+        usdRateSource: 'nbt',
+        usdRateCheckedAt: new Date().toISOString(),
+      };
+      const rev = (await loadState()).rev + 1;
+      await saveState({ rev, state, updatedAt: new Date().toISOString() });
+    });
+  }
+  return { ok: true, rate };
 }
 
 // --------------------------------------------------------- вход по Face ID
@@ -265,6 +334,18 @@ async function handleApi(req, res, url) {
   if (route === '/state' && req.method === 'GET') {
     const current = await loadState();
     return send(res, 200, current);
+  }
+
+  // Курс НБТ: обновить может любой вошедший, это не изменение учётных данных.
+  if (route === '/rate' && req.method === 'POST') {
+    const result = await refreshUsdRate({ force: true });
+    const current = await loadState();
+    return send(res, result.ok ? 200 : 502, {
+      ok: result.ok,
+      error: result.error || '',
+      settings: current.state.settings,
+      rev: current.rev,
+    });
   }
 
   if (route === '/ops' && req.method === 'POST') {
@@ -494,6 +575,17 @@ async function bootstrapUsers() {
 await ensureDir();
 await bootstrapUsers();
 await loadState();
+
+// Курс подтягиваем при запуске и затем несколько раз в сутки: НБТ публикует
+// его раз в день, но сервер может оказаться выключенным в момент публикации.
+refreshUsdRate().then((result) => {
+  if (result.ok && !result.cached) {
+    console.log(`Курс НБТ: 1 $ = ${result.rate.value} TJS (${result.rate.date || 'без даты'})`);
+  } else if (!result.ok) {
+    console.log(`Курс НБТ не получен: ${result.error}. Работаем с последним сохранённым.`);
+  }
+});
+setInterval(() => { refreshUsdRate().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
 server.listen(PORT, HOST, () => {
   console.log(`Line Design — финансы студии: http://localhost:${PORT}/finance/`);
   if (AUTH_DISABLED) {

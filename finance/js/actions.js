@@ -527,10 +527,25 @@ export function saveSettings(values) {
   const settings = getState().settings;
   return store.setSettings({
     companyName: values.companyName?.trim() || settings.companyName,
-    rates: { ...settings.rates, USD: Number(values.usdRate) > 0 ? Number(values.usdRate) : settings.rates.USD },
+    usdRate: Number(values.usdRate) > 0 ? Number(values.usdRate) : settings.usdRate,
+    // Курс, введённый руками, помечаем — чтобы было видно, что он не с сайта НБТ.
+    ...(Number(values.usdRate) > 0 && Number(values.usdRate) !== settings.usdRate
+      ? { usdRateSource: 'manual', usdRateDate: today() }
+      : {}),
     defaultAdvancePercent: clampPercent(values.defaultAdvancePercent ?? settings.defaultAdvancePercent),
     salaryDay: Math.min(28, Math.max(1, Number(values.salaryDay) || settings.salaryDay)),
     notifyDaysAhead: Math.min(60, Math.max(1, Number(values.notifyDaysAhead) || settings.notifyDaysAhead)),
+  });
+}
+
+// Курс, полученный с сайта Национального банка. Приходит с сервера.
+export function applyNbtRate(rate) {
+  if (!rate || !(Number(rate.value) > 0)) return null;
+  return store.setSettings({
+    usdRate: Number(rate.value),
+    usdRateDate: rate.date || today(),
+    usdRateSource: 'nbt',
+    usdRateCheckedAt: new Date().toISOString(),
   });
 }
 

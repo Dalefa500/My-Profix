@@ -105,7 +105,7 @@ export default function projectDetail(params) {
       ${raw(sectionTitle('Деньги клиента'))}
       <div class="stats">
         <div class="stat"><span class="stat__label">Стоимость</span><strong class="stat__value">${money(finance.contractBase)}</strong>
-          <span class="stat__hint">${project.currency !== 'TJS' ? formatAmount(project.price, project.currency) : ''}</span></div>
+          <span class="stat__hint">${project.currency !== 'USD' ? formatAmount(project.price, project.currency) : ''}</span></div>
         <div class="stat stat--good"><span class="stat__label">Получено</span><strong class="stat__value">${money(finance.receivedBase)}</strong>
           <span class="stat__hint">${Math.round(receivedPercent)}% от суммы</span></div>
         <div class="stat stat--warn"><span class="stat__label">Осталось получить</span><strong class="stat__value">${money(finance.toReceiveBase)}</strong></div>

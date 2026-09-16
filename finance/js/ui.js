@@ -3,7 +3,10 @@
 // (пункт 29 ТЗ), поэтому формы собираются из описаний полей,
 // а всё необязательное прячется под «Дополнительно».
 
-import { CURRENCY_LIST, formatAmount, defaultRate, toBase } from './money.js';
+import {
+  BASE_CURRENCY, CURRENCY_LIST, formatAmount, defaultRate, toBase,
+  rateToHuman, humanToRate, usdRate,
+} from './money.js';
 import { getState } from './store.js';
 import { formatDate } from './dates.js';
 
@@ -53,7 +56,8 @@ export function html(strings, ...values) {
   }, '');
 }
 
-export const money = (base, options) => formatAmount(base, 'TJS', options);
+// Суммы в приложении всегда в основной валюте — в долларах.
+export const money = (base, options) => formatAmount(base, BASE_CURRENCY, options);
 
 export function badge(label, tone = 'neutral') {
   return html`<span class="badge badge--${raw(tone)}">${label}</span>`;
@@ -211,12 +215,15 @@ function fieldControl(field) {
   }
 }
 
-// Денежное поле: сумма + валюта + курс. Курс запрашивается только тогда,
-// когда валюта не базовая, и сохраняется вместе с операцией.
+// Денежное поле: сумма + валюта + курс.
+// Приложение считает в долларах. Если сумму вводят в сомони, поле показывает
+// курс (сколько сомони за доллар) и тут же — сколько это в долларах.
+// Курс сохраняется вместе с операцией и задним числом не пересматривается.
 function moneyControl(field) {
   const settings = getState().settings;
   const currency = field.currency || settings.baseCurrency;
   const fx = field.fx ?? defaultRate(currency, settings);
+  const human = currency === 'TJS' ? rateToHuman(fx) : usdRate(settings);
   const suffix = field.suffix ? html`<span class="money-suffix">${field.suffix}</span>` : '';
   return html`<div class="money-field" data-money="${field.name}">
     <div class="money-field__row">
@@ -226,15 +233,16 @@ function moneyControl(field) {
       <div class="segmented segmented--sm" data-field="${field.name}__currency">
         ${raw(CURRENCY_LIST.map((item) => html`
           <button type="button" class="segmented__item ${raw(item.code === currency ? 'is-active' : '')}"
-            data-value="${item.code}">${item.code}</button>`).join(''))}
+            data-value="${item.code}">${item.code === 'USD' ? '$' : item.code}</button>`).join(''))}
         <input type="hidden" name="${field.name}__currency" value="${currency}">
       </div>
     </div>
     <div class="money-field__fx ${raw(currency === settings.baseCurrency ? 'is-hidden' : '')}">
-      <label>Курс 1 <span data-fx-code>${currency}</span> =</label>
-      <input name="${field.name}__fx" type="number" inputmode="decimal" step="any" value="${fx}">
-      <span>${settings.baseCurrency}</span>
+      <label>Курс 1 $ =</label>
+      <input name="${field.name}__rate" type="number" inputmode="decimal" step="0.01" value="${human}">
+      <span>TJS</span>
       <span class="money-field__base" data-fx-base></span>
+      <input type="hidden" name="${field.name}__fx" value="${fx}">
     </div>
   </div>`;
 }
@@ -350,24 +358,25 @@ export function bindMoney(scope) {
     const currencyInput = node.querySelector(`input[name="${name}__currency"]`);
     const fxWrap = node.querySelector('.money-field__fx');
     const fxInput = node.querySelector(`input[name="${name}__fx"]`);
-    const fxCode = node.querySelector('[data-fx-code]');
+    const rateInput = node.querySelector(`input[name="${name}__rate"]`);
     const baseOut = node.querySelector('[data-fx-base]');
 
-    // Курс относится к конкретной валюте. При переключении валюты
-    // подставляем текущий курс компании, но у сохранённой операции
+    // Курс относится к конкретной валюте. При переключении на сомони
+    // подставляем текущий курс НБТ, но у сохранённой операции
     // её исторический курс не трогаем.
-    let fxOwner = currencyInput.value;
-    fxInput?.addEventListener('input', () => { fxOwner = currencyInput.value; });
+    let rateOwner = currencyInput.value;
+    rateInput?.addEventListener('input', () => { rateOwner = currencyInput.value; });
 
     const refresh = () => {
       const currency = currencyInput.value;
       const isBase = currency === settings.baseCurrency;
       fxWrap.classList.toggle('is-hidden', isBase);
-      if (fxCode) fxCode.textContent = currency;
-      if (!isBase && (fxOwner !== currency || !(Number(fxInput.value) > 0))) {
-        fxInput.value = defaultRate(currency, settings);
-        fxOwner = currency;
+      if (!isBase && (rateOwner !== currency || !(Number(rateInput.value) > 0))) {
+        rateInput.value = usdRate(settings);
+        rateOwner = currency;
       }
+      // В операции хранится множитель к доллару, человек видит курс НБТ.
+      fxInput.value = isBase ? 1 : humanToRate(rateInput.value);
       if (baseOut) {
         const base = toBase(Number(amountInput.value) || 0, currency, Number(fxInput.value) || 1);
         baseOut.textContent = isBase ? '' : `= ${formatAmount(base)}`;
@@ -375,7 +384,7 @@ export function bindMoney(scope) {
     };
     currencyInput.addEventListener('change', refresh);
     amountInput.addEventListener('input', refresh);
-    fxInput?.addEventListener('input', refresh);
+    rateInput?.addEventListener('input', refresh);
     refresh();
   });
 }

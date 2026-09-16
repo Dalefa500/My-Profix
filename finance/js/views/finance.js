@@ -10,7 +10,7 @@ import { rangeFor, today, formatDate } from '../dates.js';
 import {
   INCOME_TYPES, PAYMENT_METHODS, EXPENSE_GROUPS, categoryLabel, labelOf,
 } from '../model.js';
-import { formatAmount } from '../money.js';
+import { formatAmount, formatUsdRate, rateToHuman } from '../money.js';
 import * as forms from '../forms.js';
 import * as actions from '../actions.js';
 import { refresh } from '../refresh.js';
@@ -108,7 +108,7 @@ export default function finance(params) {
           <span class="row__amount ${raw(tab === 'income' ? 'good' : 'danger')}">
             ${raw(tab === 'income' ? '+' : '−')}${money(item.base)}</span>
           <span class="row__meta">${formatDate(item.date, { short: true, withYear: false })}</span>
-          ${item.currency !== 'TJS' ? raw(html`<span class="row__meta">${formatAmount(item.amount, item.currency)}</span>`) : ''}
+          ${item.currency !== 'USD' ? raw(html`<span class="row__meta">${formatAmount(item.amount, item.currency)}</span>`) : ''}
         </div>
       </button>`;
   }).join('');
@@ -190,8 +190,8 @@ function openOperationSheet(tab, id) {
           <span class="row__title">${client.name}</span></div></div>`) : ''}
         <div class="row"><div class="row__main"><span class="row__subtitle">Способ оплаты</span>
           <span class="row__title">${labelOf(PAYMENT_METHODS, item.method, 'Наличные')}</span></div></div>
-        ${item.currency !== 'TJS' ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Валюта операции</span>
-          <span class="row__title">${formatAmount(item.amount, item.currency)} по курсу ${item.fx}</span></div></div>`) : ''}
+        ${item.currency !== 'USD' ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Введено в сомони</span>
+          <span class="row__title">${formatAmount(item.amount, item.currency)} по курсу ${formatUsdRate(rateToHuman(item.fx))}</span></div></div>`) : ''}
         ${item.comment ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Комментарий</span>
           <span class="row__title">${item.comment}</span></div></div>`) : ''}
         ${item.createdBy ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Внёс</span>
