@@ -11,6 +11,7 @@ import * as forms from '../forms.js';
 import * as actions from '../actions.js';
 import { refresh } from '../refresh.js';
 import { go } from '../router.js';
+import { openReport } from '../report.js';
 
 function payrollCard(payroll) {
   const info = payrollState(payroll);
@@ -83,6 +84,7 @@ export default function employeeDetail(params) {
       <div class="btn-row">
         <button class="btn btn--sm" data-act="edit">Изменить</button>
         <button class="btn btn--sm btn--ghost" data-act="delete">Удалить</button>
+        <button class="btn btn--sm btn--ghost" data-report>Отчёт PDF</button>
       </div>
     </div>
 
@@ -128,6 +130,7 @@ export default function employeeDetail(params) {
     back: '#/employees',
     body,
     mount(root) {
+      root.querySelector('[data-report]').onclick = () => openReport({ type: 'employee', id: employee.id });
       root.querySelector('[data-act="edit"]').onclick = () => forms.openEmployeeForm(employee.id, refresh);
       root.querySelector('[data-act="delete"]').onclick = async () => {
         const ok = await confirmDialog(`Удалить сотрудника «${employee.name}»? Его начисления будут удалены, а проведённые выплаты останутся в расходах.`);

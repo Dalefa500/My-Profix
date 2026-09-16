@@ -19,6 +19,7 @@ import {
   publicUser, loadUsers, createUser, changePassword, setName, loginBlocked, canEdit,
 } from './auth.js';
 import { fetchUsdRate } from './nbt.js';
+import { buildReport } from './reports.js';
 
 // Вход можно отключить: тогда приложение открывается сразу, без логина
 // и пароля. Включается обратно снятием этой настройки — данные и учётные
@@ -346,6 +347,35 @@ async function handleApi(req, res, url) {
       settings: current.state.settings,
       rev: current.rev,
     });
+  }
+
+  // Отчёт в PDF. Отдаётся готовым файлом, чтобы его можно было сразу
+  // переслать клиенту или сотруднику прямо с телефона.
+  if (route === '/report' && req.method === 'GET') {
+    const params = url.searchParams;
+    const current = await loadState();
+    let report = null;
+    try {
+      report = buildReport(current.state, {
+        type: params.get('type') || '',
+        id: params.get('id') || '',
+        from: params.get('from') || '',
+        to: params.get('to') || '',
+      });
+    } catch (error) {
+      console.error('Отчёт не собрался:', error);
+      return send(res, 500, { error: 'Не удалось собрать отчёт' });
+    }
+    if (!report) return send(res, 404, { error: 'Отчёт не найден' });
+
+    res.writeHead(200, {
+      'Content-Type': 'application/pdf',
+      'Content-Length': report.buffer.length,
+      // inline — чтобы на телефоне открылся просмотрщик с кнопкой «Поделиться».
+      'Content-Disposition': `inline; filename="report.pdf"; filename*=UTF-8''${encodeURIComponent(report.name)}`,
+      'Cache-Control': 'no-store',
+    });
+    return res.end(report.buffer);
   }
 
   if (route === '/ops' && req.method === 'POST') {

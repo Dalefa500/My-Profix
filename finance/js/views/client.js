@@ -11,6 +11,7 @@ import * as forms from '../forms.js';
 import * as actions from '../actions.js';
 import { refresh } from '../refresh.js';
 import { go } from '../router.js';
+import { openReport } from '../report.js';
 
 export default function clientDetail(params) {
   const state = getState();
@@ -33,6 +34,7 @@ export default function clientDetail(params) {
       <div class="btn-row">
         <button class="btn btn--sm" data-act="edit">Изменить</button>
         <button class="btn btn--sm btn--ghost" data-act="delete">Удалить</button>
+        <button class="btn btn--sm btn--ghost" data-report>Отчёт PDF</button>
       </div>
     </div>
 
@@ -79,6 +81,7 @@ export default function clientDetail(params) {
     back: '#/clients',
     body,
     mount(root) {
+      root.querySelector('[data-report]').onclick = () => openReport({ type: 'client', id: client.id });
       root.querySelector('[data-act="edit"]').onclick = () => forms.openClientForm(client.id, refresh);
       root.querySelector('[data-act="add-project"]').onclick = () => forms.openProjectForm(null, (project) => {
         go(`#/projects/${project.id}`);

@@ -5,6 +5,7 @@ import {
   openSheet, closeSheet, confirmDialog, toast,
 } from '../ui.js';
 import { getState, byId } from '../store.js';
+import { openReport } from '../report.js';
 import { projectFinance, assignmentState } from '../calc.js';
 import { PROJECT_STATUSES, WORK_STAGES, labelOf, categoryLabel } from '../model.js';
 import { formatAmount, formatWithOriginal } from '../money.js';
@@ -98,6 +99,7 @@ export default function projectDetail(params) {
       <div class="btn-row">
         <button class="btn btn--sm" data-act="edit">Изменить проект</button>
         <button class="btn btn--sm btn--ghost" data-act="delete">Удалить</button>
+        <button class="btn btn--sm btn--ghost" data-report>Отчёт PDF</button>
       </div>
     </div>
 
@@ -169,6 +171,7 @@ export default function projectDetail(params) {
     back: '#/projects',
     body,
     mount(root) {
+      root.querySelector('[data-report]').onclick = () => openReport({ type: 'project', id: project.id });
       root.querySelector('[data-act="edit"]').onclick = () => forms.openProjectForm(project.id, refresh);
       root.querySelector('[data-act="income"]').onclick = () => forms.openIncomeForm({
         projectId: project.id,

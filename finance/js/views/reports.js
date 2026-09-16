@@ -10,6 +10,7 @@ import {
 } from '../dates.js';
 import { categoryLabel, categoryGroupLabel, INCOME_TYPES, labelOf } from '../model.js';
 import { refresh } from '../refresh.js';
+import { openReport } from '../report.js';
 
 const PERIODS = [
   { value: 'month', label: 'Месяц', months: 1 },
@@ -153,6 +154,8 @@ export default function reports() {
           data-value="${item.value}">${item.label}</button>`).join(''))}
     </div>
 
+    <button class="btn btn--block btn--ghost" data-report>Скачать отчёт за период в PDF</button>
+
     <div class="hero">
       <span class="hero__label">Прибыль · ${range.label}</span>
       <div class="hero__value">${money(totals.profitBase)}</div>
@@ -199,6 +202,9 @@ export default function reports() {
         }
         reportState.preset = button.dataset.value;
         refresh();
+      });
+      root.querySelector('[data-report]').onclick = () => openReport({
+        type: 'period', from: range.from, to: range.to,
       });
     },
   };
