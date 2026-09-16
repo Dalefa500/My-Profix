@@ -33,6 +33,7 @@ const TABS = [
   { href: '#/', label: 'Главная', icon: 'home', match: ['/'], view: () => dashboard },
   { href: '#/projects', label: 'Проекты', icon: 'folder', match: ['/projects', '/projects/:id'], view: () => projects },
   { href: '#/employees', label: 'Сотрудники', icon: 'people', match: ['/employees', '/employees/:id'], view: () => employees },
+  { href: '#/clients', label: 'Клиенты', icon: 'client', match: ['/clients', '/clients/:id'], view: () => clients },
   { href: '#/finance', label: 'Финансы', icon: 'wallet', match: ['/finance', '/finance/:tab'], view: () => finance },
   { href: '#/reports', label: 'Отчёты', icon: 'chart', match: ['/reports', '/reports/:period'], view: () => reports },
 ];
@@ -442,9 +443,8 @@ function openMoreMenu() {
   openSheet({
     title: 'Ещё',
     body: html`<div class="list">
-      <a class="row" href="#/clients" data-close="1"><div class="row__main"><span class="row__title">Клиенты</span></div><span class="row__meta">›</span></a>
       <a class="row" href="#/payments" data-close="1"><div class="row__main"><span class="row__title">Платежи</span><span class="row__subtitle">Что получить и что выплатить</span></div><span class="row__meta">›</span></a>
-      <a class="row" href="#/founders" data-close="1"><div class="row__main"><span class="row__title">Партнёры</span><span class="row__subtitle">Сколько взяли из кассы</span></div><span class="row__meta">›</span></a>
+      <a class="row" href="#/founders" data-close="1"><div class="row__main"><span class="row__title">Коллеги</span><span class="row__subtitle">Сколько взяли из кассы</span></div><span class="row__meta">›</span></a>
       <a class="row" href="#/settings" data-close="1"><div class="row__main"><span class="row__title">Настройки</span><span class="row__subtitle">Курс, категории, пароль</span></div><span class="row__meta">›</span></a>
       <div class="row"><div class="row__main"><span class="row__title">${user?.name || ''}</span>
         <span class="row__subtitle">${store.isAuthDisabled() ? 'вход в приложение отключён'

@@ -1,6 +1,6 @@
-// Партнёры студии: сколько каждый взял из кассы.
+// Коллеги студии: сколько каждый взял из кассы.
 //
-// Деньги, которые партнёр берёт для себя, — это его доля прибыли,
+// Деньги, которые коллега берёт для себя, — это его доля прибыли,
 // а не расход студии. Поэтому они не уменьшают прибыль и живут отдельно
 // от расходов: в отчётах видно и то, и другое, но не вперемешку.
 
@@ -53,7 +53,7 @@ export default function founders() {
         hint: 'доходы минус расходы студии',
       }))}
       ${raw(statCard({
-        label: 'Взяли партнёры',
+        label: 'Взяли коллеги',
         value: money(summary.periodBase),
         hint: 'за тот же период',
         tone: 'warn',
@@ -65,7 +65,7 @@ export default function founders() {
         tone: leftBase < 0 ? 'danger' : 'good',
       }))}
       ${summary.owedBase > 0 ? raw(statCard({
-        label: 'Студия должна партнёрам',
+        label: 'Студия должна коллегам',
         value: money(summary.owedBase),
         hint: 'оплатили расходы студии своими деньгами',
         tone: 'danger',
@@ -73,13 +73,13 @@ export default function founders() {
     </div>
 
     <div class="card">
-      ${raw(sectionTitle('Партнёры', '<button class="btn btn--sm" data-act="add-founder">Добавить</button>'))}
+      ${raw(sectionTitle('Коллеги', '<button class="btn btn--sm" data-act="add-founder">Добавить</button>'))}
       ${summary.rows.length
         ? raw(html`<div class="list">${raw(summary.rows.map((row) => html`
           <a class="row" href="#/founders/${row.founder.id}">
             <div class="row__main">
               <span class="row__title">${row.founder.name}</span>
-              <span class="row__subtitle">${row.founder.role || 'Партнёр'}
+              <span class="row__subtitle">${row.founder.role || 'Коллега'}
                 · всего взял ${money(row.totalBase)}</span>
             </div>
             <div class="row__side">
@@ -89,19 +89,19 @@ export default function founders() {
                 : range.label.toLowerCase()}</span>
             </div>
           </a>`).join(''))}</div>`)
-        : raw(emptyState('Партнёры не заведены. Добавьте Шохина и Ризвона, чтобы вести их выплаты.'))}
+        : raw(emptyState('Коллеги не заведены. Добавьте Шохина и Ризвона, чтобы вести их выплаты.'))}
     </div>
 
     ${summary.rows.length ? raw(html`
       <button class="btn btn--primary btn--block" data-act="add-draw">Записать операцию</button>`) : ''}
 
-    <p class="muted">Деньги, которые партнёр берёт для себя, — это его доля прибыли:
+    <p class="muted">Деньги, которые коллега берёт для себя, — это его доля прибыли:
       в расходы студии они не попадают, и прибыль от них не уменьшается.
-      А если партнёр оплатил расход студии своими деньгами — это настоящий расход,
+      А если коллега оплатил расход студии своими деньгами — это настоящий расход,
       и студия остаётся ему должна.</p>`;
 
   return {
-    title: 'Партнёры',
+    title: 'Коллеги',
     subtitle: range.label,
     back: '#/',
     body,
@@ -126,7 +126,7 @@ export function founderDetail(params) {
   const state = getState();
   const founder = byId('founders', params.id);
   if (!founder) {
-    return { title: 'Партнёр', back: '#/founders', body: emptyState('Партнёр не найден') };
+    return { title: 'Коллега', back: '#/founders', body: emptyState('Коллега не найден') };
   }
   const range = currentRange();
   const row = foundersSummary(state, range.from, range.to).rows
@@ -135,7 +135,7 @@ export function founderDetail(params) {
   const body = html`
     <div class="card">
       <h2>${founder.name}</h2>
-      <p class="muted">${founder.role || 'Партнёр'}</p>
+      <p class="muted">${founder.role || 'Коллега'}</p>
       ${founder.note ? raw(html`<p class="muted">${founder.note}</p>`) : ''}
       <div class="btn-row">
         <button class="btn btn--sm" data-act="edit">Изменить</button>
@@ -173,7 +173,7 @@ export function founderDetail(params) {
 
   return {
     title: founder.name,
-    subtitle: 'Партнёр',
+    subtitle: 'Коллега',
     back: '#/founders',
     body,
     mount(root) {
@@ -186,10 +186,10 @@ export function founderDetail(params) {
         button.onclick = () => openDrawSheet(button.dataset.openDraw);
       });
       root.querySelector('[data-act="delete"]').onclick = async () => {
-        const ok = await confirmDialog(`Удалить партнёра «${founder.name}»? Все его выдачи тоже удалятся.`);
+        const ok = await confirmDialog(`Удалить коллегу «${founder.name}»? Все его выдачи тоже удалятся.`);
         if (!ok) return;
         actions.deleteFounder(founder.id);
-        toast('Партнёр удалён');
+        toast('Коллега удалён');
         window.history.back();
       };
     },
@@ -203,12 +203,12 @@ function openDrawSheet(id) {
 
   const kind = draw.kind || 'draw';
   openSheet({
-    title: labelOf(FOUNDER_MOVES, kind, 'Операция партнёра'),
+    title: labelOf(FOUNDER_MOVES, kind, 'Операция коллеги'),
     body: html`
       <p class="hero__value" style="color:var(--ink)">${money(draw.base)}</p>
       <p class="muted">${FOUNDER_MOVES.find((item) => item.id === kind)?.hint || ''}</p>
       <div class="list">
-        <div class="row"><div class="row__main"><span class="row__subtitle">Партнёр</span>
+        <div class="row"><div class="row__main"><span class="row__subtitle">Коллега</span>
           <span class="row__title">${founder?.name || '—'}</span></div></div>
         ${kind === 'spend' ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">На что</span>
           <span class="row__title">${categoryLabel(draw.category, getState().settings)}</span></div></div>`) : ''}

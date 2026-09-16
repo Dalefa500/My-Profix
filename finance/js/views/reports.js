@@ -137,14 +137,14 @@ function openCustomPeriod() {
   });
 }
 
-// Сколько партнёры взяли из кассы за период. Это не расход студии,
+// Сколько коллеги взяли из кассы за период. Это не расход студии,
 // поэтому стоит отдельным блоком, а не в структуре расходов.
 function partnersBlock(state, range) {
   const summary = foundersSummary(state, range.from, range.to);
   if (!summary.rows.length) return '';
   return html`
     <div class="card">
-      ${raw(sectionTitle('Партнёры', '<a class="btn btn--sm btn--ghost" href="#/founders">Подробно</a>'))}
+      ${raw(sectionTitle('Коллеги', '<a class="btn btn--sm btn--ghost" href="#/founders">Подробно</a>'))}
       <div class="list">
         ${raw(summary.rows.map((row) => html`
           <div class="row">

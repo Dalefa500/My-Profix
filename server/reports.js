@@ -482,13 +482,13 @@ function projectReport(state, project) {
   return { buffer: sheet.build(), name: fileName(['Отчёт', project.name, todayIso()]) };
 }
 
-// --------------------------------------------------------------- партнёр
+// --------------------------------------------------------------- коллега
 
 function founderReport(state, founder, from, to) {
   const info = founderState(state, founder, from, to);
   const period = from && to;
   const sheet = new Sheet({
-    title: `Отчёт по партнёру — ${founder.name}`,
+    title: `Отчёт по коллеге — ${founder.name}`,
     subtitle: [founder.role, period ? `${formatDate(from)} — ${formatDate(to)}` : 'за всё время']
       .filter(Boolean).join(' · '),
     settings: state.settings,
@@ -523,7 +523,7 @@ function founderReport(state, founder, from, to) {
     { empty: 'Операций за этот период не было' },
   );
 
-  sheet.note('Деньги, которые партнёр берёт для себя, — это его доля прибыли,'
+  sheet.note('Деньги, которые коллега берёт для себя, — это его доля прибыли,'
     + ' на прибыль студии они не влияют. Расходы, оплаченные его деньгами,'
     + ' входят в расходы студии, и на их сумму студия остаётся ему должна.');
 
@@ -577,10 +577,10 @@ function periodReport(state, from, to) {
 
   const partners = foundersSummary(state, from, to);
   if (partners.rows.length && (partners.periodBase > 0 || partners.owedBase > 0)) {
-    sheet.heading('Партнёры взяли из кассы');
+    sheet.heading('Коллеги взяли из кассы');
     sheet.table(
       [
-        { title: 'Партнёр', width: 170 },
+        { title: 'Коллега', width: 170 },
         { title: 'Взял за период', width: 90, align: 'right' },
         { title: 'Взял всего', width: 80, align: 'right' },
         { title: 'Студия должна', width: 90, align: 'right' },

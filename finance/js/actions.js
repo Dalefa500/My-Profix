@@ -20,7 +20,7 @@ function money(values, settings) {
   return { amount, currency, fx, base: toBase(amount, currency, fx) };
 }
 
-// Имя того, кто внёс операцию (оба партнёра работают с одними данными).
+// Имя того, кто внёс операцию (оба коллеги работают с одними данными).
 function currentOwner() {
   return store.getUser()?.name || '';
 }
@@ -447,7 +447,7 @@ export function deleteExpense(id) {
       ops.push(op.patch('planned', planned.id, { status: 'planned' }, ['expenseId']));
     }
   }
-  // Расход, оплаченный партнёром, связан с записью о его деньгах:
+  // Расход, оплаченный коллегой, связан с записью о его деньгах:
   // удаляем обе, иначе долг студии останется висеть без основания.
   if (expense.source === 'founder' && expense.founderMoveId) {
     ops.push(op.remove('draws', expense.founderMoveId));
@@ -559,11 +559,11 @@ export function deleteBarter(id) {
   return store.commit(ops);
 }
 
-// -------------------------------------------------------------- партнёры
+// -------------------------------------------------------------- коллеги
 
 export function saveFounder(values, id = null) {
   const record = {
-    name: values.name?.trim() || 'Партнёр',
+    name: values.name?.trim() || 'Коллега',
     role: values.role?.trim() || '',
     note: values.note?.trim() || '',
   };
@@ -580,12 +580,12 @@ export function deleteFounder(id) {
   return store.commit(ops);
 }
 
-// Движение денег между студией и партнёром. Три случая, и считаются
+// Движение денег между студией и коллегой. Три случая, и считаются
 // они по-разному:
 //   draw  — взял для себя: доля прибыли, на прибыль студии не влияет;
 //   spend — оплатил расход студии своими деньгами: это настоящий расход
 //           студии, поэтому заводится ещё и запись в расходах, а студия
-//           остаётся должна партнёру;
+//           остаётся должна коллеге;
 //   repay — студия вернула ему потраченное: гасит этот долг.
 export function saveDraw(values, id = null) {
   const state = getState();
@@ -593,7 +593,7 @@ export function saveDraw(values, id = null) {
   const payment = money(values, settings);
   const kind = ['draw', 'spend', 'repay'].includes(values.kind) ? values.kind : 'draw';
   const founder = store.byId('founders', values.founderId);
-  if (!values.founderId) return { ok: false, error: 'Выберите партнёра' };
+  if (!values.founderId) return { ok: false, error: 'Выберите коллегу' };
 
   const existing = id ? store.byId('draws', id) : null;
   const drawId = id || uid('drw');
@@ -609,7 +609,7 @@ export function saveDraw(values, id = null) {
   };
 
   const ops = [];
-  // Расход студии, оплаченный партнёром, должен попасть в общие расходы —
+  // Расход студии, оплаченный коллегой, должен попасть в общие расходы —
   // иначе прибыль окажется завышенной.
   if (kind === 'spend') {
     const expenseId = existing?.expenseId || uid('exp');
@@ -624,7 +624,7 @@ export function saveDraw(values, id = null) {
       founderMoveId: drawId,
       paidByFounderId: record.founderId,
       comment: record.comment
-        || `Оплатил ${founder?.name || 'партнёр'} · ${categoryLabel(record.category, settings)}`,
+        || `Оплатил ${founder?.name || 'коллега'} · ${categoryLabel(record.category, settings)}`,
       createdBy: currentOwner(),
       createdAt: today(),
     };

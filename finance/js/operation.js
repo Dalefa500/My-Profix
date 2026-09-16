@@ -52,7 +52,7 @@ export function openOperation(tab, id) {
           <span class="row__title">${item.createdBy}</span></div></div>`) : ''}
       </div>
       ${system ? raw(html`<p class="muted">${item.source === 'founder'
-        ? 'Расход оплачен партнёром из своих денег. При удалении пропадёт и запись о его деньгах, а долг студии уменьшится.'
+        ? 'Расход оплачен коллегой из своих денег. При удалении пропадёт и запись о его деньгах, а долг студии уменьшится.'
         : 'Операция создана выплатой сотруднику или плановым платежом. При удалении обязательство вернётся.'}</p>`) : ''}`,
     footer: html`
       ${system ? '' : raw(html`<button class="btn" data-act="edit">Изменить</button>`)}

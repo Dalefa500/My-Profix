@@ -640,12 +640,12 @@ export function openBarterForm(id = null, prefill = {}, onDone) {
   });
 }
 
-// -------------------------------------------------------------- партнёры
+// -------------------------------------------------------------- коллеги
 
 export function openFounderForm(id = null, onDone) {
   const founder = id ? byId('founders', id) : null;
   openForm({
-    title: founder ? 'Партнёр' : 'Новый партнёр',
+    title: founder ? 'Коллега' : 'Новый коллега',
     fields: [
       { name: 'name', label: 'Имя', type: 'text', required: true, value: founder?.name || '', wide: true },
       { name: 'role', label: 'Роль в студии', type: 'text', value: founder?.role || '', wide: true },
@@ -655,14 +655,14 @@ export function openFounderForm(id = null, onDone) {
     ],
     onSubmit: (values) => {
       actions.saveFounder(values, id);
-      toast(founder ? 'Сохранено' : 'Партнёр добавлен', 'good');
+      toast(founder ? 'Сохранено' : 'Коллега добавлен', 'good');
       onDone?.();
       return true;
     },
   });
 }
 
-// Движение денег между студией и партнёром: взял для себя, оплатил
+// Движение денег между студией и коллегой: взял для себя, оплатил
 // расход студии своими деньгами или получил этот долг обратно.
 export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
   const state = getState();
@@ -670,7 +670,7 @@ export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
   const moveKind = draw?.kind || kind || 'draw';
 
   openForm({
-    title: draw ? 'Операция партнёра' : 'Деньги партнёра',
+    title: draw ? 'Операция коллеги' : 'Деньги коллеги',
     fields: [
       {
         name: 'kind', label: 'Что произошло', type: 'select', required: true, wide: true,
@@ -684,14 +684,14 @@ export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
       },
       { name: 'date', label: 'Дата', type: 'date', required: true, value: draw?.date || today() },
       {
-        name: 'founderId', label: 'Партнёр', type: 'select', required: true,
+        name: 'founderId', label: 'Коллега', type: 'select', required: true,
         options: state.founders.map((item) => option(item.id, item.name)),
         value: draw?.founderId || founderId || state.founders[0]?.id || '',
       },
       {
         name: 'category', label: 'На что потрачено', type: 'select',
         options: categoryOptions(state), value: draw?.category || 'other/misc',
-        hint: 'Заполняется, когда партнёр оплатил расход студии.',
+        hint: 'Заполняется, когда коллега оплатил расход студии.',
       },
     ],
     advanced: [

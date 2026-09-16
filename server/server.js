@@ -119,7 +119,7 @@ async function fixLegacyOwner() {
   });
 }
 
-// Партнёров студии заводим из учётных записей: обычно это те же два
+// Коллегаов студии заводим из учётных записей: обычно это те же два
 // человека, что входят в приложение. Один раз, дальше список правится вручную.
 async function ensureFounders() {
   const current = await loadState();
@@ -141,7 +141,7 @@ async function ensureFounders() {
     state.settings = { ...state.settings, foundersSeeded: true };
     const rev = (await loadState()).rev + 1;
     await saveState({ rev, state, updatedAt: new Date().toISOString() });
-    console.log(`Партнёры студии заведены: ${state.founders.map((item) => item.name).join(', ')}.`);
+    console.log(`Коллеги студии заведены: ${state.founders.map((item) => item.name).join(', ')}.`);
   });
 }
 
@@ -676,7 +676,7 @@ await bootstrapUsers();
 await loadState();
 
 await fixLegacyOwner().catch((error) => console.log('Подписи не поправились:', error.message));
-await ensureFounders().catch((error) => console.log('Партнёры не завелись:', error.message));
+await ensureFounders().catch((error) => console.log('Коллеги не завелись:', error.message));
 
 // Курс подтягиваем при запуске и затем несколько раз в сутки: НБТ публикует
 // его раз в день, но сервер может оказаться выключенным в момент публикации.
