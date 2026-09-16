@@ -36,7 +36,9 @@ export function getState() {
 
 export function getUser() {
   if (authDisabled) {
-    return { ...(user || {}), name: localName() || 'Учредитель', open: true };
+    // Без входа имени нет — тогда в операциях просто не указываем, кто внёс,
+    // вместо безличной подписи.
+    return { ...(user || {}), name: localName(), open: true };
   }
   return user;
 }

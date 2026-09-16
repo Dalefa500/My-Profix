@@ -88,6 +88,37 @@ async function saveState(next) {
   await writeJSON(STATE_FILE, next);
 }
 
+// Ранние записи подписаны безличным «Учредитель»: их вносили, пока вход
+// в приложение ещё не был настроен. Один раз подставляем настоящее имя.
+async function fixLegacyOwner() {
+  const current = await loadState();
+  if (current.state.settings.legacyOwnerFixed) return;
+
+  const users = await loadUsers();
+  const admin = users.find((item) => item.role === 'admin');
+  const name = admin?.name;
+  if (!name) return;
+
+  await withLock(async () => {
+    const state = normalizeData((await loadState()).state);
+    let changed = 0;
+    for (const collection of ['incomes', 'expenses', 'projects']) {
+      for (const record of state[collection] || []) {
+        for (const field of ['createdBy', 'owner']) {
+          if (record[field] === 'Учредитель') {
+            record[field] = name;
+            changed += 1;
+          }
+        }
+      }
+    }
+    state.settings = { ...state.settings, legacyOwnerFixed: true };
+    const rev = (await loadState()).rev + 1;
+    await saveState({ rev, state, updatedAt: new Date().toISOString() });
+    if (changed) console.log(`Подпись «Учредитель» заменена на «${name}» в ${changed} записях.`);
+  });
+}
+
 // ------------------------------------------- курс Национального банка
 
 // Последняя попытка обращения к НБТ — чтобы не дёргать сайт на каждый заход.
@@ -617,6 +648,8 @@ async function bootstrapUsers() {
 await ensureDir();
 await bootstrapUsers();
 await loadState();
+
+await fixLegacyOwner().catch((error) => console.log('Подписи не поправились:', error.message));
 
 // Курс подтягиваем при запуске и затем несколько раз в сутки: НБТ публикует
 // его раз в день, но сервер может оказаться выключенным в момент публикации.
