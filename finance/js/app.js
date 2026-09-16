@@ -26,6 +26,7 @@ import settings from './views/settings.js';
 
 const root = document.getElementById('app');
 let currentView = null;
+let backTarget = '';
 
 const TABS = [
   { href: '#/', label: 'Главная', icon: 'home', match: ['/'], view: () => dashboard },
@@ -177,7 +178,12 @@ function renderShell() {
   fastTap(root.querySelector('[data-quick]'), openQuickActions);
   fastTap(root.querySelector('[data-more]'), openMoreMenu);
   fastTap(root.querySelector('[data-notifications]'), openNotifications);
-  fastTap(root.querySelector('[data-back]'), () => window.history.back());
+  fastTap(root.querySelector('[data-back]'), () => {
+    // Если приложение открыли сразу на внутреннем экране, возвращаться
+    // по истории некуда — уходим на заданный экран.
+    if (window.history.length > 1) window.history.back();
+    else if (backTarget) router.go(backTarget, { replace: true });
+  });
 
   root.querySelectorAll('[data-tab]').forEach((tab) => {
     fastTap(tab, () => {
@@ -359,9 +365,10 @@ function renderView() {
   subtitle.textContent = result.subtitle || '';
   const back = document.querySelector('[data-back]');
   back.hidden = !result.back;
-  if (result.back) {
-    back.onclick = () => router.go(result.back);
-  }
+  // Куда возвращаться, помним здесь: обработчик кнопки навешен один раз
+  // при запуске. Раньше поверх него ставился второй, и нажатие уводило
+  // на шаг дальше, чем нужно.
+  backTarget = result.back || '';
 
   for (const tab of document.querySelectorAll('[data-tab]')) {
     const config = TABS.find((item) => item.href === tab.dataset.tab);
