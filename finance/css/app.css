@@ -11,10 +11,16 @@
   --brand-charcoal: #393f4b;
   --brand-burgundy: #910029;
 
-  /* Рукописный знак «Line design». На светлом фоне — фирменный бордовый,
-     на тёмном — тот же цвет, осветлённый до читаемого. */
+  /* Рукописный знак «Line design» — густой бордовый, цвета крови.
+     Три оттенка одного цвета: основной, блик сверху и тень снизу.
+     Блик намеренно тоже красный, а не белый, иначе знак розовеет. */
   --brand-signature: #910029;
-  --signature-on-dark: #c8244a;
+  --signature-hi: #bb1a3f;
+  --signature-lo: #48001a;
+  /* Экран входа всегда на тёмном фоне, поэтому цвета там свои. */
+  --signature-on-dark: #b31235;
+  --signature-on-dark-hi: #d9304c;
+  --signature-on-dark-lo: #56031a;
 
   --bg: #ecf4f7;
   --surface: #ffffff;
@@ -66,7 +72,9 @@
     --muted: #8a95a2;
     --line: #333b46;
     --accent: #c41340;
-    --brand-signature: #c8244a;
+    --brand-signature: #b31235;
+    --signature-hi: #d9304c;
+    --signature-lo: #56031a;
     --accent-soft: #3a141f;
     --good: #44be97;
     --good-soft: #12302a;
@@ -94,7 +102,9 @@
   --muted: #8a95a2;
   --line: #333b46;
   --accent: #c41340;
-  --brand-signature: #c8244a;
+  --brand-signature: #b31235;
+  --signature-hi: #d9304c;
+  --signature-lo: #56031a;
   --accent-soft: #3a141f;
   --good: #44be97;
   --good-soft: #12302a;
@@ -286,10 +296,10 @@ h1, h2, h3 { line-height: 1.2; }
      плюс мягкая тень под буквами — знак выглядит объёмным, как эмаль.
      Обводка своим же цветом делает росчерк чуть плотнее. */
   background-image: linear-gradient(168deg,
-    color-mix(in srgb, var(--brand-signature) 74%, #ffffff) 0%,
-    color-mix(in srgb, var(--brand-signature) 94%, #ffffff) 30%,
-    var(--brand-signature) 52%,
-    color-mix(in srgb, var(--brand-signature) 78%, #000000) 100%);
+    var(--signature-hi) 0%,
+    color-mix(in srgb, var(--signature-hi) 55%, var(--brand-signature)) 30%,
+    var(--brand-signature) 54%,
+    color-mix(in srgb, var(--signature-lo) 60%, var(--brand-signature)) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -298,8 +308,8 @@ h1, h2, h3 { line-height: 1.2; }
   /* Выпуклость: светлая кромка по верху росчерка, тёмная по низу,
      и мягкая тень, отброшенная на панель. */
   text-shadow:
-    0 -0.5px 0 color-mix(in srgb, var(--brand-signature) 66%, #ffffff),
-    0 1px 0.5px color-mix(in srgb, var(--brand-signature) 50%, #000000),
+    0 -0.5px 0 var(--signature-hi),
+    0 1px 0.5px var(--signature-lo),
     0 3px 6px rgba(0, 0, 0, 0.55);
 }
 
@@ -886,18 +896,18 @@ td.danger, .danger-text { color: var(--danger); }
   line-height: 1.05;
   /* тот же глянец, что и в шапке, только крупнее */
   background-image: linear-gradient(168deg,
-    color-mix(in srgb, var(--signature-on-dark) 70%, #ffffff) 0%,
-    color-mix(in srgb, var(--signature-on-dark) 92%, #ffffff) 30%,
-    var(--signature-on-dark) 52%,
-    color-mix(in srgb, var(--signature-on-dark) 76%, #000000) 100%);
+    var(--signature-on-dark-hi) 0%,
+    color-mix(in srgb, var(--signature-on-dark-hi) 55%, var(--signature-on-dark)) 30%,
+    var(--signature-on-dark) 54%,
+    color-mix(in srgb, var(--signature-on-dark-lo) 60%, var(--signature-on-dark)) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   -webkit-text-stroke: 0.6px var(--signature-on-dark);
   paint-order: stroke fill;
   text-shadow:
-    0 -0.8px 0 color-mix(in srgb, var(--signature-on-dark) 62%, #ffffff),
-    0 1.5px 0.5px color-mix(in srgb, var(--signature-on-dark) 48%, #000000),
+    0 -0.8px 0 var(--signature-on-dark-hi),
+    0 1.5px 0.5px var(--signature-on-dark-lo),
     0 5px 10px rgba(0, 0, 0, 0.6);
 }
 .auth__studio {
