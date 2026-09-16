@@ -11,6 +11,11 @@
   --brand-charcoal: #393f4b;
   --brand-burgundy: #910029;
 
+  /* Рукописный знак «Line design». На светлом фоне — фирменный бордовый,
+     на тёмном — тот же цвет, осветлённый до читаемого. */
+  --brand-signature: #910029;
+  --signature-on-dark: #c8244a;
+
   --bg: #ecf4f7;
   --surface: #ffffff;
   --surface-2: #f3f8fa;
@@ -38,7 +43,10 @@
      Inter подхватывается на Android и компьютерах как замена. */
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
     "Inter", system-ui, "Segoe UI", sans-serif;
-  --topbar-h: calc(env(safe-area-inset-top) + 56px);
+  --topbar-h: calc(env(safe-area-inset-top) + 64px);
+  /* Рукописный знак студии. Шрифт лежит рядом с приложением,
+     поэтому подпись выглядит одинаково на любом устройстве. */
+  --font-brand: "Mrs Saint Delafield", "Snell Roundhand", "Apple Chancery", cursive;
 
   --radius: 18px;
   --radius-sm: 12px;
@@ -58,6 +66,7 @@
     --muted: #8a95a2;
     --line: #333b46;
     --accent: #c41340;
+    --brand-signature: #c8244a;
     --accent-soft: #3a141f;
     --good: #44be97;
     --good-soft: #12302a;
@@ -85,6 +94,7 @@
   --muted: #8a95a2;
   --line: #333b46;
   --accent: #c41340;
+  --brand-signature: #c8244a;
   --accent-soft: #3a141f;
   --good: #44be97;
   --good-soft: #12302a;
@@ -99,6 +109,14 @@
   --series-3: #9075d4;
   --shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.8);
   --shadow-lg: 0 24px 60px -24px rgba(0, 0, 0, 0.9);
+}
+
+@font-face {
+  font-family: "Mrs Saint Delafield";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/mrs-saint-delafield.woff2") format("woff2");
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -194,8 +212,9 @@ h1, h2, h3 { line-height: 1.2; }
   height: var(--topbar-h);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: env(safe-area-inset-top) 16px 0;
+  justify-content: space-between;
+  gap: 8px;
+  padding: env(safe-area-inset-top) 14px 0;
   background: color-mix(in srgb, var(--surface) 62%, transparent);
   backdrop-filter: saturate(180%) blur(22px);
   -webkit-backdrop-filter: saturate(180%) blur(22px);
@@ -214,9 +233,61 @@ h1, h2, h3 { line-height: 1.2; }
 .topbar__back:active { transform: scale(0.88); opacity: 0.7; transition-duration: 0.06s; }
 .topbar__back svg { width: 18px; height: 18px; }
 
-.topbar__title { flex: 1; min-width: 0; }
-.topbar__title h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
-.topbar__title span { display: block; font-size: 12px; color: var(--muted); }
+.topbar__side {
+  display: flex; align-items: center; gap: 8px;
+  min-width: 0;
+  flex: 1 1 0;
+}
+.topbar__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+.topbar__title { min-width: 0; }
+.topbar__title h1 {
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar__title span {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Знак студии стоит ровно по центру экрана, независимо от длины заголовка. */
+.brand {
+  position: absolute;
+  left: 50%;
+  top: calc(env(safe-area-inset-top) + 6px);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  pointer-events: none;
+}
+.brand__name {
+  font-family: var(--font-brand);
+  font-size: 27px;
+  font-weight: 500;
+  line-height: 1.05;
+  color: var(--brand-signature);
+}
+.brand__sub {
+  font-size: 8.5px;
+  font-weight: 500;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 
 .icon-btn {
   width: 38px; height: 38px;
@@ -304,17 +375,26 @@ h1, h2, h3 { line-height: 1.2; }
   gap: 4px;
   height: var(--tabbar);
   /* подписи опущены ниже — ближе к краю экрана */
-  padding-top: 13px;
-  font-size: 10.5px;
+  padding-top: 11px;
+  font-size: 9px;
   font-weight: 500;
-  letter-spacing: 0;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
   color: var(--muted);
   transition: transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1), color 0.2s;
 }
 .tabbar__item:active { transform: scale(0.88); opacity: 0.65; transition-duration: 0.06s; }
 .tabbar__item.is-active { color: var(--accent); }
-.tabbar__item.is-active svg { transform: scale(1.06); }
-.tabbar__item svg { transition: transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1); }
+.tabbar__item svg {
+  transition: transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.2s;
+  padding: 5px 13px;
+  border-radius: 11px;
+  box-sizing: content-box;
+}
+/* У выбранного раздела иконка подсвечивается подложкой — как на макете. */
+.tabbar__item.is-active svg {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
 .tabbar__item svg { width: 21px; height: 21px; }
 .tabbar__item.is-active { color: var(--accent); }
 
@@ -542,7 +622,9 @@ a.row:active, button.row:active {
   background: color-mix(in srgb, var(--surface) 75%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  font-size: 13px; font-weight: 500;
+  font-size: 11.5px; font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--ink-2);
   transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.2s, color 0.2s;
 }
@@ -750,21 +832,14 @@ td.danger, .danger-text { color: var(--danger); }
   display: grid;
   place-items: center;
   padding: calc(env(safe-area-inset-top) + 32px) 22px calc(env(safe-area-inset-bottom) + 32px);
-  background: linear-gradient(165deg, #474f5f 0%, var(--brand-charcoal) 42%, #1d222a 100%);
+  background: linear-gradient(165deg, #2f3641 0%, #262c35 45%, #171b22 100%);
   color: var(--brand-alice);
   overflow: hidden;
 }
 
 /* Чертёжная графика на фоне — сразу понятно, чья это система. */
 .auth__scene { position: absolute; inset: 0; pointer-events: none; }
-.auth__glow {
-  position: absolute;
-  top: -18%; right: -28%;
-  width: 78vw; height: 78vw;
-  border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--brand-burgundy) 62%, transparent), transparent 68%);
-  filter: blur(18px);
-}
+
 .auth__plan {
   position: absolute;
   left: 50%; bottom: -6%;
@@ -778,19 +853,32 @@ td.danger, .danger-text { color: var(--danger); }
 
 .auth__brand { margin-bottom: 30px; }
 .auth__word {
-  margin-top: 16px;
-  font-size: 27px;
-  font-weight: 200;
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-  color: var(--brand-alice);
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
 }
-.auth__word b { font-weight: 500; }
+.auth__script {
+  font-family: var(--font-brand);
+  font-size: 58px;
+  font-weight: 500;
+  line-height: 1.05;
+  color: var(--signature-on-dark);
+}
+.auth__studio {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.46em;
+  text-indent: 0.46em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--brand-alice) 72%, transparent);
+}
 .auth__rule {
   display: block;
   width: 46px; height: 2px;
-  margin: 14px auto 12px;
-  background: var(--brand-burgundy);
+  margin: 16px auto 12px;
+  background: var(--signature-on-dark);
 }
 .auth__tagline {
   font-size: 12.5px;
@@ -798,21 +886,6 @@ td.danger, .danger-text { color: var(--danger); }
   text-transform: uppercase;
   color: color-mix(in srgb, var(--brand-alice) 68%, transparent);
 }
-
-.auth__logo {
-  width: 68px; height: 68px;
-  margin: 0 auto;
-  border-radius: 20px;
-  background: linear-gradient(150deg, #5a6272 0%, #3d434f 55%, #272c35 100%);
-  border: 0.5px solid rgba(236, 244, 247, 0.16);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 5px;
-  box-shadow: 0 18px 38px -18px rgba(0, 0, 0, 0.8);
-}
-.auth__logo span { color: var(--brand-alice); font-size: 22px; font-weight: 300; letter-spacing: 1px; line-height: 1; }
-.auth__logo div { display: flex; align-items: flex-end; gap: 3px; height: 12px; }
-.auth__logo i { display: block; width: 4px; border-radius: 2px; background: var(--brand-alice); opacity: 0.8; }
-.auth__logo i:last-child { background: var(--brand-burgundy); opacity: 1; }
 
 .auth__form {
   display: grid;
@@ -862,8 +935,8 @@ td.danger, .danger-text { color: var(--danger); }
 .auth__code::placeholder { color: rgba(236, 244, 247, 0.35); letter-spacing: 0.3em; }
 .auth__code:focus {
   outline: none;
-  border-color: var(--brand-burgundy);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-burgundy) 35%, transparent);
+  border-color: var(--signature-on-dark);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--signature-on-dark) 32%, transparent);
 }
 .auth .btn--primary {
   background: var(--brand-burgundy);

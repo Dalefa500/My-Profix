@@ -67,18 +67,14 @@ function renderAuth(error = '') {
   document.body.classList.remove('is-locked');
   root.className = 'auth';
   root.innerHTML = html`
-    <div class="auth__scene" aria-hidden="true">
-      <span class="auth__glow"></span>
-      ${raw(PLAN_ART)}
-    </div>
+    <div class="auth__scene" aria-hidden="true">${raw(PLAN_ART)}</div>
 
     <div class="auth__inner">
       <div class="auth__brand">
-        <div class="auth__logo" aria-hidden="true">
-          <span>LD</span>
-          <div><i style="height:38%"></i><i style="height:68%"></i><i style="height:100%"></i></div>
-        </div>
-        <h1 class="auth__word">Line <b>Design</b></h1>
+        <h1 class="auth__word">
+          <span class="auth__script">Line design</span>
+          <span class="auth__studio">Studio</span>
+        </h1>
         <span class="auth__rule"></span>
         <p class="auth__tagline">Студия дизайна интерьеров</p>
       </div>
@@ -93,9 +89,6 @@ function renderAuth(error = '') {
         ${error ? raw(html`<div class="form__error">${error}</div>`) : ''}
         <button class="btn btn--primary btn--block" type="submit">Войти</button>
       </form>
-
-      <p class="auth__hint">Финансы студии · внутренняя система<br>
-        У каждого свой код: он определяет, кто вносит данные, а кто только смотрит.</p>
     </div>`;
 
   const form = root.querySelector('form');
@@ -146,14 +139,24 @@ function shellHtml() {
   const state = store.getState();
   return html`
     <header class="topbar">
-      <button class="topbar__back" data-back hidden aria-label="Назад">${raw(ICONS.back)}</button>
-      <div class="topbar__title">
-        <h1 data-title>Главная</h1>
-        <span data-subtitle></span>
+      <div class="topbar__side">
+        <button class="topbar__back" data-back hidden aria-label="Назад">${raw(ICONS.back)}</button>
+        <div class="topbar__title">
+          <h1 data-title>Главная</h1>
+          <span data-subtitle></span>
+        </div>
       </div>
-      <button class="icon-btn" data-notifications aria-label="Уведомления">
-        ${raw(ICONS.bell)}<span class="icon-btn__dot" data-bell hidden></span></button>
-      <button class="icon-btn" data-more aria-label="Ещё">${raw(ICONS.more)}</button>
+
+      <div class="brand" aria-hidden="true">
+        <span class="brand__name">Line design</span>
+        <span class="brand__sub">Studio</span>
+      </div>
+
+      <div class="topbar__actions">
+        <button class="icon-btn" data-notifications aria-label="Уведомления">
+          ${raw(ICONS.bell)}<span class="icon-btn__dot" data-bell hidden></span></button>
+        <button class="icon-btn" data-more aria-label="Ещё">${raw(ICONS.more)}</button>
+      </div>
     </header>
     <main class="viewport" id="viewport">
       <div class="view" id="view"></div>
@@ -480,12 +483,13 @@ async function boot() {
   applyTheme();
   root.className = 'auth';
   root.innerHTML = `
-    <div class="auth__scene" aria-hidden="true"><span class="auth__glow"></span>${PLAN_ART}</div>
+    <div class="auth__scene" aria-hidden="true">${PLAN_ART}</div>
     <div class="auth__inner">
       <div class="auth__brand">
-        <div class="auth__logo" aria-hidden="true"><span>LD</span>
-          <div><i style="height:38%"></i><i style="height:68%"></i><i style="height:100%"></i></div></div>
-        <h1 class="auth__word">Line <b>Design</b></h1>
+        <h1 class="auth__word">
+          <span class="auth__script">Line design</span>
+          <span class="auth__studio">Studio</span>
+        </h1>
         <span class="auth__rule"></span>
         <p class="auth__tagline">Студия дизайна интерьеров</p>
       </div>

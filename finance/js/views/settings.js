@@ -275,7 +275,7 @@ export default function settings() {
 
   return {
     title: 'Настройки',
-    subtitle: state.settings.companyName,
+    subtitle: '',
     back: '#/',
     body,
     mount(root) {

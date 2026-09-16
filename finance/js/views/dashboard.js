@@ -150,7 +150,7 @@ export default function dashboard() {
 
   return {
     title: 'Главная',
-    subtitle: state.settings.companyName,
+    subtitle: '',
     body,
     mount(root) {
       root.querySelector('[data-period]').addEventListener('click', (event) => {
