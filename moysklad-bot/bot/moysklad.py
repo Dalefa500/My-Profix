@@ -392,6 +392,13 @@ class MoySkladClient:
                     totals[href] = totals.get(href, 0.0) + factor * row.get("sum", 0) / 100
         return totals
 
+    async def get_shipment_totals(self, start: datetime, end: datetime) -> float:
+        """Только сумма отгрузок за период — для сравнения с предыдущим."""
+        return sum(
+            row.get("sum", 0) / 100
+            for row in await self._documents_between("demand", start, end)
+        )
+
     async def get_shipment_summary(self, start: datetime, end: datetime) -> dict:
         """Shipments (отгрузки) in the period: total, document count,
         per-day sums and a per-counterparty breakdown.

@@ -205,6 +205,22 @@ const FRESH_MS = 140; // если перед отрывом палец заме�
 
 const views = $("#views");
 
+/* Потяг вниз для обновления. Тянется с сопротивлением, дальше PULL_MAX
+   не идёт; отпускание после PULL_TRIGGER запускает перечитывание. */
+const PULL_MAX = 90;
+const PULL_TRIGGER = 62;
+let pullDistance = 0;
+
+function setPull(distance) {
+  pullDistance = distance;
+  const spinner = $("#pull");
+  views.style.transform = distance ? `translate3d(0, ${distance}px, 0)` : "";
+  views.style.transition = distance ? "" : "transform .3s var(--glide)";
+  spinner.style.opacity = String(Math.min(1, distance / PULL_TRIGGER));
+  spinner.style.transform = `translate3d(-50%, ${Math.min(distance, PULL_MAX) - 34}px, 0) rotate(${distance * 4}deg)`;
+  spinner.classList.toggle("is-ready", distance >= PULL_TRIGGER);
+}
+
 let gesture = null; // текущее касание
 let drag = null; // начатое перетаскивание экранов
 
@@ -367,9 +383,18 @@ views.addEventListener(
       const dy = touch.clientY - g.y;
       // Сначала решаем, вдоль какой оси идёт палец, и больше не меняем
       if (Math.abs(dy) > LOCK_MIN && Math.abs(dy) >= Math.abs(dx)) {
-        g.dead = true;
+        // Потяг вниз с самого верха — обновление. Ниже верха это обычная
+        // прокрутка, её не трогаем.
+        if (dy > 0 && views.scrollTop <= 0 && !g.busy) g.pulling = true;
+        else g.dead = true;
+      }
+      if (g.pulling) {
+        const pull = Math.min(PULL_MAX, dy * 0.5); // тянется с сопротивлением
+        setPull(pull);
+        if (pull > 0) event.preventDefault();
         return;
       }
+      if (g.dead) return;
       if (Math.abs(dx) < LOCK_MIN || Math.abs(dx) < Math.abs(dy) * LOCK_RATIO) return;
       if (g.busy) {
         g.dead = true;
@@ -400,6 +425,12 @@ views.addEventListener(
 function endGesture(event) {
   const g = gesture;
   gesture = null;
+  if (g && g.pulling) {
+    const enough = pullDistance >= PULL_TRIGGER;
+    setPull(0);
+    if (enough) render();
+    return;
+  }
   if (!g || !g.locked) {
     if (drag) settleDrag(false);
     return;
@@ -447,6 +478,13 @@ $("#refresh").addEventListener("click", () => render());
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && !$("#app").hidden && Date.now() - state.loadedAt > 120_000) render();
 });
+
+// Само обновляется раз в 20 минут, пока приложение открыто на экране.
+const AUTO_REFRESH_MS = 20 * 60 * 1000;
+setInterval(() => {
+  if (document.hidden || $("#app").hidden || state.detail) return;
+  if (Date.now() - state.loadedAt >= AUTO_REFRESH_MS) render();
+}, 60_000);
 
 /* ── Отрисовка ────────────────────────────────────────── */
 
@@ -573,10 +611,11 @@ function chevron() {
 
 function tiles(items) {
   const wrap = el("div", "tiles" + (items.length === 2 ? " tiles--two" : ""));
-  items.forEach(({ label, value, tone }) => {
+  items.forEach(({ label, value, tone, note, noteTone }) => {
     const tile = el("div", "tile");
     tile.append(el("div", "tile__label", label));
     tile.append(el("div", `tile__value${tone ? ` tile__value--${tone}` : ""}`, value));
+    if (note) tile.append(el("div", `tile__note${noteTone ? ` is-${noteTone}` : ""}`, note));
     wrap.append(tile);
   });
   return wrap;
@@ -707,7 +746,14 @@ async function renderShipments(container) {
 
   container.append(
     tiles([
-      { label: "Отгружено", value: amount(data.total), tone: "income" },
+      {
+        label: "Отгружено",
+        value: amount(data.total),
+        tone: "income",
+        // Насколько больше или меньше, чем за такой же прошлый отрезок
+        note: data.change === null ? "" : `${data.change > 0 ? "+" : ""}${data.change}% к прошлому`,
+        noteTone: data.change === null ? "" : data.change >= 0 ? "pos" : "neg",
+      },
       { label: "Оплачено", value: amount(data.paid), tone: "pos" },
       { label: "Не оплачено", value: amount(data.debt), tone: data.debt > 0 ? "neg" : "" },
     ]),

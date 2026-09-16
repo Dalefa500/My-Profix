@@ -283,8 +283,14 @@ async def shipments(request: Request, days: int = Query(30, ge=1, le=400)) -> di
     moysklad: MoySkladClient = request.app.state.moysklad
     start, end, granularity = _period(days)
 
+    # Тот же по длине отрезок перед выбранным — чтобы показать, вырос
+    # ли объём или просел, и на сколько процентов.
+    span = end - start
     try:
-        data = await moysklad.get_shipment_summary(start, end)
+        data, previous = await asyncio.gather(
+            moysklad.get_shipment_summary(start, end),
+            moysklad.get_shipment_totals(start - span, start),
+        )
     except MoySkladError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -302,6 +308,13 @@ async def shipments(request: Request, days: int = Query(30, ge=1, le=400)) -> di
 
     return {
         "granularity": granularity,
+        "previous": previous,
+        # Процент роста считаем только когда есть от чего считать
+        "change": (
+            round((data["total"] - previous) / previous * 100)
+            if previous > 0.01
+            else None
+        ),
         "total": data["total"],
         "paid": data["paid"],
         "debt": data["debt"],

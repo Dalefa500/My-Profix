@@ -101,6 +101,7 @@ body::before {
    вкладка (#views), поэтому смена высоты контента между вкладками
    не двигает верх и низ — раньше именно это дёргало кнопки. */
 #app {
+  position: relative; /* якорь для значка обновления над списком */
   display: flex;
   flex-direction: column;
   height: 100dvh;
@@ -397,6 +398,22 @@ svg { display: block; }
   .view.is-settling { transition-duration: .01s !important; }
 }
 
+/* Значок обновления живёт над списком и выезжает вместе с потягом */
+.pull {
+  position: absolute;
+  top: 0; left: 50%;
+  z-index: 5;
+  opacity: 0;
+  pointer-events: none;
+  color: var(--ink-3);
+  transform: translate3d(-50%, -34px, 0);
+}
+.pull svg {
+  width: 26px; height: 26px; fill: none;
+  stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.pull.is-ready { color: var(--ink); }
+
 .tabbar {
   position: relative; z-index: 20; flex: none;
   display: grid; grid-template-columns: repeat(5, 1fr);
@@ -499,6 +516,14 @@ svg { display: block; }
     inset 0 1.5px 0 rgba(255, 255, 255, .3),
     inset 0 -1px 0 rgba(0, 0, 0, .45);
 }
+/* Подпись под цифрой: насколько изменилось к прошлому периоду */
+.tile__note {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
 .tile__label {
   font-family: Georgia, "Times New Roman", serif;
   font-size: 10.5px; font-weight: 400;
