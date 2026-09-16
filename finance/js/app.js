@@ -290,9 +290,10 @@ function setupSwipe() {
       ghost.style.transform = 'translate3d(0, 0, 0)';
       const done = () => {
         current.removeEventListener('transitionend', done);
-        // подставляем готовую разметку соседа, чтобы не было мигания,
+        // переносим уже отрисованные узлы соседа, а не разметку: так
+        // ничего не перерисовывается заново и мигания не возникает,
         // а затем отдаём управление маршрутизатору — он вернёт обработчики
-        current.innerHTML = ghost.innerHTML;
+        current.replaceChildren(...ghost.childNodes);
         finish();
         router.go(target.href, { replace: true });
       };
@@ -342,7 +343,17 @@ function renderView() {
   const caret = searchValue !== null ? active.selectionStart : null;
 
   const result = currentView.view(currentView.params) || {};
-  host.innerHTML = result.body || '';
+
+  // Экран собирается вне страницы и вставляется одним движением.
+  // Если писать разметку прямо в host, браузер успевает показать пустой
+  // контейнер — на телефоне это видно как короткая чёрная вспышка.
+  // Заодно придерживаем прежнюю высоту, чтобы страница не проседала.
+  const previousHeight = host.offsetHeight;
+  if (previousHeight > 0) host.style.minHeight = `${previousHeight}px`;
+  const draft = document.createElement('template');
+  draft.innerHTML = result.body || '';
+  host.replaceChildren(draft.content);
+
   document.querySelector('[data-title]').textContent = result.title || '';
   const subtitle = document.querySelector('[data-subtitle]');
   subtitle.textContent = result.subtitle || '';
@@ -362,6 +373,12 @@ function renderView() {
   updateBell();
   applyRole();
 
+  // Высоту отпускаем следующим кадром — к этому моменту новый экран
+  // уже разложен, и проседания не будет.
+  if (previousHeight > 0) {
+    requestAnimationFrame(() => { host.style.minHeight = ''; });
+  }
+
   if (searchValue !== null) {
     const input = host.querySelector('[data-search]');
     if (input) {
@@ -373,9 +390,11 @@ function renderView() {
 
 function show(view) {
   return (params) => {
+    // Наверх поднимаемся до отрисовки: иначе новый экран сначала
+    // показывается с прежней позицией прокрутки и дёргается.
+    window.scrollTo({ top: 0 });
     currentView = { view, params };
     renderView();
-    window.scrollTo({ top: 0 });
   };
 }
 
