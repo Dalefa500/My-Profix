@@ -405,8 +405,12 @@ async function handleApi(req, res, url) {
     return send(res, 200, current);
   }
 
-  // Курс НБТ: обновить может любой вошедший, это не изменение учётных данных.
+  // Курс НБТ сохраняется в общих настройках студии, поэтому обновлять его
+  // может только тот, кому разрешено менять данные.
   if (route === '/rate' && req.method === 'POST') {
+    if (!canEdit(user)) {
+      return send(res, 403, { ok: false, error: 'У вас доступ только для просмотра' });
+    }
     const result = await refreshUsdRate({ force: true });
     const current = await loadState();
     return send(res, result.ok ? 200 : 502, {

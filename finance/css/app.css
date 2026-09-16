@@ -1020,23 +1020,12 @@ td.danger, .danger-text { color: var(--danger); }
 
 /* ------------------------------------------- доступ только для просмотра */
 
+/* Правило построено от обратного: скрыто всё, что меняет данные студии,
+   а перечислено то немногое, что человеку с доступом на просмотр можно.
+   Так новая кнопка на новом экране закрывается сама, без правки этого списка. */
 .is-viewer .fab,
 .is-viewer .quick,
-.is-viewer [data-act="add"],
-.is-viewer [data-act="edit"],
-.is-viewer [data-act="delete"],
-.is-viewer [data-act="status"],
-.is-viewer [data-act="income"],
-.is-viewer [data-act="expense"],
-.is-viewer [data-act="project"],
-.is-viewer [data-act="employee"],
-.is-viewer [data-act="add-plan"],
-.is-viewer [data-act="add-assignment"],
-.is-viewer [data-act="add-expense"],
-.is-viewer [data-act="add-project"],
-.is-viewer [data-act="add-planned"],
-.is-viewer [data-act="add-category"],
-.is-viewer [data-act="company"],
+.is-viewer [data-act]:not([data-act="logout"]):not([data-act="name"]):not([data-act="password"]):not([data-act="ok"]):not([data-act="cancel"]):not([data-act="submit"]),
 .is-viewer [data-pay],
 .is-viewer [data-pay-advance],
 .is-viewer [data-pay-final],
@@ -1047,9 +1036,7 @@ td.danger, .danger-text { color: var(--danger); }
 .is-viewer [data-remove-category],
 .is-viewer [data-status],
 .is-viewer [data-stage],
-.is-viewer [data-locked],
-.is-viewer .sheet__foot [data-act="edit"],
-.is-viewer .sheet__foot [data-act="delete"] { display: none !important; }
+.is-viewer [data-locked] { display: none !important; }
 
 .viewer-note {
   display: flex; align-items: center; gap: 8px;
