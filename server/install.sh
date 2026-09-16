@@ -254,9 +254,9 @@ if [ "$AUTH_DISABLED" = "1" ]; then
   note "Включить обратно: AUTH_DISABLED=0 bash ${APP_DIR}/server/install.sh"
 fi
 
-if [ "$AUTH_DISABLED" != "1" ] && [ "$DRY_RUN" != "1" ] && [ -f "${APP_DATA}/ПАРОЛИ-ПРИ-ПЕРВОМ-ЗАПУСКЕ.txt" ]; then
-  say "Логины и пароли учредителей (смените их после первого входа)"
-  cat "${APP_DATA}/ПАРОЛИ-ПРИ-ПЕРВОМ-ЗАПУСКЕ.txt"
+if [ "$AUTH_DISABLED" != "1" ] && [ "$DRY_RUN" != "1" ] && [ -f "${APP_DATA}/КОДЫ-ДЛЯ-ВХОДА.txt" ]; then
+  say "Коды для входа (смените их после первого входа)"
+  cat "${APP_DATA}/КОДЫ-ДЛЯ-ВХОДА.txt"
 fi
 
 note "Данные компании: ${APP_DATA}"

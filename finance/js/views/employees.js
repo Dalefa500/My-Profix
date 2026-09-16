@@ -63,9 +63,9 @@ export default function employees() {
     <div class="card card--flat">
       ${visible.length
         ? raw(html`<div class="list">${raw(rows)}</div>`)
-        : raw(emptyState('Сотрудников не найдено'))}
+        : raw(emptyState('Сотрудников не найдено', '<button class="btn btn--primary btn--sm" data-act="add">Добавить сотрудника</button>'))}
     </div>
-    <button class="btn btn--primary btn--block" data-act="add">Добавить сотрудника</button>`;
+    ${visible.length ? raw(html`<button class="btn btn--primary btn--block" data-act="add">Добавить сотрудника</button>`) : ''}`;
 
   return {
     title: 'Сотрудники',

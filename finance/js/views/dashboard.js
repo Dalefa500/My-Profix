@@ -7,6 +7,7 @@ import { rangeFor, today, formatDate, monthLabel, monthKey } from '../dates.js';
 import { categoryLabel } from '../model.js';
 import * as forms from '../forms.js';
 import { refresh } from '../refresh.js';
+import { quickAction } from '../icons.js';
 
 const PERIODS = [
   { value: 'today', label: 'Сегодня' },
@@ -129,10 +130,10 @@ export default function dashboard() {
       </div>`) : ''}
 
     <div class="quick">
-      <button class="quick__item" data-act="income"><span class="quick__icon quick__icon--good">+</span>Добавить приход</button>
-      <button class="quick__item" data-act="expense"><span class="quick__icon quick__icon--danger">−</span>Добавить расход</button>
-      <button class="quick__item" data-act="project"><span class="quick__icon">П</span>Создать проект</button>
-      <button class="quick__item" data-act="employee"><span class="quick__icon">С</span>Добавить сотрудника</button>
+      ${raw(quickAction({ act: 'income', icon: 'income', label: 'Добавить приход', tone: 'good', index: 0 }))}
+      ${raw(quickAction({ act: 'expense', icon: 'expense', label: 'Добавить расход', tone: 'danger', index: 1 }))}
+      ${raw(quickAction({ act: 'project', icon: 'project', label: 'Создать проект', index: 2 }))}
+      ${raw(quickAction({ act: 'employee', icon: 'employee', label: 'Добавить сотрудника', index: 3 }))}
     </div>
 
     <div class="card card--flat">

@@ -45,6 +45,12 @@ export function isAuthDisabled() {
   return authDisabled;
 }
 
+// Может ли текущий пользователь менять данные.
+// Настоящая проверка — на сервере; здесь мы просто не показываем лишнего.
+export function canEdit() {
+  return getUser()?.role !== 'viewer';
+}
+
 export function localName() {
   try {
     return localStorage.getItem(NAME_KEY) || '';
@@ -162,8 +168,11 @@ export async function checkSession() {
   }
 }
 
-export async function signIn(login, password) {
-  const payload = await api('/login', { method: 'POST', body: { login, password } });
+// Вход по коду. Логин и пароль тоже поддерживаются — для восстановления
+// доступа из командной строки.
+export async function signIn(code, password) {
+  const body = password === undefined ? { code } : { login: code, password };
+  const payload = await api('/login', { method: 'POST', body });
   user = payload.user;
   authDisabled = Boolean(payload.authDisabled);
   clearCache();
@@ -248,6 +257,10 @@ function scheduleFlush(delay = 120) {
 export function commit(ops) {
   const list = (Array.isArray(ops) ? ops : [ops]).filter(Boolean);
   if (!list.length) return data;
+  if (!canEdit()) {
+    emit('denied');
+    return data;
+  }
   applyOps(data, list);
   queue.push(...list);
   cache();

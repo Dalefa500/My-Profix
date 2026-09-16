@@ -14,7 +14,7 @@ export default function projects() {
 
   const statusChips = [
     { value: 'all', label: 'Все' },
-    { value: 'active', label: 'В работе' },
+    { value: 'active', label: 'Активные' },
     ...PROJECT_STATUSES.map((item) => ({ value: item.id, label: item.label })),
   ];
 
@@ -64,7 +64,7 @@ export default function projects() {
         ? raw(html`<div class="list">${raw(rows)}</div>`)
         : raw(emptyState('Проектов не найдено', '<button class="btn btn--primary btn--sm" data-act="add">Создать проект</button>'))}
     </div>
-    <button class="btn btn--primary btn--block" data-act="add">Создать проект</button>`;
+    ${visible.length ? raw(html`<button class="btn btn--primary btn--block" data-act="add">Создать проект</button>`) : ''}`;
 
   return {
     title: 'Проекты',

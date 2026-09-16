@@ -34,9 +34,10 @@ export default function clients() {
   const body = html`
     ${raw(searchBar({ value: filters.query, placeholder: 'Поиск клиента' }))}
     <div class="card card--flat">
-      ${visible.length ? raw(html`<div class="list">${raw(rows)}</div>`) : raw(emptyState('Клиентов не найдено'))}
+      ${visible.length ? raw(html`<div class="list">${raw(rows)}</div>`)
+        : raw(emptyState('Клиентов не найдено', '<button class="btn btn--primary btn--sm" data-act="add">Добавить клиента</button>'))}
     </div>
-    <button class="btn btn--primary btn--block" data-act="add">Добавить клиента</button>`;
+    ${visible.length ? raw(html`<button class="btn btn--primary btn--block" data-act="add">Добавить клиента</button>`) : ''}`;
 
   return {
     title: 'Клиенты',

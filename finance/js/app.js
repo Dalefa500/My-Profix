@@ -2,12 +2,13 @@
 
 import * as store from './store.js';
 import * as router from './router.js';
-import { html, raw, openSheet, closeSheet, money } from './ui.js';
+import { html, raw, openSheet, closeSheet, money, toast } from './ui.js';
 import { ensurePayrolls } from './actions.js';
 import { notifications } from './calc.js';
 import * as forms from './forms.js';
 import { mountCharts } from './charts.js';
 import { setRefresh } from './refresh.js';
+import { ICONS, quickAction } from './icons.js';
 
 import dashboard from './views/dashboard.js';
 import projects from './views/projects.js';
@@ -24,60 +25,56 @@ import settings from './views/settings.js';
 const root = document.getElementById('app');
 let currentView = null;
 
-const ICONS = {
-  home: '<path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
-  projects: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
-  people: '<path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8m8 1a3 3 0 1 0 0-6 3 3 0 0 0 0 6M2 20c0-3.3 3.1-6 7-6s7 2.7 7 6zm15.5 0c0-2.1-.8-3.9-2.1-5.2 3 .4 5.6 2.4 5.6 5.2z"/>',
-  money: '<path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zm9 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6"/>',
-  reports: '<path d="M4 20V10h4v10zm6 0V4h4v16zm6 0v-7h4v7z"/>',
-};
-
 const TABS = [
-  { href: '#/', label: 'Главная', icon: 'home', match: ['/'] },
-  { href: '#/projects', label: 'Проекты', icon: 'projects', match: ['/projects', '/projects/:id'] },
-  { href: '#/employees', label: 'Сотрудники', icon: 'people', match: ['/employees', '/employees/:id'] },
-  { href: '#/finance', label: 'Финансы', icon: 'money', match: ['/finance', '/finance/:tab'] },
-  { href: '#/reports', label: 'Отчёты', icon: 'reports', match: ['/reports', '/reports/:period'] },
+  { href: '#/', label: 'Главная', icon: 'home', match: ['/'], view: () => dashboard },
+  { href: '#/projects', label: 'Проекты', icon: 'folder', match: ['/projects', '/projects/:id'], view: () => projects },
+  { href: '#/employees', label: 'Сотрудники', icon: 'people', match: ['/employees', '/employees/:id'], view: () => employees },
+  { href: '#/finance', label: 'Финансы', icon: 'wallet', match: ['/finance', '/finance/:tab'], view: () => finance },
+  { href: '#/reports', label: 'Отчёты', icon: 'chart', match: ['/reports', '/reports/:period'], view: () => reports },
 ];
 
 // ------------------------------------------------------------------ вход
 
+// Вход по коду: логин вводить не нужно — код сам определяет, кто вошёл
+// и что ему разрешено.
 function renderAuth(error = '') {
   document.body.classList.remove('is-locked');
   root.className = 'auth';
   root.innerHTML = html`
     <div class="auth__card">
+      <div class="auth__logo" aria-hidden="true">
+        <span>LD</span>
+        <div><i style="height:38%"></i><i style="height:68%"></i><i style="height:100%"></i></div>
+      </div>
       <h1>Line Design</h1>
-      <p>Финансы студии. Вход для учредителей — все данные хранятся на сервере, доступ у обоих одинаковый.</p>
+      <p>Финансы студии</p>
       <form class="auth__form">
-        <div class="field">
-          <label for="login">Логин</label>
-          <input id="login" name="login" type="text" autocomplete="username" required>
-        </div>
-        <div class="field">
-          <label for="password">Пароль</label>
-          <input id="password" name="password" type="password" autocomplete="current-password" required>
-        </div>
+        <label class="auth__label" for="code">Введите код</label>
+        <input id="code" name="code" class="auth__code" type="password" inputmode="numeric"
+          autocomplete="one-time-code" maxlength="12" placeholder="••••••" required>
         ${error ? raw(html`<div class="form__error">${error}</div>`) : ''}
         <button class="btn btn--primary btn--block" type="submit">Войти</button>
       </form>
+      <p class="auth__hint">У каждого свой код: он определяет, кто вносит данные, а кто только смотрит.</p>
     </div>`;
 
   const form = root.querySelector('form');
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const button = form.querySelector('button');
+    const code = form.code.value.trim();
+    if (!code) return;
     button.disabled = true;
     button.textContent = 'Проверяем…';
     try {
-      await store.signIn(form.login.value.trim(), form.password.value);
+      await store.signIn(code);
       store.startSync();
       startApp();
     } catch (requestError) {
       renderAuth(requestError.message || 'Не удалось войти');
     }
   });
-  root.querySelector('#login')?.focus();
+  root.querySelector('#code')?.focus();
 }
 
 // ------------------------------------------------------------------ каркас
@@ -94,24 +91,139 @@ function shellHtml() {
       <button class="icon-btn" data-notifications aria-label="Уведомления">🔔<span class="icon-btn__dot" data-bell hidden></span></button>
       <button class="icon-btn" data-more aria-label="Ещё">⋯</button>
     </header>
-    <main class="view" id="view"></main>
+    <main class="viewport" id="viewport">
+      <div class="view" id="view"></div>
+      <div class="view view--ghost" id="viewGhost" aria-hidden="true"></div>
+    </main>
     <button class="fab" data-quick aria-label="Быстрое действие">+</button>
     <nav class="tabbar" data-brand="${state.settings.companyName || 'Line Design'}">
       ${raw(TABS.map((tab) => html`
         <a class="tabbar__item" href="${tab.href}" data-tab="${tab.href}">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${raw(ICONS[tab.icon])}</svg>
+          ${raw(ICONS[tab.icon])}
           ${tab.label}
         </a>`).join(''))}
     </nav>`;
 }
 
 function renderShell() {
-  root.className = 'app';
+  root.className = store.canEdit() ? 'app' : 'app is-viewer';
   root.innerHTML = shellHtml();
   root.querySelector('[data-quick]').addEventListener('click', openQuickActions);
   root.querySelector('[data-more]').addEventListener('click', openMoreMenu);
   root.querySelector('[data-notifications]').addEventListener('click', openNotifications);
   root.querySelector('[data-back]').addEventListener('click', () => window.history.back());
+  setupSwipe();
+}
+
+// Перелистывание разделов пальцем: страница едет за пальцем, при отпускании
+// плавно доезжает сама. Шапка, нижнее меню и фон остаются на месте.
+function setupSwipe() {
+  const viewport = document.getElementById('viewport');
+  const current = document.getElementById('view');
+  const ghost = document.getElementById('viewGhost');
+  if (!viewport || !current || !ghost) return;
+
+  const THRESHOLD = 0.28; // какую часть экрана нужно протянуть
+  let startX = 0;
+  let startY = 0;
+  let shift = 0;
+  let width = 1;
+  let delta = 0; // +1 — следующий раздел, −1 — предыдущий
+  let tracking = false;
+  let active = false;
+
+  const tabIndex = () => TABS.findIndex((tab) => tab.match.includes(router.currentRoute().pattern));
+
+  const finish = () => {
+    viewport.classList.remove('is-swiping', 'is-animating');
+    current.style.transform = '';
+    ghost.style.transform = '';
+    ghost.innerHTML = '';
+    tracking = false;
+    active = false;
+    shift = 0;
+    delta = 0;
+  };
+
+  viewport.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1 || document.body.classList.contains('is-locked')) return;
+    if (viewport.classList.contains('is-animating')) return;
+    if (tabIndex() === -1) return;
+    // не перехватываем жест на том, что прокручивается вбок или принимает ввод
+    if (event.target.closest('.chips, .table-wrap, .segmented, .chart, input, textarea, select')) return;
+    startX = event.touches[0].clientX;
+    startY = event.touches[0].clientY;
+    width = viewport.clientWidth || 1;
+    tracking = true;
+    active = false;
+  }, { passive: true });
+
+  viewport.addEventListener('touchmove', (event) => {
+    if (!tracking) return;
+    const x = event.touches[0].clientX - startX;
+    const y = event.touches[0].clientY - startY;
+
+    if (!active) {
+      if (Math.abs(x) < 12 && Math.abs(y) < 12) return;
+      if (Math.abs(x) < Math.abs(y) * 1.2) { tracking = false; return; } // это прокрутка вверх-вниз
+      const index = tabIndex();
+      delta = x < 0 ? 1 : -1;
+      const next = TABS[index + delta];
+      if (next) {
+        const result = next.view()({}) || {};
+        ghost.innerHTML = result.body || '';
+        ghost.style.transform = `translate3d(${delta * width}px, 0, 0)`;
+      } else {
+        delta = 0; // края списка: только лёгкое сопротивление
+      }
+      viewport.classList.add('is-swiping');
+      active = true;
+    }
+
+    event.preventDefault();
+    shift = delta === 0 ? x * 0.22 : x;
+    current.style.transform = `translate3d(${shift}px, 0, 0)`;
+    if (delta !== 0) {
+      ghost.style.transform = `translate3d(${shift + delta * width}px, 0, 0)`;
+    }
+  }, { passive: false });
+
+  const release = () => {
+    if (!tracking) return;
+    if (!active) { tracking = false; return; }
+
+    const index = tabIndex();
+    const target = TABS[index + delta];
+    const passed = delta !== 0 && Math.abs(shift) > width * THRESHOLD;
+
+    viewport.classList.add('is-animating');
+    if (passed && target) {
+      current.style.transform = `translate3d(${-delta * width}px, 0, 0)`;
+      ghost.style.transform = 'translate3d(0, 0, 0)';
+      const done = () => {
+        current.removeEventListener('transitionend', done);
+        // подставляем готовую разметку соседа, чтобы не было мигания,
+        // а затем отдаём управление маршрутизатору — он вернёт обработчики
+        current.innerHTML = ghost.innerHTML;
+        finish();
+        router.go(target.href);
+      };
+      current.addEventListener('transitionend', done, { once: true });
+      setTimeout(() => { if (viewport.classList.contains('is-animating')) done(); }, 420);
+    } else {
+      current.style.transform = 'translate3d(0, 0, 0)';
+      if (delta !== 0) ghost.style.transform = `translate3d(${delta * width}px, 0, 0)`;
+      const back = () => {
+        current.removeEventListener('transitionend', back);
+        finish();
+      };
+      current.addEventListener('transitionend', back, { once: true });
+      setTimeout(() => { if (viewport.classList.contains('is-animating')) finish(); }, 420);
+    }
+  };
+
+  viewport.addEventListener('touchend', release, { passive: true });
+  viewport.addEventListener('touchcancel', release, { passive: true });
 }
 
 const VIEWS = {
@@ -160,6 +272,7 @@ function renderView() {
   result.mount?.(host);
   mountCharts(host);
   updateBell();
+  root.classList.toggle('is-viewer', !store.canEdit());
 
   if (searchValue !== null) {
     const input = host.querySelector('[data-search]');
@@ -192,10 +305,10 @@ function openQuickActions() {
   openSheet({
     title: 'Быстрое действие',
     body: html`<div class="quick">
-      <button class="quick__item" data-act="income"><span class="quick__icon quick__icon--good">+</span>Добавить приход</button>
-      <button class="quick__item" data-act="expense"><span class="quick__icon quick__icon--danger">−</span>Добавить расход</button>
-      <button class="quick__item" data-act="project"><span class="quick__icon">П</span>Создать проект</button>
-      <button class="quick__item" data-act="employee"><span class="quick__icon">С</span>Добавить сотрудника</button>
+      ${raw(quickAction({ act: 'income', icon: 'income', label: 'Добавить приход', tone: 'good', index: 0 }))}
+      ${raw(quickAction({ act: 'expense', icon: 'expense', label: 'Добавить расход', tone: 'danger', index: 1 }))}
+      ${raw(quickAction({ act: 'project', icon: 'project', label: 'Создать проект', index: 2 }))}
+      ${raw(quickAction({ act: 'employee', icon: 'employee', label: 'Добавить сотрудника', index: 3 }))}
     </div>`,
     onMount: (panel) => {
       const run = (fn) => { closeSheet(); setTimeout(fn, 60); };
@@ -216,7 +329,8 @@ function openMoreMenu() {
       <a class="row" href="#/payments" data-close="1"><div class="row__main"><span class="row__title">Платежи</span><span class="row__subtitle">Что получить и что выплатить</span></div><span class="row__meta">›</span></a>
       <a class="row" href="#/settings" data-close="1"><div class="row__main"><span class="row__title">Настройки</span><span class="row__subtitle">Курс, категории, пароль</span></div><span class="row__meta">›</span></a>
       <div class="row"><div class="row__main"><span class="row__title">${user?.name || ''}</span>
-        <span class="row__subtitle">${store.isAuthDisabled() ? 'вход в приложение отключён' : (user?.login || '')}</span></div>
+        <span class="row__subtitle">${store.isAuthDisabled() ? 'вход в приложение отключён'
+          : `${user?.login || ''}${store.canEdit() ? '' : ' · только просмотр'}`}</span></div>
         ${raw(store.isAuthDisabled() ? '' : '<button class="btn btn--sm" data-act="logout">Выйти</button>')}</div>
     </div>`,
     onMount: (panel) => {
@@ -265,6 +379,10 @@ function startApp() {
 }
 
 store.subscribe((_, reason) => {
+  if (reason === 'denied') {
+    toast('У вас доступ только для просмотра', 'danger');
+    return;
+  }
   if (reason === 'auth' && !store.getUser() && !store.isAuthDisabled()) {
     renderAuth();
     return;
@@ -274,7 +392,10 @@ store.subscribe((_, reason) => {
 
 async function boot() {
   root.className = 'auth';
-  root.innerHTML = '<div class="auth__card"><h1>Line Design</h1><p>Загружаем данные…</p></div>';
+  root.innerHTML = `<div class="auth__card">
+    <div class="auth__logo" aria-hidden="true"><span>LD</span>
+      <div><i style="height:38%"></i><i style="height:68%"></i><i style="height:100%"></i></div></div>
+    <h1>Line Design</h1><p>Загружаем данные…</p></div>`;
   const user = await store.init();
   if (!user) {
     renderAuth();

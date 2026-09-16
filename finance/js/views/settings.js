@@ -88,18 +88,22 @@ function openNameForm(user) {
 
 function openPasswordForm() {
   openForm({
-    title: 'Смена пароля',
+    title: 'Смена кода',
+    intro: 'Код заменяет логин и пароль: по нему приложение узнаёт, кто вошёл.',
     fields: [
-      { name: 'currentPassword', label: 'Текущий пароль', type: 'password', required: true, wide: true },
-      { name: 'newPassword', label: 'Новый пароль', type: 'password', required: true, wide: true, autocomplete: 'new-password', hint: 'Не короче 8 символов' },
+      { name: 'currentPassword', label: 'Текущий код', type: 'password', required: true, wide: true },
+      {
+        name: 'newPassword', label: 'Новый код', type: 'password', required: true, wide: true,
+        autocomplete: 'new-password', hint: 'Не короче 4 символов, у второго пользователя должен быть другой',
+      },
     ],
     onSubmit: async (values) => {
       try {
         await store.changePassword(values.currentPassword, values.newPassword);
-        toast('Пароль изменён', 'good');
+        toast('Код изменён', 'good');
         return true;
       } catch (error) {
-        toast(error.message || 'Не удалось сменить пароль', 'danger');
+        toast(error.message || 'Не удалось сменить код', 'danger');
         return false;
       }
     },
@@ -172,8 +176,13 @@ export default function settings() {
         </div>
         ${openMode ? '' : raw(html`
           <div class="row">
-            <div class="row__main"><span class="row__subtitle">Пароль</span><span class="row__title">••••••••</span></div>
+            <div class="row__main"><span class="row__subtitle">Код входа</span><span class="row__title">••••••</span></div>
             <button class="btn btn--sm" data-act="password">Сменить</button>
+          </div>`)}
+        ${openMode ? '' : raw(html`
+          <div class="row">
+            <div class="row__main"><span class="row__subtitle">Доступ</span>
+              <span class="row__title">${store.canEdit() ? 'Полный: внесение, изменение, удаление' : 'Только просмотр'}</span></div>
           </div>`)}
         <div class="row">
           <div class="row__main"><span class="row__subtitle">Синхронизация</span><span class="row__title">${statusLabel}</span></div>

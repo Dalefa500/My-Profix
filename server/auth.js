@@ -35,12 +35,24 @@ export async function saveUsers(users) {
   await writeJSON(USERS_FILE, users);
 }
 
+// Роли: admin — вносит, правит и удаляет; viewer — только смотрит.
+export const ROLES = ['admin', 'viewer'];
+
 export function publicUser(user) {
   if (!user) return null;
-  return { id: user.id, login: user.login, name: user.name };
+  return {
+    id: user.id,
+    login: user.login,
+    name: user.name,
+    role: user.role === 'viewer' ? 'viewer' : 'admin',
+  };
 }
 
-export async function createUser({ login, name, password }) {
+export function canEdit(user) {
+  return Boolean(user) && user.role !== 'viewer';
+}
+
+export async function createUser({ login, name, password, role = 'admin' }) {
   const users = await loadUsers();
   const normalized = String(login).trim().toLowerCase();
   if (users.some((user) => user.login === normalized)) {
@@ -51,6 +63,7 @@ export async function createUser({ login, name, password }) {
     id: `usr_${randomBytes(6).toString('hex')}`,
     login: normalized,
     name: name || normalized,
+    role: ROLES.includes(role) ? role : 'admin',
     salt,
     hash,
     createdAt: new Date().toISOString(),
@@ -64,11 +77,40 @@ export async function setPassword(login, password) {
   const users = await loadUsers();
   const user = users.find((item) => item.login === String(login).trim().toLowerCase());
   if (!user) throw new Error('Пользователь не найден');
+  // Код входа должен быть у каждого свой — иначе непонятно, кто вошёл.
+  for (const other of users) {
+    if (other.id === user.id) continue;
+    if (await verifyPassword(String(password), other)) {
+      throw new Error(`Такой код уже у пользователя ${other.name}. Придумайте другой.`);
+    }
+  }
   const { salt, hash } = await hashPassword(password);
   user.salt = salt;
   user.hash = hash;
   await saveUsers(users);
   return publicUser(user);
+}
+
+export async function setRole(login, role) {
+  if (!ROLES.includes(role)) throw new Error('Роль может быть admin или viewer');
+  const users = await loadUsers();
+  const user = users.find((item) => item.login === String(login).trim().toLowerCase());
+  if (!user) throw new Error('Пользователь не найден');
+  user.role = role;
+  await saveUsers(users);
+  return publicUser(user);
+}
+
+export async function deleteUser(login) {
+  const users = await loadUsers();
+  const normalized = String(login).trim().toLowerCase();
+  const next = users.filter((item) => item.login !== normalized);
+  if (next.length === users.length) throw new Error('Пользователь не найден');
+  if (!next.some((item) => item.role !== 'viewer')) {
+    throw new Error('Нельзя удалить последнего пользователя с полным доступом');
+  }
+  await saveUsers(next);
+  return true;
 }
 
 export async function setName(id, name) {
@@ -157,9 +199,28 @@ export async function authenticate(login, password, ip) {
   return user;
 }
 
+// Вход по коду: логин вводить не нужно, код сам определяет, кто вошёл.
+export async function authenticateByCode(code, ip) {
+  const value = String(code || '').trim();
+  if (value.length < 4) {
+    registerFailure(ip);
+    return null;
+  }
+  const users = await loadUsers();
+  for (const user of users) {
+    if (await verifyPassword(value, user)) {
+      failures.delete(ip);
+      return user;
+    }
+  }
+  registerFailure(ip);
+  return null;
+}
+
 export async function changePassword(user, currentPassword, newPassword) {
   const ok = await verifyPassword(String(currentPassword || ''), user);
-  if (!ok) throw new Error('Текущий пароль неверный');
-  if (String(newPassword || '').length < 8) throw new Error('Новый пароль короче 8 символов');
-  return setPassword(user.login, newPassword);
+  if (!ok) throw new Error('Текущий код неверный');
+  const next = String(newPassword || '').trim();
+  if (next.length < 4) throw new Error('Код должен быть не короче 4 символов');
+  return setPassword(user.login, next);
 }

@@ -12,15 +12,15 @@ import {
   ensureDir, readJSON, writeJSON, appendLine, withLock, DATA_DIR,
 } from './storage.js';
 import {
-  authenticate, createSession, destroySession, userForToken, publicUser,
-  loadUsers, createUser, changePassword, setName, loginBlocked,
+  authenticate, authenticateByCode, createSession, destroySession, userForToken,
+  publicUser, loadUsers, createUser, changePassword, setName, loginBlocked, canEdit,
 } from './auth.js';
 
 // Вход можно отключить: тогда приложение открывается сразу, без логина
 // и пароля. Включается обратно снятием этой настройки — данные и учётные
 // записи при этом сохраняются.
 const AUTH_DISABLED = process.env.AUTH_DISABLED === '1';
-const OPEN_USER = { id: 'usr_open', login: 'open', name: 'Студия' };
+const OPEN_USER = { id: 'usr_open', login: 'open', name: 'Студия', role: 'admin' };
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -144,11 +144,16 @@ async function handleApi(req, res, url) {
   if (route === '/login' && req.method === 'POST') {
     const ip = clientIp(req);
     if (loginBlocked(ip)) {
-      return send(res, 429, { error: 'Слишком много попыток входа. Попробуйте позже.' });
+      return send(res, 429, { error: 'Слишком много попыток. Попробуйте через 15 минут.' });
     }
     const body = await readBody(req);
-    const user = await authenticate(body.login, body.password, ip);
-    if (!user) return send(res, 401, { error: 'Неверный логин или пароль' });
+    // Вход по коду (одно поле) или по логину с паролем — оба варианта работают.
+    const user = body.code
+      ? await authenticateByCode(body.code, ip)
+      : await authenticate(body.login, body.password, ip);
+    if (!user) {
+      return send(res, 401, { error: body.code ? 'Неверный код' : 'Неверный логин или пароль' });
+    }
     const { token, maxAge } = await createSession(user.id);
     return send(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(req, token, maxAge) });
   }
@@ -171,6 +176,11 @@ async function handleApi(req, res, url) {
   }
 
   if (route === '/ops' && req.method === 'POST') {
+    // Пользователь с доступом только на просмотр не может менять данные.
+    // Проверка именно здесь, на сервере: интерфейс можно обойти, сервер — нет.
+    if (!canEdit(user)) {
+      return send(res, 403, { error: 'У вас доступ только для просмотра' });
+    }
     const body = await readBody(req);
     const ops = Array.isArray(body.ops) ? body.ops : [];
     if (!ops.length) {
@@ -286,20 +296,30 @@ async function bootstrapUsers() {
   const users = await loadUsers();
   if (users.length) return;
   const created = [];
-  for (const [login, name] of [['osnovatel1', 'Учредитель 1'], ['osnovatel2', 'Учредитель 2']]) {
-    const password = randomBytes(6).toString('base64url');
-    await createUser({ login, name, password });
-    created.push({ login, name, password });
+  const accounts = [
+    { login: 'shohin', name: 'Шохин', role: 'admin' },
+    { login: 'rizvon', name: 'Ризвон', role: 'viewer' },
+  ];
+  const codes = new Set();
+  for (const account of accounts) {
+    let password;
+    do {
+      password = String(100000 + (randomBytes(3).readUIntBE(0, 3) % 900000));
+    } while (codes.has(password));
+    codes.add(password);
+    await createUser({ ...account, password });
+    created.push({ ...account, password });
   }
-  const lines = created.map((item) => `${item.name}: логин ${item.login}, пароль ${item.password}`);
+  const lines = created.map((item) => `${item.name}: код ${item.password}`
+    + (item.role === 'viewer' ? ' (только просмотр)' : ' (полный доступ: внесение, правки, удаление)'));
   await fs.writeFile(
-    path.join(DATA_DIR, 'ПАРОЛИ-ПРИ-ПЕРВОМ-ЗАПУСКЕ.txt'),
-    `${lines.join('\n')}\n\nСменить пароль можно в приложении: Ещё → Настройки.\n`,
+    path.join(DATA_DIR, 'КОДЫ-ДЛЯ-ВХОДА.txt'),
+    `${lines.join('\n')}\n\nСменить код можно в приложении: Ещё → Настройки.\n`,
     'utf8',
   );
-  console.log('\nСозданы учётные записи учредителей:');
+  console.log('\nКоды для входа в приложение:');
   for (const line of lines) console.log(`  ${line}`);
-  console.log(`  (пароли также сохранены в ${path.join(DATA_DIR, 'ПАРОЛИ-ПРИ-ПЕРВОМ-ЗАПУСКЕ.txt')})\n`);
+  console.log(`  (коды также сохранены в ${path.join(DATA_DIR, 'КОДЫ-ДЛЯ-ВХОДА.txt')})\n`);
 }
 
 await ensureDir();
