@@ -117,6 +117,16 @@ async function refreshUsdRate({ force = false } = {}) {
   }
 
   const rate = result.rate;
+  // Резкий скачок курса — повод присмотреться: так выглядит и настоящее
+  // изменение, и ошибка разбора чужой страницы. Курс применяем, но
+  // отмечаем это в журнале, чтобы причина была видна.
+  const previous = Number(settings.usdRate) || 0;
+  if (previous > 0) {
+    const jump = Math.abs(rate.value - previous) / previous;
+    if (jump > 0.15) {
+      console.log(`Курс НБТ заметно изменился: было ${previous}, стало ${rate.value} TJS за $1.`);
+    }
+  }
   const same = settings.usdRate === rate.value && settings.usdRateDate === (rate.date || today);
   if (!same) {
     await withLock(async () => {

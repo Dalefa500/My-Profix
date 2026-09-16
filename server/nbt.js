@@ -10,6 +10,10 @@
 // сохранённым курсом, а вручную его можно поправить в настройках.
 
 const TIMEOUT_MS = 6000;
+// Разумные границы для курса сомони к доллару. Служат защитой от того,
+// что разбор подхватит не то число: курс за этими пределами мы не примем.
+const RATE_MIN = 3;
+const RATE_MAX = 40;
 // Общий предел на весь перебор: кнопка в приложении не должна «висеть».
 const BUDGET_MS = 25000;
 
@@ -127,6 +131,12 @@ function candidates() {
   ];
 }
 
+// Разбор может ошибиться и взять соседнее число из таблицы, поэтому
+// у каждого найденного курса проверяем правдоподобность.
+function plausible(rate) {
+  return rate && rate.value >= RATE_MIN && rate.value <= RATE_MAX;
+}
+
 export async function fetchUsdRate() {
   const problems = [];
   const deadline = Date.now() + BUDGET_MS;
@@ -141,8 +151,10 @@ export async function fetchUsdRate() {
       continue;
     }
     const rate = parse(response.text);
-    if (rate) return { ok: true, rate, source: url };
-    problems.push(`${new URL(url).pathname}: курс не найден в ответе`);
+    if (plausible(rate)) return { ok: true, rate, source: url };
+    problems.push(rate
+      ? `${new URL(url).pathname}: получено ${rate.value} — не похоже на курс`
+      : `${new URL(url).pathname}: курс не найден в ответе`);
   }
   return {
     ok: false,
