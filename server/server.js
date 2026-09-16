@@ -112,6 +112,7 @@ async function refreshUsdRate({ force = false } = {}) {
   const result = await fetchUsdRate();
   if (!result.ok) {
     rateCheck.error = result.error;
+    if (result.details) console.log(`Курс НБТ: ${result.details}`);
     return result;
   }
 
@@ -344,6 +345,7 @@ async function handleApi(req, res, url) {
     return send(res, result.ok ? 200 : 502, {
       ok: result.ok,
       error: result.error || '',
+      details: result.details || '',
       settings: current.state.settings,
       rev: current.rev,
     });

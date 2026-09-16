@@ -328,9 +328,13 @@ export default function settings() {
         const result = await store.refreshUsdRate();
         button.disabled = false;
         button.textContent = 'Обновить';
-        toast(result.ok
-          ? `Курс НБТ обновлён: ${formatUsdRate(store.getState().settings.usdRate)}`
-          : result.error || 'Сайт НБТ не ответил. Курс можно ввести вручную.');
+        if (result.ok) {
+          toast(`Курс НБТ обновлён: ${formatUsdRate(store.getState().settings.usdRate)}`, 'good');
+        } else {
+          // Подробности пригодятся, если сайт банка отвечает ошибкой.
+          toast(result.error || 'Сайт НБТ не ответил. Курс можно ввести вручную.', 'danger');
+          if (result.details) console.warn('Курс НБТ:', result.details);
+        }
         refresh();
       };
       root.querySelector('[data-act="name"]').onclick = () => openNameForm(user);

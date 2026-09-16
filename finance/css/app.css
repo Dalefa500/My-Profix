@@ -1107,37 +1107,63 @@ td.danger, .danger-text { color: var(--danger); }
 
 /* ------------------------------------------------------- поворот телефона */
 
-/* Приложение свёрстано под вертикальный экран: в шапке знак студии по центру,
-   внизу пять вкладок. В горизонтальном положении всё это выглядит перекошенно,
-   поэтому на телефоне показываем просьбу вернуть телефон обратно.
-   На планшетах и компьютерах (там экран высокий даже «лёжа») ничего не меняем. */
+/* Приложение свёрстано под вертикальный экран и должно таким и оставаться.
+   iPhone не даёт закрепить ориентацию для веб-приложения, поэтому, когда
+   телефон поворачивают, мы поворачиваем сам интерфейс на тот же угол
+   в обратную сторону — картинка на экране остаётся на месте. */
 .rotate-lock { display: none; }
 
 @media (orientation: landscape) and (max-height: 540px) and (hover: none) and (pointer: coarse) {
-  .rotate-lock {
-    position: fixed;
-    inset: 0;
-    z-index: 200;
-    display: grid;
-    place-content: center;
-    justify-items: center;
-    gap: 14px;
-    padding: 24px;
-    background: var(--bg);
-    color: var(--ink-2);
-    text-align: center;
+  html, body {
+    overflow: hidden;
+    height: 100dvh;
+    width: 100dvw;
   }
-  .rotate-lock svg {
-    width: 44px; height: 44px;
-    color: var(--brand-signature);
-  }
-  .rotate-lock p {
-    font-size: 14px;
-    letter-spacing: 0.04em;
-  }
-  #app, #sheet, #toast, .brand { display: none !important; }
-}
 
+  /* Слои приложения разворачиваем целиком: и экран, и всплывающие
+     карточки, и сообщения. Размер меняется местами — высота становится
+     шириной макета. */
+  #app, #sheet, #toast {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100dvh;
+    height: 100dvw;
+    transform-origin: 0 0;
+  }
+
+  :root[data-rotate="right"] #app,
+  :root[data-rotate="right"] #sheet,
+  :root[data-rotate="right"] #toast {
+    transform: translate(100dvw, 0) rotate(90deg);
+  }
+
+  :root[data-rotate="left"] #app,
+  :root[data-rotate="left"] #sheet,
+  :root[data-rotate="left"] #toast {
+    transform: translate(0, 100dvh) rotate(-90deg);
+  }
+
+  /* Вырез экрана в этом положении сбоку, поэтому отступ сверху не нужен. */
+  #app { --topbar-h: 58px; }
+  .topbar { padding-top: 0; }
+  .brand { top: 0; height: 58px; }
+
+  /* Прокручивается только содержимое: шапка и нижнее меню стоят на месте. */
+  .viewport {
+    position: absolute;
+    top: var(--topbar-h);
+    left: 0;
+    right: 0;
+    bottom: var(--tabbar);
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: clip;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tabbar { padding-bottom: 0; height: var(--tabbar); }
+  .fab { bottom: calc(var(--tabbar) + 14px); }
+}
 
 /* --------------------------------------------------------------- курс НБТ */
 

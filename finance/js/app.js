@@ -501,16 +501,37 @@ document.addEventListener('contextmenu', (event) => {
 });
 
 // Android и компьютеры умеют закреплять ориентацию по-настоящему.
-// iPhone такую команду игнорирует, поэтому там работает подсказка в вёрстке.
 function lockPortrait() {
   try {
     screen.orientation?.lock?.('portrait')?.catch?.(() => {});
   } catch { /* ориентация не закрепляется — это не ошибка */ }
 }
 
+// iPhone команду закрепления игнорирует. Там поступаем иначе: когда телефон
+// поворачивают, разворачиваем сам интерфейс в обратную сторону, чтобы для
+// глаза он остался на месте. Сторону поворота берём у системы — иначе при
+// повороте в другую сторону приложение оказалось бы вверх ногами.
+function applyRotation() {
+  const root = document.documentElement;
+  const landscape = window.innerWidth > window.innerHeight;
+  if (!landscape) {
+    root.removeAttribute('data-rotate');
+    return;
+  }
+  // Система сообщает, на сколько она сама повернула картинку.
+  // Мы поворачиваем интерфейс на столько же в обратную сторону.
+  const angle = Number(screen.orientation?.angle ?? window.orientation ?? 0);
+  root.setAttribute('data-rotate', angle === 90 ? 'left' : 'right');
+}
+
+window.addEventListener('resize', applyRotation);
+window.addEventListener('orientationchange', applyRotation);
+screen.orientation?.addEventListener?.('change', applyRotation);
+
 async function boot() {
   applyTheme();
   lockPortrait();
+  applyRotation();
   root.className = 'auth';
   root.innerHTML = `
     <div class="auth__scene" aria-hidden="true">${PLAN_ART}</div>

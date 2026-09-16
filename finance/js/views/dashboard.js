@@ -183,7 +183,7 @@ export default function dashboard() {
         const result = await store.refreshUsdRate();
         delete bar.dataset.busy;
         bar.classList.remove('is-busy');
-        if (!result.ok) toast(result.error || 'Сайт НБТ не ответил');
+        if (!result.ok) toast(result.error || 'Сайт НБТ не ответил', 'danger');
         refresh();
       };
       root.querySelector('[data-act="income"]').onclick = () => forms.openIncomeForm({}, refresh);
