@@ -7,6 +7,7 @@ import { op } from './ops.js';
 import { toBase, defaultRate, round } from './money.js';
 import { today, monthKey, monthLabel, addMonths, daysInMonth } from './dates.js';
 import { assignmentState, payrollMonthsFor, payrollState, clampPercent } from './calc.js';
+import { categoryLabel } from './model.js';
 
 const { uid, getState } = store;
 
@@ -446,6 +447,11 @@ export function deleteExpense(id) {
       ops.push(op.patch('planned', planned.id, { status: 'planned' }, ['expenseId']));
     }
   }
+  // Расход, оплаченный партнёром, связан с записью о его деньгах:
+  // удаляем обе, иначе долг студии останется висеть без основания.
+  if (expense.source === 'founder' && expense.founderMoveId) {
+    ops.push(op.remove('draws', expense.founderMoveId));
+  }
   return store.commit(ops);
 }
 
@@ -574,25 +580,76 @@ export function deleteFounder(id) {
   return store.commit(ops);
 }
 
-// Партнёр взял деньги из кассы как свою долю прибыли.
-// Это не расход студии: прибыль от такого изъятия не уменьшается.
+// Движение денег между студией и партнёром. Три случая, и считаются
+// они по-разному:
+//   draw  — взял для себя: доля прибыли, на прибыль студии не влияет;
+//   spend — оплатил расход студии своими деньгами: это настоящий расход
+//           студии, поэтому заводится ещё и запись в расходах, а студия
+//           остаётся должна партнёру;
+//   repay — студия вернула ему потраченное: гасит этот долг.
 export function saveDraw(values, id = null) {
-  const settings = getState().settings;
+  const state = getState();
+  const settings = state.settings;
   const payment = money(values, settings);
+  const kind = ['draw', 'spend', 'repay'].includes(values.kind) ? values.kind : 'draw';
+  const founder = store.byId('founders', values.founderId);
+  if (!values.founderId) return { ok: false, error: 'Выберите партнёра' };
+
+  const existing = id ? store.byId('draws', id) : null;
+  const drawId = id || uid('drw');
   const record = {
-    founderId: values.founderId || null,
+    founderId: values.founderId,
     date: values.date || today(),
     ...payment,
+    kind,
     method: values.method || 'cash',
+    category: kind === 'spend' ? (values.category || 'other/misc') : null,
+    projectId: kind === 'spend' ? (values.projectId || null) : null,
     comment: values.comment?.trim() || '',
   };
-  if (!record.founderId) return { ok: false, error: 'Выберите партнёра' };
-  if (id) return store.patch('draws', id, record);
-  return store.insert('draws', { ...record, createdBy: currentOwner() }, 'drw');
+
+  const ops = [];
+  // Расход студии, оплаченный партнёром, должен попасть в общие расходы —
+  // иначе прибыль окажется завышенной.
+  if (kind === 'spend') {
+    const expenseId = existing?.expenseId || uid('exp');
+    const expense = {
+      id: expenseId,
+      date: record.date,
+      category: record.category,
+      projectId: record.projectId,
+      ...payment,
+      method: record.method,
+      source: 'founder',
+      founderMoveId: drawId,
+      paidByFounderId: record.founderId,
+      comment: record.comment
+        || `Оплатил ${founder?.name || 'партнёр'} · ${categoryLabel(record.category, settings)}`,
+      createdBy: currentOwner(),
+      createdAt: today(),
+    };
+    ops.push(existing?.expenseId
+      ? op.patch('expenses', expenseId, expense)
+      : op.insert('expenses', expense));
+    record.expenseId = expenseId;
+  } else if (existing?.expenseId) {
+    // Тип поменяли — связанный расход больше не нужен.
+    ops.push(op.remove('expenses', existing.expenseId));
+    record.expenseId = null;
+  }
+
+  ops.push(existing
+    ? op.patch('draws', drawId, record)
+    : op.insert('draws', { id: drawId, ...record, createdBy: currentOwner() }));
+  store.commit(ops);
+  return { ok: true };
 }
 
 export function deleteDraw(id) {
-  return store.remove('draws', id);
+  const draw = store.byId('draws', id);
+  const ops = [op.remove('draws', id)];
+  if (draw?.expenseId) ops.push(op.remove('expenses', draw.expenseId));
+  return store.commit(ops);
 }
 
 // ------------------------------------------------------------ настройки

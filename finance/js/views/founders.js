@@ -11,7 +11,7 @@ import {
 import { getState, byId } from '../store.js';
 import { foundersSummary, periodTotals } from '../calc.js';
 import { rangeFor, formatDate } from '../dates.js';
-import { PAYMENT_METHODS, labelOf } from '../model.js';
+import { PAYMENT_METHODS, FOUNDER_MOVES, labelOf, categoryLabel } from '../model.js';
 import * as forms from '../forms.js';
 import * as actions from '../actions.js';
 import { refresh } from '../refresh.js';
@@ -64,6 +64,12 @@ export default function founders() {
         hint: leftBase < 0 ? 'взяли больше, чем заработали' : 'прибыль за вычетом изъятий',
         tone: leftBase < 0 ? 'danger' : 'good',
       }))}
+      ${summary.owedBase > 0 ? raw(statCard({
+        label: 'Студия должна партнёрам',
+        value: money(summary.owedBase),
+        hint: 'оплатили расходы студии своими деньгами',
+        tone: 'danger',
+      })) : ''}
     </div>
 
     <div class="card">
@@ -78,17 +84,21 @@ export default function founders() {
             </div>
             <div class="row__side">
               <span class="row__amount">${money(row.periodBase)}</span>
-              <span class="row__meta">${range.label.toLowerCase()}</span>
+              <span class="row__meta">${row.owedBase > 0
+                ? `студия должна ${money(row.owedBase)}`
+                : range.label.toLowerCase()}</span>
             </div>
           </a>`).join(''))}</div>`)
         : raw(emptyState('Партнёры не заведены. Добавьте Шохина и Ризвона, чтобы вести их выплаты.'))}
     </div>
 
     ${summary.rows.length ? raw(html`
-      <button class="btn btn--primary btn--block" data-act="add-draw">Записать выдачу</button>`) : ''}
+      <button class="btn btn--primary btn--block" data-act="add-draw">Записать операцию</button>`) : ''}
 
-    <p class="muted">Деньги, которые партнёр берёт для себя, — это его доля прибыли.
-      В расходы студии они не попадают, поэтому прибыль от них не уменьшается.</p>`;
+    <p class="muted">Деньги, которые партнёр берёт для себя, — это его доля прибыли:
+      в расходы студии они не попадают, и прибыль от них не уменьшается.
+      А если партнёр оплатил расход студии своими деньгами — это настоящий расход,
+      и студия остаётся ему должна.</p>`;
 
   return {
     title: 'Партнёры',
@@ -135,24 +145,30 @@ export function founderDetail(params) {
     </div>
 
     <div class="stats">
-      ${raw(statCard({ label: `Взял · ${range.label}`, value: money(row.periodBase) }))}
-      ${raw(statCard({ label: 'Всего за всё время', value: money(row.totalBase), tone: 'warn' }))}
+      ${raw(statCard({ label: `Взял для себя · ${range.label}`, value: money(row.periodBase) }))}
+      ${raw(statCard({ label: 'Взял за всё время', value: money(row.takenBase), tone: 'warn' }))}
+      ${raw(statCard({
+        label: 'Студия должна',
+        value: money(row.owedBase),
+        hint: row.spentBase > 0 ? `оплатил за студию ${money(row.spentBase)}` : 'своих денег не вкладывал',
+        tone: row.owedBase > 0 ? 'danger' : 'neutral',
+      }))}
     </div>
 
-    <button class="btn btn--primary btn--block" data-act="add-draw">Записать выдачу</button>
+    <button class="btn btn--primary btn--block" data-act="add-draw">Записать операцию</button>
 
     <div class="card">
-      ${raw(sectionTitle('История выдач'))}
+      ${raw(sectionTitle('История операций'))}
       ${row.draws.length
         ? raw(html`<div class="list">${raw(row.draws.map((item) => html`
           <button class="row" data-open-draw="${item.id}" style="width:100%;text-align:left">
             <div class="row__main">
-              <span class="row__title">${item.comment || labelOf(PAYMENT_METHODS, item.method, 'Наличные')}</span>
-              <span class="row__subtitle">${formatDate(item.date, { short: true })}</span>
+              <span class="row__title">${labelOf(FOUNDER_MOVES, item.kind || 'draw', 'Взял для себя')}</span>
+              <span class="row__subtitle">${formatDate(item.date, { short: true })}${item.comment ? ` · ${item.comment}` : ''}</span>
             </div>
-            <span class="row__amount">${money(item.base)}</span>
+            <span class="row__amount ${raw((item.kind || 'draw') === 'spend' ? 'good' : '')}">${money(item.base)}</span>
           </button>`).join(''))}</div>`)
-        : raw(emptyState('Выдач ещё не было'))}
+        : raw(emptyState('Операций ещё не было'))}
     </div>`;
 
   return {
@@ -185,16 +201,20 @@ function openDrawSheet(id) {
   if (!draw) return;
   const founder = byId('founders', draw.founderId);
 
+  const kind = draw.kind || 'draw';
   openSheet({
-    title: 'Выдача партнёру',
+    title: labelOf(FOUNDER_MOVES, kind, 'Операция партнёра'),
     body: html`
       <p class="hero__value" style="color:var(--ink)">${money(draw.base)}</p>
+      <p class="muted">${FOUNDER_MOVES.find((item) => item.id === kind)?.hint || ''}</p>
       <div class="list">
-        <div class="row"><div class="row__main"><span class="row__subtitle">Кто взял</span>
+        <div class="row"><div class="row__main"><span class="row__subtitle">Партнёр</span>
           <span class="row__title">${founder?.name || '—'}</span></div></div>
+        ${kind === 'spend' ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">На что</span>
+          <span class="row__title">${categoryLabel(draw.category, getState().settings)}</span></div></div>`) : ''}
         <div class="row"><div class="row__main"><span class="row__subtitle">Дата</span>
           <span class="row__title">${formatDate(draw.date)}</span></div></div>
-        <div class="row"><div class="row__main"><span class="row__subtitle">Чем выдано</span>
+        <div class="row"><div class="row__main"><span class="row__subtitle">Чем</span>
           <span class="row__title">${labelOf(PAYMENT_METHODS, draw.method, 'Наличные')}</span></div></div>
         ${draw.comment ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Комментарий</span>
           <span class="row__title">${draw.comment}</span></div></div>`) : ''}
@@ -211,7 +231,9 @@ function openDrawSheet(id) {
       };
       panel.querySelector('[data-act="delete"]').onclick = async () => {
         closeSheet();
-        const ok = await confirmDialog('Удалить запись о выдаче?');
+        const ok = await confirmDialog((draw.kind || 'draw') === 'spend'
+          ? 'Удалить запись? Связанный расход студии тоже удалится.'
+          : 'Удалить запись?');
         if (!ok) return;
         actions.deleteDraw(id);
         toast('Запись удалена');

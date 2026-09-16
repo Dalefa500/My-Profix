@@ -8,7 +8,8 @@ import { today, monthLabel } from './dates.js';
 import { formatAmount } from './money.js';
 import {
   PROJECT_STATUSES, OBJECT_TYPES, PROJECT_ROLES, INCOME_TYPES, PAYMENT_METHODS,
-  EMPLOYEE_PAY_TYPES, BARTER_KINDS, expenseGroups, SYSTEM_CATEGORIES, categoryLabel,
+  EMPLOYEE_PAY_TYPES, BARTER_KINDS, FOUNDER_MOVES,
+  expenseGroups, SYSTEM_CATEGORIES, categoryLabel,
 } from './model.js';
 import { assignmentState, assignmentTotals, payrollState, barterState } from './calc.js';
 
@@ -661,28 +662,45 @@ export function openFounderForm(id = null, onDone) {
   });
 }
 
-// Партнёр взял деньги из кассы — это его доля прибыли, а не расход студии.
-export function openDrawForm(founderId = '', id = null, onDone) {
+// Движение денег между студией и партнёром: взял для себя, оплатил
+// расход студии своими деньгами или получил этот долг обратно.
+export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
   const state = getState();
   const draw = id ? byId('draws', id) : null;
+  const moveKind = draw?.kind || kind || 'draw';
 
   openForm({
-    title: draw ? 'Выдача партнёру' : 'Партнёр взял деньги',
+    title: draw ? 'Операция партнёра' : 'Деньги партнёра',
     fields: [
+      {
+        name: 'kind', label: 'Что произошло', type: 'select', required: true, wide: true,
+        options: FOUNDER_MOVES.map((item) => option(item.id, item.label)),
+        value: moveKind,
+        hint: FOUNDER_MOVES.find((item) => item.id === moveKind)?.hint || '',
+      },
       {
         name: 'amount', label: 'Сумма', type: 'money', required: true,
         value: draw?.amount ?? '', currency: draw?.currency, fx: draw?.fx,
       },
       { name: 'date', label: 'Дата', type: 'date', required: true, value: draw?.date || today() },
       {
-        name: 'founderId', label: 'Кто взял', type: 'select', required: true,
+        name: 'founderId', label: 'Партнёр', type: 'select', required: true,
         options: state.founders.map((item) => option(item.id, item.name)),
         value: draw?.founderId || founderId || state.founders[0]?.id || '',
+      },
+      {
+        name: 'category', label: 'На что потрачено', type: 'select',
+        options: categoryOptions(state), value: draw?.category || 'other/misc',
+        hint: 'Заполняется, когда партнёр оплатил расход студии.',
       },
     ],
     advanced: [
       {
-        name: 'method', label: 'Чем выдано', type: 'select',
+        name: 'projectId', label: 'Проект', type: 'select',
+        options: projectOptions(state), value: draw?.projectId || '',
+      },
+      {
+        name: 'method', label: 'Чем', type: 'select',
         options: PAYMENT_METHODS.filter((item) => item.id !== 'barter')
           .map((item) => option(item.id, item.label)),
         value: draw?.method || 'cash',

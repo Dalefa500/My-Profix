@@ -273,12 +273,30 @@ export function founderState(state, founder, from, to) {
   if (!founder) return null;
   const all = founderDraws(state, founder.id);
   const period = from && to ? all.filter((item) => inRange(item.date, from, to)) : all;
+  const of = (list, kind) => list.filter((item) => (item.kind || 'draw') === kind);
+
+  // Три разных движения, и путать их нельзя:
+  //   взял для себя — доля прибыли, студия ничего не должна;
+  //   оплатил из своих — расход студии, и студия остаётся должна партнёру;
+  //   вернули долг — гасит эту задолженность.
+  const takenBase = sum(of(all, 'draw'), (item) => item.base);
+  const spentBase = sum(of(all, 'spend'), (item) => item.base);
+  const repaidBase = sum(of(all, 'repay'), (item) => item.base);
+
   return {
     founder,
     draws: all,
     periodDraws: period,
-    totalBase: sum(all, (item) => item.base),
-    periodBase: sum(period, (item) => item.base),
+    takenBase,
+    spentBase,
+    repaidBase,
+    owedBase: round(Math.max(0, spentBase - repaidBase)),
+    periodTakenBase: sum(of(period, 'draw'), (item) => item.base),
+    periodSpentBase: sum(of(period, 'spend'), (item) => item.base),
+    periodRepaidBase: sum(of(period, 'repay'), (item) => item.base),
+    // «Взял» в сводках — это именно доля прибыли.
+    totalBase: takenBase,
+    periodBase: sum(of(period, 'draw'), (item) => item.base),
     lastDate: all[0]?.date || '',
   };
 }
@@ -289,6 +307,8 @@ export function foundersSummary(state, from, to) {
     rows,
     totalBase: sum(rows, (item) => item.totalBase),
     periodBase: sum(rows, (item) => item.periodBase),
+    owedBase: sum(rows, (item) => item.owedBase),
+    periodSpentBase: sum(rows, (item) => item.periodSpentBase),
   };
 }
 

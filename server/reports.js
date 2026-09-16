@@ -11,6 +11,7 @@ import { formatAmount, formatUsdRate, rateToHuman } from '../finance/js/money.js
 import { formatDate, monthLabel, inRange } from '../finance/js/dates.js';
 import {
   categoryLabel, labelOf, PROJECT_STATUSES, INCOME_TYPES, PAYMENT_METHODS, BARTER_KINDS,
+  FOUNDER_MOVES,
 } from '../finance/js/model.js';
 import {
   employeeFinance, clientFinance, projectFinance,
@@ -493,32 +494,38 @@ function founderReport(state, founder, from, to) {
     settings: state.settings,
   });
 
-  const totals = period ? periodTotals(state, from, to) : null;
   sheet.totals([
-    { label: period ? 'Взял за период' : 'Взял всего', value: period ? info.periodBase : info.totalBase },
-    { label: 'Взял за всё время', value: info.totalBase, color: BURGUNDY },
-    ...(totals ? [{ label: 'Прибыль студии за период', value: totals.profitBase, color: GOOD }] : []),
+    { label: period ? 'Взял за период' : 'Взял всего', value: period ? info.periodBase : info.takenBase },
+    { label: 'Взял за всё время', value: info.takenBase, color: BURGUNDY },
+    { label: 'Оплатил за студию', value: info.spentBase, color: GOOD },
+    { label: 'Студия должна', value: info.owedBase, color: info.owedBase > 0 ? BURGUNDY : MUTED },
   ]);
 
-  sheet.heading('Выдачи');
+  sheet.heading('Операции');
   sheet.table(
     [
-      { title: 'Дата', width: 70 },
-      { title: 'Назначение', width: 230 },
-      { title: 'Чем выдано', width: 90 },
-      { title: 'Сумма', width: 80, align: 'right' },
+      { title: 'Дата', width: 62 },
+      { title: 'Что произошло', width: 110 },
+      { title: 'Назначение', width: 180 },
+      { title: 'Чем', width: 70 },
+      { title: 'Сумма', width: 75, align: 'right' },
     ],
-    (period ? info.periodDraws : info.draws).map((item) => [
-      formatDate(item.date, { short: true }),
-      item.comment || '—',
-      labelOf(PAYMENT_METHODS, item.method, 'Наличные'),
-      { text: money(item.base), font: 'bold' },
-    ]),
-    { empty: 'Выдач за этот период не было' },
+    (period ? info.periodDraws : info.draws).map((item) => {
+      const kind = item.kind || 'draw';
+      return [
+        formatDate(item.date, { short: true }),
+        labelOf(FOUNDER_MOVES, kind, 'Взял для себя'),
+        item.comment || (kind === 'spend' ? categoryLabel(item.category, state.settings) : '—'),
+        labelOf(PAYMENT_METHODS, item.method, 'Наличные'),
+        { text: money(item.base), font: 'bold', color: kind === 'spend' ? GOOD : INK },
+      ];
+    }),
+    { empty: 'Операций за этот период не было' },
   );
 
   sheet.note('Деньги, которые партнёр берёт для себя, — это его доля прибыли,'
-    + ' а не расход студии: на прибыль они не влияют.');
+    + ' на прибыль студии они не влияют. Расходы, оплаченные его деньгами,'
+    + ' входят в расходы студии, и на их сумму студия остаётся ему должна.');
 
   return { buffer: sheet.build(), name: fileName(['Отчёт', founder.name, todayIso()]) };
 }
@@ -569,18 +576,20 @@ function periodReport(state, from, to) {
   );
 
   const partners = foundersSummary(state, from, to);
-  if (partners.rows.length && partners.periodBase > 0) {
+  if (partners.rows.length && (partners.periodBase > 0 || partners.owedBase > 0)) {
     sheet.heading('Партнёры взяли из кассы');
     sheet.table(
       [
-        { title: 'Партнёр', width: 220 },
-        { title: 'За период', width: 90, align: 'right' },
-        { title: 'За всё время', width: 90, align: 'right' },
+        { title: 'Партнёр', width: 170 },
+        { title: 'Взял за период', width: 90, align: 'right' },
+        { title: 'Взял всего', width: 80, align: 'right' },
+        { title: 'Студия должна', width: 90, align: 'right' },
       ],
       partners.rows.map((row) => [
         row.founder.name,
         { text: money(row.periodBase), font: 'bold' },
-        { text: money(row.totalBase), color: MUTED },
+        { text: money(row.takenBase), color: MUTED },
+        { text: money(row.owedBase), color: row.owedBase > 0 ? BURGUNDY : MUTED },
       ]),
     );
     sheet.note('Доля прибыли, а не расход студии: в расходы выше эти суммы не входят.');

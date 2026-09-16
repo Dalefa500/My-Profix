@@ -51,7 +51,9 @@ export function openOperation(tab, id) {
         ${item.createdBy ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Внёс</span>
           <span class="row__title">${item.createdBy}</span></div></div>`) : ''}
       </div>
-      ${system ? raw(html`<p class="muted">Операция создана выплатой сотруднику или плановым платежом. При удалении обязательство вернётся.</p>`) : ''}`,
+      ${system ? raw(html`<p class="muted">${item.source === 'founder'
+        ? 'Расход оплачен партнёром из своих денег. При удалении пропадёт и запись о его деньгах, а долг студии уменьшится.'
+        : 'Операция создана выплатой сотруднику или плановым платежом. При удалении обязательство вернётся.'}</p>`) : ''}`,
     footer: html`
       ${system ? '' : raw(html`<button class="btn" data-act="edit">Изменить</button>`)}
       <button class="btn btn--danger" data-act="delete">Удалить</button>`,
