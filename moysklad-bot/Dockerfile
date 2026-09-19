@@ -7,5 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot ./bot
 COPY web ./web
+COPY instagram ./instagram
 
 CMD ["python", "-m", "bot.main"]

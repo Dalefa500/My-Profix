@@ -7,3 +7,10 @@
 	encode gzip
 	reverse_proxy web:8000
 }
+
+# Бот Instagram Direct живёт на своём домене (BOT_DOMAIN, например
+# bot.profix.tj) и в своём контейнере — у него нет доступа к финансам.
+{$BOT_DOMAIN} {
+	encode gzip
+	reverse_proxy instagram:8001
+}
