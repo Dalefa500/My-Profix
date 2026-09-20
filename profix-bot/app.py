@@ -399,7 +399,15 @@ def valid_signature(body: bytes, signature: str | None) -> bool:
     if ALLOW_UNSIGNED and OUR_IG_ID and OUR_IG_ID.encode() in body:
         print("ВНИМАНИЕ: подпись не сошлась, пропускаю по ALLOW_UNSIGNED", flush=True)
         return True
-    print("ОТКЛОНЕНО: подпись не сошлась", flush=True)
+    # Временная диагностика причины отказа. Секреты не печатает —
+    # только длины и факт наличия заголовка. Убрать, когда починим.
+    print(
+        "ОТКЛОНЕНО: подпись не сошлась | "
+        f"заголовок={'есть' if signature else 'НЕТ'} "
+        f"длина_подписи={len(got)} длина_тела={len(body)} "
+        f"секретов_проверено={len(SIG_SECRETS)}",
+        flush=True,
+    )
     return False
 
 
