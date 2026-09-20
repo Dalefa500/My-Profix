@@ -41,6 +41,7 @@ SIG_SECRETS = [
     if s.strip()
 ]
 OUR_IG_ID = os.getenv("OUR_IG_ID", "").strip()
+ALLOW_UNSIGNED = os.getenv("ALLOW_UNSIGNED", "").strip() == "1"
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 MODEL = os.getenv("BOT_MODEL", "claude-opus-5")
@@ -308,11 +309,13 @@ def valid_signature(body: bytes, signature: str | None) -> bool:
         expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
         if got and hmac.compare_digest(expected, got):
             return True
-    # Пока не выяснен верный секрет — пропускаем события, адресованные
-    # нашему аккаунту. Временно: убрать, как только подпись сойдётся.
-    if OUR_IG_ID and OUR_IG_ID.encode() in body:
-        print("подпись не сошлась, пропускаю по совпадению аккаунта", flush=True)
+    # Аварийный клапан: если Meta вдруг сменит секрет, бот замолчит.
+    # Тогда ALLOW_UNSIGNED=1 вернёт приём событий, адресованных нашему
+    # аккаунту, — но это дыра, и включать её стоит только на время.
+    if ALLOW_UNSIGNED and OUR_IG_ID and OUR_IG_ID.encode() in body:
+        print("ВНИМАНИЕ: подпись не сошлась, пропускаю по ALLOW_UNSIGNED", flush=True)
         return True
+    print("ОТКЛОНЕНО: подпись не сошлась", flush=True)
     return False
 
 
