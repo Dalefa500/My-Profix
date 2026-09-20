@@ -42,6 +42,7 @@ SIG_SECRETS = [
 ]
 OUR_IG_ID = os.getenv("OUR_IG_ID", "").strip()
 ALLOW_UNSIGNED = os.getenv("ALLOW_UNSIGNED", "").strip() == "1"
+OUR_IG_USERNAME = os.getenv("OUR_IG_USERNAME", "profix_dushanbe").strip().lower()
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 MODEL = os.getenv("BOT_MODEL", "claude-opus-5")
@@ -126,6 +127,20 @@ SYSTEM = f"""Ты — менеджер по продажам компании PR
   а не впариваешь.
 """
 
+COMMENT_SYSTEM = SYSTEM + """
+
+СЕЙЧАС ТЫ ОТВЕЧАЕШЬ НА КОММЕНТАРИЙ ПОД ПУБЛИКАЦИЕЙ, А НЕ В ДИРЕКТЕ.
+
+Это видят все. Поэтому:
+- ОДНО предложение, максимум 120 символов. Не два, не три.
+- Ответь по существу вопроса, если он есть.
+- В конце позови в личку: «написали вам в директ» или «подробности в директе».
+- Никаких цен, даже если спрашивают прямо.
+- На «огонь», смайлики и похвалу отвечай коротким спасибо, без продаж.
+- На грубость и претензии не спорь: извинись одной фразой и позови
+  к менеджеру в директ.
+"""
+
 LEAD_PROMPT = """Извлеки из переписки данные заявки. Ответь ТОЛЬКО JSON,
 без пояснений, по схеме:
 {"name": "", "phone": "", "need": "", "volume": "", "when": "", "note": ""}
@@ -172,7 +187,7 @@ def remember(sender: str, role: str, text: str) -> None:
 
 # ── разговор ───────────────────────────────────────────────────────
 
-async def ask_claude(messages: list[dict[str, str]]) -> str | None:
+async def ask_claude(messages: list[dict[str, str]], system: str = "") -> str | None:
     if not ANTHROPIC_KEY:
         return None
     try:
@@ -188,7 +203,7 @@ async def ask_claude(messages: list[dict[str, str]]) -> str | None:
             max_tokens=300,
             # Системный промпт большой и неизменный — кешируем его,
             # иначе каждый ответ оплачивается по полной.
-            system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
+            system=[{"type": "text", "text": system or SYSTEM, "cache_control": {"type": "ephemeral"}}],
             output_config={"effort": "low"},
             messages=messages,
         )
@@ -288,6 +303,67 @@ async def send_message(recipient_id: str, text: str) -> None:
         print(f"Instagram отказал: {resp.status_code} {resp.text[:400]}", flush=True)
 
 
+async def reply_to_comment(comment_id: str, text: str) -> None:
+    """Публичный ответ веткой под комментарием."""
+    url = f"https://graph.instagram.com/{GRAPH_API_VERSION}/{comment_id}/replies"
+    async with httpx.AsyncClient(timeout=20) as http:
+        resp = await http.post(url, params={"access_token": IG_ACCESS_TOKEN},
+                               data={"message": text[:280]})
+    if resp.status_code >= 400:
+        print(f"ответ на комментарий отклонён: {resp.status_code} {resp.text[:300]}", flush=True)
+
+
+async def send_private_reply(comment_id: str, text: str) -> None:
+    """Личное сообщение тому, кто оставил комментарий.
+
+    Meta разрешает написать первым, если человек прокомментировал нашу
+    публикацию, — но только один раз и только по этому комментарию.
+    """
+    url = f"https://graph.instagram.com/{GRAPH_API_VERSION}/me/messages"
+    async with httpx.AsyncClient(timeout=20) as http:
+        resp = await http.post(
+            url,
+            params={"access_token": IG_ACCESS_TOKEN},
+            json={"recipient": {"comment_id": comment_id}, "message": {"text": text[:1000]}},
+        )
+    if resp.status_code >= 400:
+        print(f"личное сообщение по комментарию отклонено: {resp.status_code} {resp.text[:300]}", flush=True)
+
+
+async def handle_comment(comment_id: str, author: str, text: str) -> None:
+    public = await ask_claude([{"role": "user", "content": text}], system=COMMENT_SYSTEM)
+    if not public:
+        public = "Спасибо за вопрос! Написали вам в директ."
+    await reply_to_comment(comment_id, public)
+
+    opener = await ask_claude([{"role": "user", "content":
+        f"Клиент написал под нашей публикацией: «{text}». "
+        f"Напиши ему первое сообщение в директ: поздоровайся, ответь по делу "
+        f"и мягко выясни задачу."}])
+    if opener:
+        await send_private_reply(comment_id, opener)
+
+
+def iter_comments(payload: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Достаёт (id комментария, автор, текст) из события."""
+    found: list[tuple[str, str, str]] = []
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            if change.get("field") != "comments":
+                continue
+            value = change.get("value") or {}
+            author = ((value.get("from") or {}).get("username") or "").lower()
+            # Свои же комментарии и ответы пропускаем, иначе бот
+            # ответит сам себе и уйдёт в бесконечную ветку.
+            if author == OUR_IG_USERNAME:
+                continue
+            cid = value.get("id") or ""
+            text = (value.get("text") or "").strip()
+            if cid and text:
+                found.append((cid, author, text))
+    return found
+
+
 # ── вебхук ─────────────────────────────────────────────────────────
 
 SEEN_LIMIT = 500
@@ -371,5 +447,10 @@ async def receive_webhook(request: Request) -> dict[str, str]:
             sender = (event.get("sender") or {}).get("id") or ""
             if text and sender and mid and not already_handled(mid):
                 await handle_message(sender, text)
+
+    for cid, author, text in iter_comments(payload):
+        if not already_handled(f"comment:{cid}"):
+            print(f"комментарий от @{author}: {text[:80]}", flush=True)
+            await handle_comment(cid, author, text)
 
     return {"status": "received"}
