@@ -400,7 +400,8 @@ def valid_signature(body: bytes, signature: str | None) -> bool:
         print("ВНИМАНИЕ: подпись не сошлась, пропускаю по ALLOW_UNSIGNED", flush=True)
         return True
     # Временная диагностика причины отказа. Секреты не печатает —
-    # только длины и факт наличия заголовка. Убрать, когда починим.
+    # только длины, факт наличия заголовка и само тело (это открытые
+    # данные вебхука, не секрет). Убрать, когда починим.
     print(
         "ОТКЛОНЕНО: подпись не сошлась | "
         f"заголовок={'есть' if signature else 'НЕТ'} "
@@ -408,6 +409,7 @@ def valid_signature(body: bytes, signature: str | None) -> bool:
         f"секретов_проверено={len(SIG_SECRETS)}",
         flush=True,
     )
+    print("ТЕЛО:", body.decode("utf-8", errors="replace"), flush=True)
     return False
 
 
