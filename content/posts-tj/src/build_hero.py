@@ -8,26 +8,26 @@ LOGO=b64("assets/logo_red.png")
 RED="#D2102A"
 
 PRODUCTS={
- "shpat": dict(img="shpat", hook="Деворҳоятон<br>ноҳамвор?", name="ШПАТЛЕВКА",
-               type="Шпатлёвкаи дохилӣ", weight="25 кг", use="Пеш аз ранг ва обои", h=742),
+ "shpat": dict(img="shpat", hook="Деворҳоятон<br>ноҳамвор?", name="ШПАТЛЕВКА ВНУТРЕННЯЯ",
+               type="Для работ внутри помещений", weight="25 кг", use="Пеш аз ранг ва обои", h=742),
  "blue":  dict(img="blue", hook="Девору шифти<br>ҳамвор мехоҳед?", name="FIZERBERG",
-               type="Штукатуркаи гипси", weight="30 кг", use="Барои корҳои дохилӣ", h=742),
- "rovn":  dict(img="rovn", hook="Фаршатон<br>каҷ аст?", name="РОВНИТЕЛЬ",
-               type="Барои ҳамвор кардани фарш", weight="25 кг", use="Барои корҳои дохилӣ", h=742),
- "k700":  dict(img="k700", hook="Кошин<br>мегузоред?", name="КЛЕЙ 700",
-               type="Ширеши кошини тақвиятдода", weight="25 кг", use="Барои корҳои дохилӣ", h=742),
- "k800":  dict(img="k800", hook="Кошин ба<br>фасад мегузоред?", name="КЛЕЙ 800",
-               type="Ширеши кошини тақвиятдода", weight="25 кг", use="Барои дохил ва фасад", h=742),
+               type="Штукатурка гипсовая", weight="30 кг", use="Барои корҳои дохилӣ", h=742),
+ "rovn":  dict(img="rovn", hook="Фаршатон<br>каҷ аст?", name="РОВНИТЕЛЬ ДЛЯ ПОЛА",
+               type="Для выравнивания пола", weight="25 кг", use="Барои корҳои дохилӣ", h=742),
+ "k700":  dict(img="k700", hook="Кошин<br>мегузоред?", name="ПЛИТОЧНЫЙ КЛЕЙ 700",
+               type="Усиленный, для плиточных работ", weight="25 кг", use="Барои корҳои дохилӣ", h=742),
+ "k800":  dict(img="k800", hook="Кошин ба<br>фасад мегузоред?", name="ПЛИТОЧНЫЙ КЛЕЙ 800",
+               type="Усиленный, для фасадов и плитки", weight="25 кг", use="Барои дохил ва фасад", h=742),
  "kraska_f": dict(img="kraska_f", hook="Фасадро ранг<br>кардан мехоҳед?", name="КРАСКА ФАСАДНАЯ",
-               type="Ранги акрилӣ", weight="20 кг", use="Барои корҳои берунӣ", h=430),
+               type="Акриловая", weight="20 кг", use="Барои корҳои берунӣ", h=430),
  "grunt_f": dict(img="grunt_f", hook="Ранг хуб<br>часпидан гирад", name="ГРУНТОВКА ФАСАДНАЯ",
-               type="Грунтовкаи акрилӣ", weight="20 кг", use="Барои корҳои берунӣ", h=430),
+               type="Акриловая", weight="20 кг", use="Барои корҳои берунӣ", h=430),
  "grunt_v": dict(img="grunt_v", hook="Девор пеш аз<br>ранг омода шавад", name="ГРУНТОВКА ВНУТРЕННЯЯ",
-               type="Грунтовкаи акрилӣ", weight="20 кг", use="Барои корҳои дохилӣ", h=430),
- "dojdik": dict(img="dojdik", hook="Деворро зебо<br>кардан мехоҳед?", name="ДОЖДИК",
-               type="Штукатуркаи ороишӣ", weight="25 кг", use="Барои дохил ва фасад", h=430),
- "shuba":  dict(img="shuba", hook="Фасади зебо<br>мехоҳед?", name="ШУБА",
-               type="Штукатуркаи ороишӣ", weight="20 кг", use="Барои дохил ва фасад", h=430),
+               type="Акриловая", weight="20 кг", use="Барои корҳои дохилӣ", h=430),
+ "dojdik": dict(img="dojdik", hook="Деворро зебо<br>кардан мехоҳед?", name="ШТУКАТУРКА «ДОЖДИК»",
+               type="Декоративная, акриловая", weight="25 кг", use="Барои дохил ва фасад", h=430),
+ "shuba":  dict(img="shuba", hook="Фасади зебо<br>мехоҳед?", name="ШТУКАТУРКА «ШУБА»",
+               type="Декоративная, акриловая", weight="20 кг", use="Барои дохил ва фасад", h=430),
 }
 
 PLANE = ('<svg viewBox="0 0 24 24" width="66" height="66" fill="#fff">'
@@ -70,8 +70,8 @@ body{{font-family:"NS",sans-serif;background:#111;}}
 .left{{position:absolute;left:70px;top:206px;width:520px;z-index:5;}}
 h1{{font-size:78px;line-height:1.14;font-weight:800;color:#0E1013;letter-spacing:-1px;}}
 .rule{{width:132px;height:7px;background:{RED};margin:36px 0 30px;border-radius:4px;}}
-.name{{font-size:64px;font-weight:800;color:#0E1013;line-height:1.04;letter-spacing:-.5px;}}
-.type{{font-size:56px;font-weight:800;color:{RED};line-height:1.1;margin-top:10px;}}
+.name{{font-size:50px;font-weight:800;color:#0E1013;line-height:1.08;letter-spacing:-.3px;}}
+.type{{font-size:34px;font-weight:700;color:{RED};line-height:1.25;margin-top:12px;}}
 .badge{{display:inline-block;margin-top:26px;background:{RED};color:#fff;font-size:56px;
   font-weight:800;padding:8px 32px 12px;border-radius:16px;}}
 .use{{margin-top:28px;font-size:37px;font-weight:600;color:#16181B;}}
