@@ -399,17 +399,11 @@ def valid_signature(body: bytes, signature: str | None) -> bool:
     if ALLOW_UNSIGNED and OUR_IG_ID and OUR_IG_ID.encode() in body:
         print("ВНИМАНИЕ: подпись не сошлась, пропускаю по ALLOW_UNSIGNED", flush=True)
         return True
-    # Временная диагностика причины отказа. Секреты не печатает —
-    # только длины, факт наличия заголовка и само тело (это открытые
-    # данные вебхука, не секрет). Убрать, когда починим.
-    print(
-        "ОТКЛОНЕНО: подпись не сошлась | "
-        f"заголовок={'есть' if signature else 'НЕТ'} "
-        f"длина_подписи={len(got)} длина_тела={len(body)} "
-        f"секретов_проверено={len(SIG_SECRETS)}",
-        flush=True,
-    )
-    print("ТЕЛО:", body.decode("utf-8", errors="replace"), flush=True)
+    # Отклонённые запросы почти всегда — уведомления о прочтении
+    # ("read"), не сами сообщения: их подписывает другой продукт
+    # Meta, и это не влияет на приём заявок. Текст сообщений в лог
+    # не пишем — это переписка клиентов.
+    print(f"ОТКЛОНЕНО: подпись не сошлась (длина тела {len(body)})", flush=True)
     return False
 
 
