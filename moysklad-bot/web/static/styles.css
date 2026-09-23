@@ -1,0 +1,908 @@
+/* Profix — панель руководителя.
+   Стекло поверх градиента «чёрный → красный», крупная типографика,
+   мягкое свечение. Фирменные цвета: красный, чёрный. */
+
+:root {
+  --red: #e01019;
+  --red-light: #ff2a33;
+  --red-deep: #8c0812;
+
+  --ink: #ffffff;
+  --ink-2: rgba(255, 255, 255, .86);
+  --ink-3: rgba(255, 255, 255, .58);
+
+  /* Стекло */
+  --glass: rgba(255, 255, 255, .055);
+  --glass-strong: rgba(255, 255, 255, .085);
+  --glass-edge: rgba(255, 255, 255, .11);
+  --glass-sheen: rgba(255, 255, 255, .16);
+  --hairline: rgba(255, 255, 255, .09);
+
+  /* Проверено валидатором палитры на стекле поверх красной зоны
+     (#3a1a1c): различимы при дальтонизме — ΔE 24 protan.
+     Красный для расхода не годится — тонет в фоне. */
+  --income: #4a97d8;
+  --expense: #cc7f22;
+  --grid: rgba(255, 255, 255, .1);
+
+  /* Тревожный цвет для «на исходе» — контраст 6.3:1 на карточке. */
+  --warn: #ff6c5c;
+  /* Знак суммы: плюс зелёным, минус красным. Контраст 7.5:1. */
+  --good: #3fbf7f;
+
+  /* Поверхность приложения: базовый тон и крапчатая фактура.
+     Одна запись на всех — фон экрана и едущие при свайпе вкладки
+     должны быть одним и тем же полотном. */
+  --surface: #0b0a0e;
+  --surface-image:
+    linear-gradient(rgba(0, 0, 0, .42), rgba(0, 0, 0, .42)),
+    url("/icons/grain.png");
+
+  --radius: 24px;
+  --radius-sm: 16px;
+  --tabbar-h: 62px;
+
+  color-scheme: dark;
+}
+
+/* Шрифт логотипа — широкий квадратный, как в фирменном знаке.
+   Лежит рядом, а не тянется из интернета: работает и без сети. */
+@font-face {
+  font-family: "Michroma";
+  src: url("/fonts/michroma.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Фактура — фон самого body, без отдельного слоя и без градиента по
+   высоте. Так надёжнее всего: фон body растягивается на всё полотно
+   отрисовки окна, а оно на iPhone выше, чем достаётся странице —
+   iOS отдаёт ей высоту экрана минус вырез. Слой с position: fixed
+   или фон на корневом элементе до низа не доставали, и там
+   оставалась гладкая чёрная полоса. Плитка повторяется, поэтому
+   сколько бы окно ни оказалось выше — фактура идёт до края. */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, "Segoe UI", sans-serif;
+  color: var(--ink);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+  height: 100dvh;
+  overflow: hidden;
+  /* Базовый тон WebKit сам растягивает на всё окно приложения —
+     даже туда, куда не достаёт сама страница. */
+  background-color: var(--surface);
+}
+
+/* Фактура — отдельным слоем с запасом ниже экрана. При запуске iOS
+   отдаёт установленному приложению высоту экрана без выреза (это
+   видно по тому, что после поворота экрана всё встаёт на место), и
+   окно оказывается выше страницы. Слой закреплён к экрану, поэтому
+   не добавляет странице прокрутки, но нарисован с запасом — и низ
+   окна закрыт фактурой при любой высоте. */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: calc(100dvh + 160px);
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--surface);
+  background-image: var(--surface-image);
+  background-size: auto, 256px 256px;
+  background-repeat: repeat, repeat;
+}
+
+/* Каркас — шапка и таббар больше не «плавают» поверх страницы, а
+   стоят неподвижными полосами flex-колонки. Скроллится только сама
+   вкладка (#views), поэтому смена высоты контента между вкладками
+   не двигает верх и низ — раньше именно это дёргало кнопки. */
+#app {
+  position: relative; /* якорь для значка обновления над списком */
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+svg { display: block; }
+[hidden] { display: none !important; }
+
+/* ── Вход ──────────────────────────────────────────────── */
+
+/* Без «коробки»: свет сверху, знак и слово по центру, форма ниже.
+   Логотип не перекрашиваем — берём объёмный знак как есть,
+   а слово набираем шрифтом. */
+/* Чёрный фон с перфорированной поверхностью: сетка точек уходит в
+   перспективу, свет падает справа сверху. Рисуется CSS — остаётся
+   резкой на любом экране и ничего не весит. */
+.login {
+  position: relative;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #000;
+  padding: 24px calc(24px + env(safe-area-inset-left)) calc(30px + env(safe-area-inset-bottom));
+}
+/* Крапчатая поверхность: зерно лежит бесшовной плиткой (браузер множит
+   её без потери резкости), свет и затемнение — градиентами поверх. */
+.login::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: url("/icons/grain.png") repeat;
+  background-size: 256px 256px;
+}
+.login::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 58% at 48% -6%, rgba(255, 255, 255, .055) 0%, transparent 62%),
+    linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, .45) 46%, rgba(0, 0, 0, .8) 74%, #000 100%);
+  pointer-events: none;
+}
+.login__inner { z-index: 1; }
+.login__inner {
+  position: relative;
+  width: 100%;
+  max-width: 348px;
+  text-align: center;
+}
+.login__word {
+  font-family: "Michroma", -apple-system, system-ui, sans-serif;
+  font-size: 40px;
+  font-weight: 900;
+  letter-spacing: -1px;
+  color: #fff;
+  line-height: 1.05;
+}
+.login__word span { color: var(--red-light); }
+/* Мелкий текст на входе — с засечками, тонко и вразрядку: так он
+   читается дорого, в отличие от плотного рубленого шрифта. */
+.login__sub {
+  font-family: Georgia, "Times New Roman", serif;
+  color: rgba(255, 255, 255, .5);
+  font-size: 10.5px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 5px;
+  margin: 14px 0 34px;
+}
+.login__form { display: grid; gap: 12px; }
+.pin {
+  width: 100%;
+  padding: 17px 18px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 16px;
+  text-align: center;
+  letter-spacing: 2px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 16px;
+  outline: none;
+  transition: border-color .15s ease, background .15s ease;
+}
+.pin::placeholder { color: rgba(255, 255, 255, .45); letter-spacing: .5px; }
+.pin:focus {
+  border-color: rgba(255, 42, 51, .75);
+  background: rgba(255, 255, 255, .1);
+}
+
+/* Кнопка выпуклая: светлая фаска сверху, тёмная грань снизу,
+   при нажатии «проваливается». */
+.btn {
+  padding: 17px 20px;
+  border-radius: 16px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 15px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  /* Отпускание с лёгким перелётом — кнопка «пружинит» назад. */
+  transition:
+    transform .26s cubic-bezier(.22, 1.4, .4, 1),
+    box-shadow .26s ease,
+    filter .2s ease;
+}
+.btn:active {
+  /* Нажатие резкое, чтобы палец чувствовал момент касания. */
+  transition-duration: .06s;
+}
+/* Матовый фирменный красный: глубокий, без глянца и бликов —
+   только тонкая фаска по верхнему краю. */
+.btn--primary {
+  color: #fff;
+  background: linear-gradient(180deg, #c8161d 0%, #a5111a 55%, #7d0b12 100%);
+  border: 1px solid rgba(255, 120, 120, .3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .22),
+    0 10px 22px -14px rgba(0, 0, 0, .9);
+}
+.btn--primary:active {
+  transform: translateY(3px) scale(.985);
+  filter: brightness(.88);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .12),
+    inset 0 3px 10px rgba(0, 0, 0, .45),
+    0 3px 8px -8px rgba(0, 0, 0, .9);
+}
+.btn[disabled] { opacity: .55; }
+.login__error {
+  font-size: 14px;
+  color: #ffd2d4;
+  background: rgba(224, 16, 25, .22);
+  border: 1px solid rgba(255, 42, 51, .45);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+/* ── Каркас ────────────────────────────────────────────── */
+
+/* Панели без размытия и без границы: фактура фона проходит сквозь них
+   непрерывно, и экран читается как одна поверхность, а не три полосы.
+   Затемнение растворяется к краю содержимого. */
+/* Шапка и таббар — без собственной подложки: крапчатая фактура идёт
+   через весь экран одним полотном. Контент под них не заезжает —
+   прокручивается только #views между ними, — поэтому затемнять
+   полосы не нужно. */
+.topbar {
+  position: relative; z-index: 20; flex: none;
+  display: flex; align-items: center; gap: 4px;
+  padding: 12px 14px;
+  padding-top: calc(12px + env(safe-area-inset-top));
+  background: none;
+  border-bottom: 0;
+}
+.topbar__title {
+  flex: 1;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 21px; font-weight: 400; letter-spacing: .6px;
+  padding-left: 4px;
+}
+.topbar__action, .topbar__back {
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+}
+.topbar__action, .topbar__back {
+  transition: transform .24s cubic-bezier(.22, 1.4, .4, 1), background .18s ease;
+}
+.topbar__action:active, .topbar__back:active {
+  background: var(--glass-strong);
+  transform: scale(.88);
+  transition-duration: .06s;
+}
+.topbar__action svg, .topbar__back svg {
+  width: 20px; height: 20px; fill: none;
+  stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.topbar__action.is-busy svg { animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Отступы живут на самих вкладках, а не на контейнере: во время
+   перехода уходящий экран кладётся поверх абсолютом и должен
+   совпадать с приходящим по геометрии. */
+#views {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0; /* иначе flex-элемент не сжимается и скролл не появится */
+  overflow-x: clip;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  max-width: 640px; margin: 0 auto;
+  width: 100%;
+}
+.view {
+  display: grid; gap: 16px;
+  /* Таббар больше не лежит поверх контента, а стоит своей полосой и
+     сам держит отступ от края экрана — здесь хватает воздуха в конце
+     прокрутки. */
+  padding: 16px 16px 24px;
+}
+
+/* Переход — перелистывание единого полотна: вкладки лежат встык и
+   едут вместе, с одинаковой скоростью, ничего не наезжает и не
+   притухает. Так же, как под пальцем при свайпе.
+   Кривая — та же, что у системных панелей iOS. */
+:root {
+  --ios-ease: cubic-bezier(.32, .72, 0, 1);
+  --ios-time: .34s;
+  /* Доводка после отрыва пальца: начинается со скоростью жеста и
+     мягко гаснет, без рывка на старте. */
+  --glide: cubic-bezier(.17, .84, .25, 1);
+}
+
+.view.is-entering {
+  animation: rise .22s cubic-bezier(.25, .9, .3, 1) backwards;
+  will-change: transform, opacity;
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Приходящий экран накрывает уходящий — иначе старое просвечивает
+   сквозь новое. Тень по краю даёт ощущение слоя. */
+/* Вкладки прозрачные: едет только стекло карточек, а крапчатая
+   подложка стоит на месте. Перекрытия нет — вкладки идут встык,
+   поэтому подкладывать под них фон не нужно. */
+.view.is-from-right,
+.view.is-from-left {
+  position: relative;
+  z-index: 2;
+  animation: push-in var(--ios-time) var(--ios-ease) backwards;
+}
+.view.is-from-left { animation-name: push-in-back; }
+
+/* Уходящий экран остаётся под ним, пока не доедет. */
+.view.is-leaving {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 1;
+  pointer-events: none;
+  animation: push-out var(--ios-time) var(--ios-ease) forwards;
+}
+.view.is-leaving.to-right { animation-name: push-out-back; }
+
+@keyframes push-in {
+  from { transform: translateX(100%); }
+  to { transform: none; }
+}
+@keyframes push-in-back {
+  from { transform: translateX(-100%); }
+  to { transform: none; }
+}
+@keyframes push-out {
+  from { transform: none; }
+  to { transform: translateX(-100%); }
+}
+@keyframes push-out-back {
+  from { transform: none; }
+  to { transform: translateX(100%); }
+}
+
+/* Свайп: экраны идут за пальцем. Пока палец на экране — никаких
+   переходов, иначе движение отстаёт от руки. */
+.view.is-dragging-in {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 2;
+  pointer-events: none;
+  will-change: transform;
+}
+.view.is-dragging-out {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.view.is-settling {
+  transition: transform var(--ios-time) var(--glide);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view.is-entering,
+  .view.is-from-right,
+  .view.is-from-left,
+  .view.is-leaving { animation: none; }
+  .view.is-settling { transition-duration: .01s !important; }
+}
+
+/* Значок обновления живёт над списком и выезжает вместе с потягом */
+.pull {
+  position: absolute;
+  top: 0; left: 50%;
+  z-index: 5;
+  opacity: 0;
+  pointer-events: none;
+  color: var(--ink-3);
+  transform: translate3d(-50%, -34px, 0);
+}
+.pull svg {
+  width: 26px; height: 26px; fill: none;
+  stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.pull.is-ready { color: var(--ink); }
+
+.tabbar {
+  position: relative; z-index: 20; flex: none;
+  /* Столько колонок, сколько вкладок открыто роли */
+  display: grid; grid-template-columns: repeat(var(--tabs, 5), 1fr);
+  /* Кнопки прижаты к нижнему краю: под подписями остаётся небольшой
+     зазор от жестовой полосы iPhone, а не вся её зона целиком. */
+  height: calc(var(--tabbar-h) + 8px + env(safe-area-inset-bottom) * .5);
+  padding-bottom: calc(env(safe-area-inset-bottom) * .5);
+  align-items: end;
+  background: none;
+  border-top: 0;
+}
+.tab {
+  display: grid; place-items: center; gap: 4px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 10.5px; font-weight: 400; letter-spacing: .7px;
+  color: var(--ink-3);
+  transition: color .15s ease;
+}
+.tab svg {
+  width: 24px; height: 24px; fill: none;
+  stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.tab.is-active { color: #fff; }
+.tab.is-active svg {
+  filter: drop-shadow(0 0 10px rgba(255, 42, 51, .9));
+  color: var(--red-light);
+  animation: tab-pop .34s cubic-bezier(.22, 1.5, .38, 1);
+}
+.tab svg { transition: transform .2s cubic-bezier(.22, 1.4, .4, 1); }
+.tab:active svg { transform: scale(.84); transition-duration: .06s; }
+.tab:active { opacity: .75; }
+@keyframes tab-pop {
+  0% { transform: scale(.78); }
+  60% { transform: scale(1.14); }
+  100% { transform: scale(1); }
+}
+
+/* ── Стеклянные карточки ───────────────────────────────── */
+
+/* Стекло: чёткая светлая кромка сверху, тёмная снизу — виден край
+   панели, а не размытое пятно. */
+.card {
+  position: relative;
+  /* Без backdrop-filter: размытие фона пересчитывается в каждом кадре
+     и роняет плавность перелистывания, а размывать под карточкой
+     нечего — там ровная крапчатая фактура. Плотность добирается
+     самой заливкой. */
+  background: linear-gradient(162deg,
+    rgba(28, 25, 30, .94) 0%, rgba(20, 18, 23, .92) 42%, rgba(16, 14, 19, .93) 100%);
+  border: 1px solid rgba(255, 255, 255, .15);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, .32),
+    inset 0 -1px 0 rgba(0, 0, 0, .5),
+    0 14px 28px -16px rgba(0, 0, 0, .95);
+}
+/* Подписи — с засечками вразрядку, как на входе.
+   Цифры остаются рубленым шрифтом: у Georgia цифры разной высоты,
+   и суммы в столбцах выглядели бы неровно. */
+.card__title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px; font-weight: 400;
+  letter-spacing: 2.4px; text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 16px;
+}
+
+/* Главная карточка — то же стекло, но со свечением внутри. */
+.hero {
+  overflow: hidden;
+  background: linear-gradient(160deg,
+    rgba(38, 34, 40, .88) 0%, rgba(24, 21, 27, .84) 55%, rgba(18, 16, 21, .86) 100%);
+  padding: 26px 22px;
+}
+.hero__label {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px; font-weight: 400;
+  letter-spacing: 2.8px; text-transform: uppercase;
+  color: rgba(255, 255, 255, .6);
+}
+.hero__value {
+  font-size: 44px; font-weight: 800; letter-spacing: -1.6px;
+  margin-top: 10px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 6px 26px rgba(0, 0, 0, .5);
+}
+.hero__note { font-size: 12.5px; color: rgba(255, 255, 255, .55); margin-top: 10px; }
+
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.tiles--two { grid-template-columns: repeat(2, 1fr); }
+.tile {
+  background: linear-gradient(160deg,
+    rgba(28, 25, 30, .93) 0%, rgba(19, 17, 22, .9) 55%, rgba(16, 14, 19, .91) 100%);
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: var(--radius-sm);
+  padding: 15px 12px;
+  display: grid; gap: 7px;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, .3),
+    inset 0 -1px 0 rgba(0, 0, 0, .45);
+}
+/* Подпись под цифрой: насколько изменилось к прошлому периоду */
+.tile__note {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.tile__label {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 10.5px; font-weight: 400;
+  letter-spacing: 1.4px; text-transform: uppercase;
+  color: var(--ink-3);
+  min-height: 2.8em;
+}
+.tile__value {
+  font-size: clamp(14px, 4.6vw, 19px); font-weight: 800; letter-spacing: -.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tiles--two .tile__label { min-height: 0; }
+.tile__value--income { color: var(--income); }
+.tile__value--expense { color: var(--expense); }
+
+/* ── Списки ────────────────────────────────────────────── */
+
+.rows { display: grid; }
+.row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 0;
+  border-top: 1px solid var(--hairline);
+  font-size: 16px;
+}
+.row:first-child { border-top: 0; }
+.row__label {
+  flex: 1; min-width: 0; overflow-wrap: anywhere;
+  font-family: Georgia, "Times New Roman", serif;
+  color: var(--ink-2);
+}
+/* Единица измерения приглушена — цифра остаётся главной. */
+.row__unit { color: var(--ink-3); font-weight: 400; font-size: .84em; }
+
+/* Строка в две полосы: сверху название и сумма, снизу мелким —
+   сколько и почём. Название товара бывает длинным, в одну строку
+   с цифрами не помещается. */
+.row--stacked { flex-wrap: wrap; }
+/* Фото товара — маленькое, но узнаваемое: мешок от мешка отличить */
+.row__photo {
+  flex: none;
+  width: 42px; height: 42px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid var(--hairline);
+}
+.row--stacked .row__label { flex: 1 1 60%; }
+.row__note {
+  flex: 1 0 100%;
+  color: var(--ink-3);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.row__note--debt { color: var(--warn); }
+/* Нижняя строка строки-документа: метка оплаты и дата рядом */
+.row__foot {
+  flex: 1 0 100%;
+  display: flex; align-items: center; gap: 8px;
+}
+.row__foot .row__note { flex: 0 1 auto; }
+
+/* Оплачено или нет — словом, а не только цветом: читается и при
+   ярком солнце, и при дальтонизме. */
+.row__tag {
+  flex: none;
+  font-size: 11px; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--warn);
+  border: 1px solid rgba(255, 108, 92, .4);
+  border-radius: 999px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+.row__tag--paid {
+  color: var(--good);
+  border-color: rgba(63, 191, 127, .4);
+}
+.row__value--paid { color: var(--good); }
+/* Итоговая строка расчёта — крупнее и с более заметной чертой */
+.row--total {
+  border-top: 1px solid rgba(255, 255, 255, .22);
+  font-size: 18px;
+}
+/* Итог может стоять и первой строкой — тогда черта сверху не нужна */
+.row--total:first-child { border-top: 0; }
+.row--total .row__label { color: var(--ink); }
+.row__value--unpaid { color: var(--warn); }
+/* Вычет в расчёте — не поступление денег, цветом не выделяем */
+.row__value--muted { color: var(--ink-3); }
+
+/* Сигнал «на исходе»: цвет + точка + подпись, чтобы читался и при
+   ярком солнце, и при дальтонизме — не одним оттенком. */
+.row__value--warn { color: var(--warn); }
+
+/* Знак суммы. Минус в самом числе остаётся признаком — цвет не
+   единственный сигнал. */
+.is-pos, .tile__value--pos { color: var(--good); }
+.is-neg, .tile__value--neg { color: var(--warn); }
+.card--warn { border-color: rgba(255, 108, 92, .34); }
+.card--warn .card__title { color: var(--warn); }
+.card__warn { color: var(--warn); }
+.dot {
+  flex: none;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 10px rgba(255, 108, 92, .75);
+  animation: pulse 2.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot { animation: none; }
+}
+.row__value {
+  font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap;
+}
+.row__value--col { min-width: 100px; text-align: right; }
+.row__value--income { color: var(--income); }
+.row__value--expense { color: var(--expense); }
+
+.row--tap {
+  width: 100%;
+  text-align: left;
+  border-radius: 12px;
+  transition: transform .24s cubic-bezier(.22, 1.4, .4, 1), background .18s ease;
+}
+.row--tap:active {
+  transform: scale(.975);
+  background: rgba(255, 255, 255, .06);
+  transition-duration: .06s;
+}
+.chev {
+  width: 17px; height: 17px; color: var(--ink-3); fill: none;
+  stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;
+}
+
+.person { padding: 15px 0; }
+.person__name {
+  flex: 1; font-family: Georgia, "Times New Roman", serif;
+  font-size: 16.5px; font-weight: 400; color: #fff;
+}
+.person__total {
+  font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums;
+  color: var(--expense);
+}
+
+/* ── Периоды ───────────────────────────────────────────── */
+
+/* Лента периодов листается страницами по четыре плашки: они равной
+   ширины — ровно в четверть видимой полосы, — а прокрутка привязана
+   к началу каждой четвёрки. Поэтому с краю никогда не остаётся
+   обрезанной кнопки. */
+.chips {
+  display: flex; gap: 10px; overflow-x: auto;
+  /* Строго по полям вкладки, без вылета под края экрана: иначе
+     в отступах по бокам выглядывают соседние плашки. */
+  padding: 2px 0; margin: -8px 0 0;
+  scrollbar-width: none;
+  scroll-snap-type: x mandatory;
+}
+.chip:nth-child(4n + 1) { scroll-snap-align: start; }
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  /* Ровно четверть полосы за вычетом трёх промежутков между ними;
+     лишний пиксель запаса — иначе на узком экране четвёртая плашка
+     из-за дробных долей не влезает и её подрезает. */
+  flex: 0 0 calc((100% - 31px) / 4);
+  min-width: 0; /* иначе длинная подпись не даёт плашке ужаться до четверти */
+  text-align: center;
+  /* Крупнее и просторнее — на телефоне палец должен уверенно попадать
+     без соседей под удар; блюр убран — на полосе из полутора десятков
+     плашек он проседал по кадрам и делал нажатие «вязким». */
+  padding: 12px 8px;
+  min-height: 44px;
+  border-radius: 999px;
+  font-size: 14.5px; font-weight: 700; white-space: nowrap;
+  color: var(--ink-2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .14), rgba(255, 255, 255, .045));
+  border: 1px solid rgba(255, 255, 255, .14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .3),
+    inset 0 -1px 0 rgba(0, 0, 0, .45);
+  transition: transform .1s ease;
+}
+/* Выбранный период — оранжевый, не красный: красный в приложении
+   держится за кнопку «Войти» и тревожные значения. Тон взят глубокий:
+   на светлом оранжевом белая надпись тонет, на этом контраст 4.6. */
+.chip.is-active {
+  color: #fff;
+  background: linear-gradient(180deg, #e08b34 0%, #b05c0b 48%, #6b3304 100%);
+  border-color: rgba(255, 255, 255, .3);
+  text-shadow: 0 1px 2px rgba(60, 25, 0, .55);
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, .55),
+    inset 0 -2px 6px rgba(70, 30, 0, .5),
+    0 3px 0 -1px #4d2503,
+    0 8px 16px -8px rgba(0, 0, 0, .9);
+}
+.chip { transition: transform .24s cubic-bezier(.22, 1.4, .4, 1), filter .18s ease; }
+.chip:active {
+  transform: translateY(2px) scale(.95);
+  filter: brightness(.85);
+  transition-duration: .06s;
+}
+
+/* ── График ────────────────────────────────────────────── */
+
+.chart { position: relative; touch-action: pan-y; margin-bottom: 6px; }
+.chart svg { width: 100%; display: block; }
+.legend { display: flex; gap: 18px; margin-bottom: 12px; }
+.legend__item {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12.5px; color: var(--ink-2);
+}
+.legend__dot { width: 9px; height: 9px; border-radius: 3px; }
+
+.tooltip {
+  position: fixed; z-index: 60; pointer-events: none;
+  /* Матовая заливка вместо размытия: backdrop-filter на iPhone
+     пересчитывается каждый кадр и роняет плавность. */
+  background: rgba(22, 18, 22, .97);
+  color: #fff;
+  border: 1px solid var(--glass-edge);
+  border-radius: 12px;
+  padding: 9px 12px;
+  font-size: 12.5px; line-height: 1.5;
+  box-shadow: 0 14px 30px -14px rgba(0, 0, 0, .95);
+  font-variant-numeric: tabular-nums;
+  transform: translate(-50%, -100%);
+}
+.tooltip b { font-weight: 800; }
+
+/* ── Поиск, состояния ──────────────────────────────────── */
+
+.search {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 16px;
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(28, 25, 30, .9), rgba(18, 16, 21, .9));
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-sm);
+  outline: none;
+  box-shadow: inset 0 1px 0 var(--glass-sheen);
+}
+.search::placeholder { color: var(--ink-3); }
+.search:focus { border-color: rgba(255, 42, 51, .6); }
+
+.empty { text-align: center; color: var(--ink-3); font-size: 14.5px; padding: 28px 10px; }
+.error {
+  background: rgba(224, 16, 25, .16);
+  border: 1px solid rgba(255, 42, 51, .4);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  padding: 14px 16px; font-size: 14.5px;
+}
+
+.skeleton { display: grid; gap: 16px; }
+.skeleton__bar {
+  height: 82px; border-radius: var(--radius);
+  border: 1px solid var(--glass-edge);
+  background: linear-gradient(90deg, rgba(255, 255, 255, .04) 25%, rgba(255, 255, 255, .1) 50%, rgba(255, 255, 255, .04) 75%);
+  background-size: 300% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+.skeleton__bar--tall { height: 146px; }
+@keyframes shimmer { to { background-position: -180% 0; } }
+
+/* ── Профиль и доступы ─────────────────────────────────── */
+
+.topbar__action + .topbar__action { margin-left: 6px; }
+
+/* Лист снизу поверх приложения. Подложка просто затемняет — без
+   размытия, по той же причине, что и у карточек. */
+.sheet { position: fixed; inset: 0; z-index: 50; }
+.sheet__backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, .62);
+  animation: fade-in .2s ease;
+}
+.sheet__panel {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  max-width: 640px; margin: 0 auto;
+  max-height: calc(100dvh - 40px - env(safe-area-inset-top));
+  display: flex; flex-direction: column;
+  background: linear-gradient(170deg, #1b181e 0%, #121015 100%);
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-bottom: 0;
+  border-radius: 26px 26px 0 0;
+  box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, .28), 0 -20px 40px -20px rgba(0, 0, 0, .9);
+  animation: sheet-up .38s var(--ios-ease);
+}
+.sheet__head {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 20px 10px;
+}
+.sheet__title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px; font-weight: 400; letter-spacing: .6px;
+}
+.sheet__done {
+  min-height: 44px; padding: 0 6px;
+  font-weight: 700; color: var(--red-light);
+}
+.sheet__body {
+  overflow-y: auto; overscroll-behavior: contain;
+  display: grid; gap: 14px;
+  padding: 6px 16px calc(24px + env(safe-area-inset-bottom));
+}
+@keyframes sheet-up { from { transform: translate3d(0, 100%, 0); } }
+@keyframes fade-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .sheet__panel, .sheet__backdrop { animation: none; }
+}
+
+.who { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.who__name { flex: 1; font-family: Georgia, "Times New Roman", serif; font-size: 20px; }
+.badge {
+  flex: none;
+  font-size: 11px; letter-spacing: .6px; text-transform: uppercase;
+  color: var(--ink-2);
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 999px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.btn { display: block; width: 100%; }
+.btn--ghost {
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .04));
+  border: 1px solid rgba(255, 255, 255, .16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2);
+}
+.btn--ghost:active { transform: translateY(2px) scale(.985); filter: brightness(.85); }
+
+.person-row.is-off .row__label { color: var(--ink-3); text-decoration: line-through; }
+.row__actions { flex: 1 0 100%; display: flex; gap: 8px; margin-top: 6px; }
+.mini {
+  min-height: 40px; padding: 0 14px;
+  border-radius: 12px;
+  font-size: 14px; font-weight: 700;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, .07);
+  border: 1px solid rgba(255, 255, 255, .14);
+  transition: transform .24s cubic-bezier(.22, 1.4, .4, 1);
+}
+.mini:active { transform: scale(.94); transition-duration: .06s; }
+.mini--danger { color: var(--warn); border-color: rgba(255, 108, 92, .4); }
+
+.add-form { display: grid; gap: 12px; }
+.roles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.role {
+  min-height: 46px;
+  border-radius: 14px;
+  font-weight: 700; font-size: 15px;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .14);
+  transition: transform .24s cubic-bezier(.22, 1.4, .4, 1);
+}
+.role:active { transform: scale(.95); transition-duration: .06s; }
+.role.is-active {
+  color: #fff;
+  background: linear-gradient(180deg, #e08b34 0%, #b05c0b 48%, #6b3304 100%);
+  border-color: rgba(255, 255, 255, .3);
+}
+
+.code-card { display: grid; gap: 14px; }
+.code {
+  font-size: 40px; font-weight: 800; letter-spacing: 3px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  padding: 14px 0;
+  user-select: all; -webkit-user-select: all;
+}
+.code__note { color: var(--ink-2); font-size: 14.5px; line-height: 1.5; }

@@ -1,0 +1,16 @@
+# Caddy сам получает и продлевает бесплатный SSL-сертификат
+# для домена из APP_DOMAIN — настраивать сертификаты вручную не нужно.
+# В APP_DOMAIN можно перечислить несколько адресов через пробел: и
+# домен с www, и старый адрес на время переезда.
+
+{$APP_DOMAIN} {
+	encode gzip
+	reverse_proxy web:8000
+}
+
+# Бот Instagram Direct живёт на своём домене (BOT_DOMAIN, например
+# bot.profix.tj) и в своём контейнере — у него нет доступа к финансам.
+{$BOT_DOMAIN} {
+	encode gzip
+	reverse_proxy instagram:8001
+}
