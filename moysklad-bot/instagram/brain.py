@@ -1,7 +1,7 @@
 """Как бот придумывает ответ.
 
-Два режима. Если в .env задан ANTHROPIC_API_KEY — отвечает Claude,
-живым текстом, с каталогом в системном промпте. Если ключа нет — работают
+Два режима. Если в .env задан AISA_API_KEY или ANTHROPIC_API_KEY — отвечает
+Claude, живым текстом, с каталогом в системном промпте. Если ключа нет — работают
 правила по ключевым словам: беднее, но не требует ни ключа, ни денег и
 никогда не выдумывает того, чего нет в каталоге.
 
@@ -92,12 +92,22 @@ def rule_based_reply(text: str, config: InstagramConfig) -> str:
 async def claude_reply(text: str, config: InstagramConfig) -> str | None:
     """Ответ через Claude. None — если что-то пошло не так, тогда падаем на правила."""
     try:
-        from anthropic import AsyncAnthropic
+        from anthropic import AsyncAnthropic, omit
     except ImportError:
         logger.warning("Пакет anthropic не установлен — отвечаю по правилам")
         return None
 
-    client = AsyncAnthropic(api_key=config.anthropic_key)
+    if config.uses_aisa:
+        # AIsa ждёт ключ как Bearer. X-Api-Key выключаем явно: иначе SDK
+        # сам подхватит ANTHROPIC_API_KEY из окружения и отправит ключ
+        # Anthropic на чужой сервер.
+        client = AsyncAnthropic(
+            base_url=config.aisa_base_url,
+            auth_token=config.aisa_key,
+            default_headers={"X-Api-Key": omit},
+        )
+    else:
+        client = AsyncAnthropic(api_key=config.anthropic_key)
     system = SYSTEM_PROMPT.format(catalog=catalog_text(), handoff=_handoff_clause(config))
 
     try:
@@ -107,7 +117,9 @@ async def claude_reply(text: str, config: InstagramConfig) -> str | None:
             # Мышление оставляем включённым (на Opus 5 оно по умолчанию), но
             # на минимальном усилии: вопросы в директе простые, а выключать
             # мышление на этой модели чревато артефактами в тексте ответа.
-            output_config={"effort": "low"},
+            # Через extra_body: закреплённый anthropic==0.69.0 ещё не знает
+            # параметр output_config и падает с TypeError до отправки.
+            extra_body={"output_config": {"effort": "low"}},
             system=system,
             messages=[{"role": "user", "content": text}],
         )

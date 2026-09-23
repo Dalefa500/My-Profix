@@ -44,9 +44,12 @@ def _already_handled(mid: str) -> bool:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.config = load_config()
     app.state.graph = GraphClient(app.state.config)
+    config = app.state.config
     logger.info(
         "Instagram-бот запущен (Claude: %s)",
-        "да" if app.state.config.uses_claude else "нет, работают правила",
+        "через AIsa" if config.uses_aisa
+        else "напрямую у Anthropic" if config.uses_claude
+        else "нет, работают правила",
     )
     try:
         yield

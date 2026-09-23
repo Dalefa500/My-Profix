@@ -44,8 +44,14 @@ OUR_IG_ID = os.getenv("OUR_IG_ID", "").strip()
 ALLOW_UNSIGNED = os.getenv("ALLOW_UNSIGNED", "").strip() == "1"
 OUR_IG_USERNAME = os.getenv("OUR_IG_USERNAME", "profix_dushanbe").strip().lower()
 
+# Claude доступен двумя путями: через AIsa (api.aisa.one — тот же Claude,
+# но оплата с кошелька AIsa) или напрямую у Anthropic. Задан ключ AIsa —
+# идём через него, иначе через ANTHROPIC_API_KEY.
+AISA_KEY = os.getenv("AISA_API_KEY", "").strip()
+AISA_BASE_URL = os.getenv("AISA_BASE_URL", "https://api.aisa.one").strip().rstrip("/")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 MODEL = os.getenv("BOT_MODEL", "claude-opus-5")
+BRAIN = "aisa" if AISA_KEY else "claude" if ANTHROPIC_KEY else "fallback"
 
 # Куда уходят лиды. Сегодня Telegram, завтра шлюз WhatsApp —
 # меняется одной переменной, код трогать не нужно.
@@ -203,15 +209,25 @@ def remember(sender: str, role: str, text: str) -> None:
 # ── разговор ───────────────────────────────────────────────────────
 
 async def ask_claude(messages: list[dict[str, str]], system: str = "") -> str | None:
-    if not ANTHROPIC_KEY:
+    if BRAIN == "fallback":
         return None
     try:
-        from anthropic import AsyncAnthropic
+        from anthropic import AsyncAnthropic, omit
     except ImportError:
         print("пакет anthropic не установлен", flush=True)
         return None
 
-    client = AsyncAnthropic(api_key=ANTHROPIC_KEY)
+    if BRAIN == "aisa":
+        # AIsa ждёт ключ как Bearer. X-Api-Key выключаем явно: иначе SDK
+        # сам подхватит ANTHROPIC_API_KEY из окружения и отправит ключ
+        # Anthropic на чужой сервер.
+        client = AsyncAnthropic(
+            base_url=AISA_BASE_URL,
+            auth_token=AISA_KEY,
+            default_headers={"X-Api-Key": omit},
+        )
+    else:
+        client = AsyncAnthropic(api_key=ANTHROPIC_KEY)
     try:
         resp = await client.messages.create(
             model=MODEL,
@@ -219,7 +235,9 @@ async def ask_claude(messages: list[dict[str, str]], system: str = "") -> str | 
             # Системный промпт большой и неизменный — кешируем его,
             # иначе каждый ответ оплачивается по полной.
             system=[{"type": "text", "text": system or SYSTEM, "cache_control": {"type": "ephemeral"}}],
-            output_config={"effort": "low"},
+            # Через extra_body: закреплённый anthropic==0.69.0 ещё не знает
+            # параметр output_config и падает с TypeError до отправки.
+            extra_body={"output_config": {"effort": "low"}},
             messages=messages,
         )
     except Exception as exc:
@@ -416,7 +434,7 @@ def valid_signature(body: bytes, signature: str | None) -> bool:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "brain": "claude" if ANTHROPIC_KEY else "fallback"}
+    return {"status": "ok", "brain": BRAIN}
 
 
 @app.get("/webhook")

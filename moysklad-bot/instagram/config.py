@@ -25,6 +25,8 @@ class InstagramConfig:
     graph_base: str
     api_version: str
     model: str
+    aisa_key: str
+    aisa_base_url: str
     anthropic_key: str
     handoff_phone: str
     notify_bot_token: str
@@ -39,8 +41,12 @@ class InstagramConfig:
         return f"{self.graph_base}/{self.api_version}/{node}/messages"
 
     @property
+    def uses_aisa(self) -> bool:
+        return bool(self.aisa_key)
+
+    @property
     def uses_claude(self) -> bool:
-        return bool(self.anthropic_key)
+        return bool(self.aisa_key or self.anthropic_key)
 
 
 def _required(name: str) -> str:
@@ -63,6 +69,10 @@ def load_config() -> InstagramConfig:
         graph_base=os.environ.get("IG_GRAPH_BASE", "https://graph.instagram.com").rstrip("/"),
         api_version=os.environ.get("IG_API_VERSION", "v23.0"),
         model=os.environ.get("IG_MODEL", "claude-opus-5"),
+        # Claude через AIsa (api.aisa.one) или напрямую у Anthropic.
+        # Задан ключ AIsa — он в приоритете.
+        aisa_key=os.environ.get("AISA_API_KEY", "").strip(),
+        aisa_base_url=os.environ.get("AISA_BASE_URL", "https://api.aisa.one").strip().rstrip("/"),
         anthropic_key=os.environ.get("ANTHROPIC_API_KEY", "").strip(),
         handoff_phone=os.environ.get("IG_HANDOFF_PHONE", "").strip(),
         # Уведомления менеджеру шлём в тот же Telegram, где уже живёт

@@ -38,8 +38,10 @@ OWNER_IDS             кому слать лиды
 Нужно добавить:
 
 ```
-ANTHROPIC_API_KEY     ключ с console.anthropic.com — без него бот
-                      отвечает заготовками и не умеет продавать
+AISA_API_KEY          ключ с console.aisa.one (sk-aisa-...) — бот
+                      отвечает через Claude на AIsa. Без ключа
+                      (и без ANTHROPIC_API_KEY) бот отвечает
+                      заготовками и не умеет продавать
 OUR_IG_ID             17841401291315898 — пока не выяснен верный
                       секрет подписи, служит запасной проверкой
 ```
@@ -47,6 +49,9 @@ OUR_IG_ID             17841401291315898 — пока не выяснен вер�
 Необязательные:
 
 ```
+AISA_BASE_URL         по умолчанию https://api.aisa.one
+ANTHROPIC_API_KEY     ключ с console.anthropic.com — Claude напрямую,
+                      используется, только если AISA_API_KEY пуст
 BOT_MODEL             по умолчанию claude-opus-5
 PRICES                текстом: «Клей 800 — X сомони за мешок, ...».
                       Пусто — бот цен не называет и зовёт менеджера
@@ -89,8 +94,8 @@ docker compose up -d --build
 docker logs -f profix-instagram-bot
 ```
 
-В `/health` появится `"brain": "claude"`, если ключ подхватился,
-или `"fallback"`, если нет.
+В `/health` появится `"brain": "aisa"` (Claude через AIsa),
+`"claude"` (напрямую у Anthropic) или `"fallback"`, если ключа нет.
 
 ## Что осталось доделать
 
