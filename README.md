@@ -1,2 +1,2 @@
-# powermix-site
-Official website for PowerMix construction materials
+# my-profix
+Official website for My-Profix construction materials
