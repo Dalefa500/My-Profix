@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
 <link rel="icon" href="/icons/icon-192.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/styles.css?v=30">
+<link rel="stylesheet" href="/styles.css?v=31">
 </head>
 <body>
 
@@ -59,6 +59,7 @@
     <section class="view" data-view="report" hidden></section>
     <section class="view" data-view="shipments" hidden></section>
     <section class="view" data-view="stock" hidden></section>
+    <section class="view" data-view="production" hidden></section>
     <section class="view" data-view="team" hidden></section>
     <section class="view" data-view="cash" hidden></section>
   </main>
@@ -88,6 +89,11 @@
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M20 8.5L12 4 4 8.5v7L12 20l8-4.5z"/><path d="M4 8.5l8 4.5 8-4.5"/><path d="M12 13v7"/>
       </svg><span>Остатки</span>
+    </button>
+    <button class="tab" data-tab="production" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 20V10l5 3V10l5 3V6h4l1 14"/><path d="M3 20h18"/><path d="M17 6V3.5"/>
+      </svg><span>Цех</span>
     </button>
     <button class="tab" data-tab="team" type="button">
       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -119,6 +125,6 @@
 
 <div id="tooltip" class="tooltip" hidden></div>
 
-<script src="/app.js?v=30"></script>
+<script src="/app.js?v=31"></script>
 </body>
 </html>

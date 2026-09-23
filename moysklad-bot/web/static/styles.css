@@ -906,3 +906,107 @@ svg { display: block; }
   user-select: all; -webkit-user-select: all;
 }
 .code__note { color: var(--ink-2); font-size: 14.5px; line-height: 1.5; }
+
+/* ── Касса и цех: формы ────────────────────────────────── */
+
+/* Главные кнопки кассира — две крупные, во всю ширину */
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.action {
+  min-height: 64px;
+  border-radius: var(--radius-sm);
+  font-size: 19px; font-weight: 800;
+  border: 1px solid rgba(255, 255, 255, .16);
+  box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, .25), 0 10px 22px -14px rgba(0, 0, 0, .9);
+  transition: transform .26s cubic-bezier(.22, 1.4, .4, 1), filter .2s ease;
+}
+.action:active { transform: translateY(3px) scale(.97); filter: brightness(.85); transition-duration: .06s; }
+.action--in { color: #fff; background: linear-gradient(180deg, #2f8f5f 0%, #1f6a44 100%); }
+.action--out { color: #fff; background: linear-gradient(180deg, #b8641a 0%, #86440d 100%); }
+
+.amount {
+  display: flex; align-items: baseline; justify-content: center; gap: 8px;
+  padding: 6px 0 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, .18);
+}
+.amount__input {
+  width: 100%; min-width: 0;
+  font: inherit; font-size: 42px; font-weight: 800; letter-spacing: -1px;
+  text-align: center; color: var(--ink);
+  background: none; border: 0; outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.amount__input::placeholder { color: rgba(255, 255, 255, .25); }
+.amount__unit { font-size: 20px; font-weight: 700; color: var(--ink-3); }
+
+.field { display: grid; gap: 6px; }
+.field__label {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px; letter-spacing: 1.8px; text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: 4px;
+}
+.field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field__input { text-align: center; font-size: 18px; font-weight: 700; }
+.hint { color: var(--ink-3); font-size: 14px; text-align: center; }
+
+.pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill {
+  min-height: 42px; padding: 0 14px;
+  border-radius: 999px;
+  font-size: 15px; font-weight: 600;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .14);
+  transition: transform .24s cubic-bezier(.22, 1.4, .4, 1);
+}
+.pill:active { transform: scale(.94); transition-duration: .06s; }
+.pill.is-active {
+  color: #fff;
+  background: linear-gradient(180deg, #e08b34 0%, #b05c0b 48%, #6b3304 100%);
+  border-color: rgba(255, 255, 255, .3);
+}
+
+.chosen {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 17px; color: var(--ink);
+  padding: 2px 2px 4px;
+}
+.found:empty { display: none; }
+.found .row--tap { padding: 12px 8px; }
+
+.row.is-cancelled .row__label, .row.is-cancelled .row__value {
+  color: var(--ink-3); text-decoration: line-through;
+}
+
+.stepper { display: grid; grid-template-columns: 64px 1fr 64px; align-items: center; gap: 10px; }
+.stepper__btn {
+  height: 56px;
+  border-radius: 16px;
+  font-size: 28px; font-weight: 700;
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .16);
+  transition: transform .24s cubic-bezier(.22, 1.4, .4, 1);
+}
+.stepper__btn:active { transform: scale(.9); transition-duration: .06s; }
+.stepper__value { text-align: center; font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+.qty-row { gap: 8px; }
+.qty-row__input {
+  width: 86px; flex: none;
+  padding: 10px 8px;
+  font: inherit; font-size: 17px; font-weight: 700; text-align: right;
+  color: var(--ink);
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 12px;
+  outline: none;
+}
+.qty-row__input:focus { border-color: rgba(255, 42, 51, .6); }
+.qty-row__remove {
+  width: 40px; height: 40px; flex: none;
+  border-radius: 50%;
+  font-size: 22px; color: var(--ink-3);
+}
+.qty-row__remove:active { background: rgba(255, 255, 255, .08); }
+.fix { display: grid; gap: 10px; }
+.picker { display: grid; gap: 8px; }

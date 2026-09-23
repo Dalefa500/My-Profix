@@ -22,6 +22,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from fastapi import Depends, HTTPException, Request
+from itsdangerous import BadSignature, SignatureExpired
+
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(os.environ.get("WEB_DATA_DIR", "/app/data"))
@@ -35,26 +38,32 @@ CODE_DIGITS = 8
 
 # Что открыто каждой роли. Вкладки — то, что видно в телефоне;
 # сервер сверяется с этим же списком, когда отдаёт данные.
+# «can» — что роль может не только смотреть, но и вносить.
 ROLES: dict[str, dict] = {
     "owner": {
         "label": "Учредитель",
-        "tabs": ["balance", "report", "shipments", "stock", "team"],
+        "tabs": ["balance", "report", "shipments", "stock", "production", "team"],
         "manage": True,
+        "can": ["production_edit"],
     },
     "director": {
         "label": "Директор",
-        "tabs": ["balance", "report", "shipments", "stock", "team"],
+        "tabs": ["balance", "report", "shipments", "stock", "production", "team"],
         "manage": False,
+        "can": [],
     },
+    # Бухгалтер он же мастер замеса: ведёт техкарты и отмечает замесы
     "accountant": {
         "label": "Бухгалтер",
-        "tabs": ["balance", "report", "shipments", "stock"],
+        "tabs": ["balance", "report", "shipments", "stock", "production"],
         "manage": False,
+        "can": ["production_edit"],
     },
     "cashier": {
         "label": "Кассир",
         "tabs": ["cash"],
         "manage": False,
+        "can": ["cash_write"],
     },
 }
 
@@ -78,8 +87,15 @@ class Person:
     def can_manage(self) -> bool:
         return ROLES[self.role]["manage"]
 
+    @property
+    def actions(self) -> list[str]:
+        return ROLES[self.role]["can"]
+
     def may(self, tab: str) -> bool:
         return tab in self.tabs
+
+    def can(self, action: str) -> bool:
+        return action in self.actions
 
 
 class Access:
@@ -289,3 +305,62 @@ def read_audit(limit: int = 200) -> list[dict]:
         except ValueError:
             continue
     return entries
+
+
+# --- проверки в обработчиках ----------------------------------------------
+
+COOKIE_NAME = "pmx_session"
+SESSION_MAX_AGE = 60 * 60 * 24 * 30  # вход запоминается на месяц
+
+
+def client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def current_person(request: Request) -> Person | None:
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return None
+    try:
+        payload = request.app.state.serializer.loads(token, max_age=SESSION_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return None
+    return request.app.state.access.session_person(payload)
+
+
+def require_person(request: Request) -> Person:
+    person = current_person(request)
+    if person is None:
+        raise HTTPException(status_code=401, detail="Нужно войти")
+    return person
+
+
+def allow(*tabs: str):
+    """Пускает только тех, кому по роли открыт хотя бы один из разделов."""
+
+    def check(person: Person = Depends(require_person)) -> Person:
+        if not any(person.may(tab) for tab in tabs):
+            raise HTTPException(status_code=403, detail="Этот раздел вам недоступен")
+        return person
+
+    return [Depends(check)]
+
+
+def require_can(action: str):
+    """Для записи: смотреть раздел мало, нужно право вносить."""
+
+    def check(person: Person = Depends(require_person)) -> Person:
+        if not person.can(action):
+            raise HTTPException(status_code=403, detail="Вносить это вам нельзя")
+        return person
+
+    return check
+
+
+def require_manager(person: Person = Depends(require_person)) -> Person:
+    if not person.can_manage:
+        raise HTTPException(status_code=403, detail="Доступами управляет учредитель")
+    return person

@@ -20,12 +20,27 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from itsdangerous import URLSafeTimedSerializer
 from pydantic import BaseModel
 
 from bot.moysklad import BASE_URL, MoySkladClient, MoySkladError
 from bot.people import KEY_MATERIALS, TRACKED_COUNTERPARTIES
-from web.access import ROLES, Access, Person, audit, read_audit
+from web.access import (
+    COOKIE_NAME,
+    ROLES,
+    SESSION_MAX_AGE,
+    Access,
+    Person,
+    allow,
+    audit,
+    current_person,
+    read_audit,
+    require_manager,
+)
+from web.access import client_ip as _client_ip
+from web.cash import CASH_WRITE_ALLOW
+from web.cash import router as cash_router
+from web.production import router as production_router
 
 load_dotenv()
 
@@ -36,8 +51,6 @@ STATIC_DIR = Path(__file__).parent / "static"
 # Сколько килограммов считать «на исходе». Порог применяется к позициям,
 # которые measured в кг; меняется в .env без правки кода.
 LOW_STOCK_KG = float(os.environ.get("LOW_STOCK_KG", "1000"))
-COOKIE_NAME = "pmx_session"
-SESSION_MAX_AGE = 60 * 60 * 24 * 30  # stay logged in for a month
 DAY_LEVEL_MAX_DAYS = 92  # longer than this and the UI switches to months
 
 # A short PIN on a public URL is only safe with a hard cap on guessing.
@@ -56,9 +69,12 @@ def _env(name: str) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Приложение только показывает данные: клиент откажет в любом запросе,
-    # кроме чтения, ещё до того, как тот уйдёт в МойСклад.
-    app.state.moysklad = MoySkladClient(_env("MOYSKLAD_TOKEN"), read_only=True)
+    # В МойСклад приложение только читает. Единственное исключение —
+    # кассовые ордера кассира (создать и снять с проведения); любой
+    # другой запрос, кроме чтения, клиент отклонит ещё до отправки.
+    app.state.moysklad = MoySkladClient(
+        _env("MOYSKLAD_TOKEN"), read_only=True, write_allow=CASH_WRITE_ALLOW
+    )
     app.state.access = Access(
         _env("WEB_PIN"),
         _env("WEB_SECRET"),
@@ -74,6 +90,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app.include_router(cash_router)
+app.include_router(production_router)
 
 
 # --- auth -----------------------------------------------------------------
@@ -83,53 +101,11 @@ class LoginRequest(BaseModel):
     pin: str
 
 
-def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
-
-
 def _locked_out(ip: str) -> bool:
     cutoff = time.time() - LOGIN_LOCKOUT_SECONDS
     attempts = [t for t in _failed_logins[ip] if t > cutoff]
     _failed_logins[ip] = attempts
     return len(attempts) >= MAX_LOGIN_ATTEMPTS
-
-
-def current_person(request: Request) -> Person | None:
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        return None
-    try:
-        payload = request.app.state.serializer.loads(token, max_age=SESSION_MAX_AGE)
-    except (BadSignature, SignatureExpired):
-        return None
-    return request.app.state.access.session_person(payload)
-
-
-def require_person(request: Request) -> Person:
-    person = current_person(request)
-    if person is None:
-        raise HTTPException(status_code=401, detail="Нужно войти")
-    return person
-
-
-def allow(*tabs: str):
-    """Пускает только тех, кому по роли открыт хотя бы один из разделов."""
-
-    def check(person: Person = Depends(require_person)) -> Person:
-        if not any(person.may(tab) for tab in tabs):
-            raise HTTPException(status_code=403, detail="Этот раздел вам недоступен")
-        return person
-
-    return [Depends(check)]
-
-
-def require_manager(person: Person = Depends(require_person)) -> Person:
-    if not person.can_manage:
-        raise HTTPException(status_code=403, detail="Доступами управляет учредитель")
-    return person
 
 
 def _describe(person: Person) -> dict:
@@ -139,6 +115,7 @@ def _describe(person: Person) -> dict:
         "role": person.role,
         "roleLabel": person.role_label,
         "tabs": person.tabs,
+        "can": person.actions,
         "canManage": person.can_manage,
     }
 
@@ -545,38 +522,6 @@ async def stock(request: Request) -> dict:
         # Самые критичные — впереди
         "low": sorted(low, key=lambda i: i["stock"]),
         "low_threshold": LOW_STOCK_KG,
-    }
-
-
-@app.get("/api/cash", dependencies=allow("cash"))
-async def cash(request: Request) -> dict:
-    """Касса за сегодня — экран кассира: сколько в кассе, что пришло и
-    ушло, по каким документам. Банк, прибыль и долги сюда не попадают.
-    """
-    moysklad: MoySkladClient = request.app.state.moysklad
-    try:
-        operations = await moysklad.cash_today_operations()
-    except MoySkladError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
-
-    # Остаток — только по строкам-кассам отчёта «Остатки по счетам»;
-    # банковские счета кассиру не показываем.
-    balance = None
-    try:
-        rows = await moysklad.get_account_balances()
-        cash_rows = [row for row in rows if "касс" in row["name"].lower()]
-        if cash_rows:
-            balance = sum(row["balance"] for row in cash_rows)
-    except MoySkladError:
-        logger.info("Остаток кассы недоступен — показываю только операции")
-
-    income = sum(op["sum"] for op in operations if op["kind"] == "in")
-    expense = sum(op["sum"] for op in operations if op["kind"] == "out")
-    return {
-        "balance": balance,
-        "income": income,
-        "expense": expense,
-        "operations": operations[:200],
     }
 
 

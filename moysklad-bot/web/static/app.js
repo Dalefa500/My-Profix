@@ -15,6 +15,7 @@ const TABS = {
   report: "Отчёт",
   shipments: "Отгрузки",
   stock: "Остатки",
+  production: "Производство",
   team: "Команда",
   cash: "Касса",
 };
@@ -25,6 +26,7 @@ const state = {
   reportDays: 30,
   shipmentDays: 30,
   teamDays: 30,
+  productionDays: 30,
   detail: null, // {href, name} когда открыт человек из «Команды»
   stockQuery: "",
   from: 0, // направление последнего перехода между вкладками
@@ -163,7 +165,7 @@ $("#login-form").addEventListener("submit", async (event) => {
 
 /* ── Навигация ────────────────────────────────────────── */
 
-const ALL_TABS = ["balance", "report", "shipments", "stock", "team", "cash"];
+const ALL_TABS = ["balance", "report", "shipments", "stock", "production", "team", "cash"];
 let TAB_ORDER = [...ALL_TABS];
 
 const LEAVING = ["is-leaving", "to-right"];
@@ -575,6 +577,7 @@ async function render() {
     }
     else if (state.tab === "stock") await renderStock(container);
     else if (state.tab === "cash") await renderCash(container);
+    else if (state.tab === "production") await renderProduction(container);
     else if (state.detail) await renderTeamDetail(container);
     else await renderTeam(container);
     state.loadedAt = Date.now();
@@ -1194,6 +1197,16 @@ async function renderCash(container) {
   }
   container.append(hero);
 
+  // Две главные кнопки кассира — крупно, сразу под цифрой
+  const actions = el("div", "actions");
+  const plus = el("button", "action action--in", "+ Приход");
+  const minus = el("button", "action action--out", "− Расход");
+  plus.type = minus.type = "button";
+  plus.addEventListener("click", () => openPanel("Приход", () => drawCashForm("in")));
+  minus.addEventListener("click", () => openPanel("Расход", () => drawCashForm("out")));
+  actions.append(plus, minus);
+  container.append(actions);
+
   container.append(
     tiles([
       { label: "Приход сегодня", value: amount(data.income), tone: "income" },
@@ -1209,8 +1222,8 @@ async function renderCash(container) {
     const rows = el("div", "rows");
     data.operations.forEach((op) => {
       const income = op.kind === "in";
-      const line = el("div", "row row--stacked");
-      line.append(el("div", "row__label", `${op.time}  ${op.agent || (income ? "Приход" : "Расход")}`));
+      const line = el("div", `row row--stacked${op.applicable ? "" : " is-cancelled"}`);
+      line.append(el("div", "row__label", `${op.time}  ${op.item || op.agent || (income ? "Приход" : "Расход")}`));
       line.append(
         el(
           "div",
@@ -1218,13 +1231,709 @@ async function renderCash(container) {
           `${income ? "+" : "−"}${money(op.sum)}`,
         ),
       );
-      const note = [op.number ? `№${op.number}` : "", op.purpose].filter(Boolean).join(" · ");
+      const who = op.item && op.agent ? op.agent : "";
+      const note = [op.number ? `№${op.number}` : "", who, op.purpose].filter(Boolean).join(" · ");
+      if (!op.applicable) line.append(el("div", "row__note row__note--debt", "отменена"));
       if (note) line.append(el("div", "row__note", note));
+      if (op.cancellable) {
+        const bar = el("div", "row__actions");
+        const cancel = el("button", "mini mini--danger", "Отменить");
+        cancel.type = "button";
+        cancel.addEventListener("click", () => cancelCashOp(op));
+        bar.append(cancel);
+        line.append(bar);
+      }
       rows.append(line);
     });
     card.append(rows);
   }
   container.append(card);
+
+  // Закрытие смены — последним: это конец дня
+  const shift = el("div", "card");
+  shift.append(el("div", "card__title", "Смена"));
+  if (data.shift) shift.append(shiftResult(data.shift));
+  const close = el("button", "btn btn--ghost", data.shift ? "Закрыть смену ещё раз" : "Закрыть смену");
+  close.type = "button";
+  close.addEventListener("click", () => openPanel("Закрыть смену", drawCloseShift));
+  shift.append(close);
+  container.append(shift);
+}
+
+function shiftResult(s) {
+  const rows = el("div", "rows shift");
+  const line = (label, value, cls = "") => {
+    const row = el("div", `row${cls}`);
+    row.append(el("div", "row__label", label));
+    row.append(el("div", "row__value", value));
+    rows.append(row);
+  };
+  line(`Насчитано в ${s.t.slice(11, 16)}`, money(s.counted));
+  if (s.expected === null) {
+    line("По учёту", "нет данных");
+  } else {
+    line("По учёту", money(s.expected));
+    const row = el("div", "row row--total");
+    row.append(el("div", "row__label", "Расхождение"));
+    row.append(
+      el("div", `row__value row__value--${Math.abs(s.diff) < 0.01 ? "paid" : "unpaid"}`,
+        Math.abs(s.diff) < 0.01 ? "нет" : `${s.diff > 0 ? "+" : "−"}${money(Math.abs(s.diff))}`),
+    );
+    rows.append(row);
+  }
+  return rows;
+}
+
+async function cancelCashOp(op) {
+  const reason = prompt(`Отменить ${op.kind === "in" ? "приход" : "расход"} ${money(op.sum)}?\nНапишите причину:`);
+  if (reason === null) return;
+  try {
+    await send(`/api/cash/operation/${op.kind}/${op.id}/cancel`, { reason });
+    render();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+// Сумма вводится крупно, с цифровой клавиатурой; запятая тоже принимается
+function amountInput() {
+  const wrap = el("label", "amount");
+  const input = el("input", "amount__input");
+  input.inputMode = "decimal";
+  input.placeholder = "0";
+  input.autocomplete = "off";
+  wrap.append(input, el("span", "amount__unit", "с."));
+  const value = () => Number(input.value.replace(/\s/g, "").replace(",", "."));
+  return { wrap, input, value };
+}
+
+async function drawCashForm(kind) {
+  const body = $("#sheet-body");
+  body.replaceChildren(el("div", "empty", "Загружаю…"));
+  let refs;
+  try {
+    refs = await api("/api/cash/refs");
+  } catch (err) {
+    body.replaceChildren(el("div", "error", err.message));
+    return;
+  }
+  body.replaceChildren();
+
+  const form = el("form", "card add-form");
+  const sum = amountInput();
+  form.append(sum.wrap);
+
+  // Статья — только у расхода, как в МойСкладе
+  let item = null;
+  if (kind === "out") {
+    form.append(el("div", "field__label", "Статья расхода"));
+    const pills = el("div", "pills");
+    refs.items.forEach((it) => {
+      const pill = el("button", "pill", it.name);
+      pill.type = "button";
+      pill.addEventListener("click", () => {
+        item = it;
+        pills.querySelectorAll(".pill").forEach((p) => p.classList.toggle("is-active", p === pill));
+      });
+      pills.append(pill);
+    });
+    if (!refs.items.length) pills.append(el("div", "empty", "В МойСкладе нет статей расходов"));
+    form.append(pills);
+  }
+
+  // Контрагент: по умолчанию «Без контрагента», при желании — поиск
+  form.append(el("div", "field__label", kind === "in" ? "От кого" : "Кому"));
+  let agent = refs.defaultAgent;
+  const chosen = el("div", "chosen", agent ? agent.name : "не выбран");
+  const search = el("input", "search");
+  search.placeholder = "Найти контрагента";
+  search.autocomplete = "off";
+  const found = el("div", "rows found");
+  let timer = 0;
+  search.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = search.value.trim();
+      found.replaceChildren();
+      if (q.length < 2) return;
+      try {
+        const res = await api(`/api/cash/agents?q=${encodeURIComponent(q)}`);
+        res.agents.forEach((a) => {
+          const row = el("button", "row row--tap", a.name);
+          row.type = "button";
+          row.addEventListener("click", () => {
+            agent = a;
+            chosen.textContent = a.name;
+            found.replaceChildren();
+            search.value = "";
+          });
+          found.append(row);
+        });
+        if (!res.agents.length) found.append(el("div", "empty", "Не найдено"));
+      } catch (err) {
+        found.replaceChildren(el("div", "error", err.message));
+      }
+    }, 250);
+  });
+  form.append(chosen, search, found);
+
+  const comment = el("input", "search");
+  comment.placeholder = "Комментарий, например: солярка на погрузчик";
+  comment.maxLength = 300;
+  form.append(comment);
+
+  const submit = el("button", "btn btn--primary", kind === "in" ? "Записать приход" : "Записать расход");
+  submit.type = "submit";
+  const error = el("p", "login__error");
+  error.hidden = true;
+  form.append(submit, error);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.hidden = true;
+    const value = sum.value();
+    const fail = (msg) => {
+      error.textContent = msg;
+      error.hidden = false;
+    };
+    if (!(value > 0)) return fail("Введите сумму");
+    if (kind === "out" && !item) return fail("Выберите статью расхода");
+    if (!agent) return fail(kind === "in" ? "Выберите, от кого" : "Выберите, кому");
+    const what = kind === "in" ? "приход" : `расход «${item.name}»`;
+    if (!confirm(`Записать ${what} на ${money(value)}?`)) return;
+    submit.disabled = true;
+    try {
+      await send("/api/cash/operation", {
+        kind,
+        amount: value,
+        agentHref: agent.href,
+        itemHref: item ? item.href : "",
+        comment: comment.value,
+      });
+      closeSheet();
+      render();
+    } catch (err) {
+      fail(err.message);
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  body.append(form);
+  sum.input.focus();
+}
+
+function drawCloseShift() {
+  const body = $("#sheet-body");
+  body.replaceChildren();
+  const form = el("form", "card add-form");
+  form.append(
+    el("p", "code__note", "Пересчитайте наличные в кассе и введите сумму. Расхождение с учётом сразу увидит учредитель."),
+  );
+  const sum = amountInput();
+  form.append(sum.wrap);
+  const submit = el("button", "btn btn--primary", "Закрыть смену");
+  submit.type = "submit";
+  const error = el("p", "login__error");
+  error.hidden = true;
+  form.append(submit, error);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const value = sum.value();
+    if (!(value >= 0) || sum.input.value.trim() === "") {
+      error.textContent = "Введите сумму";
+      error.hidden = false;
+      return;
+    }
+    submit.disabled = true;
+    try {
+      const result = await send("/api/cash/close", { counted: value });
+      body.replaceChildren();
+      const card = el("div", "card");
+      card.append(el("div", "card__title", "Смена закрыта"));
+      card.append(shiftResult(result));
+      const done = el("button", "btn btn--primary", "Готово");
+      done.type = "button";
+      done.addEventListener("click", () => {
+        closeSheet();
+        render();
+      });
+      card.append(done);
+      body.append(card);
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+      submit.disabled = false;
+    }
+  });
+  body.append(form);
+  sum.input.focus();
+}
+
+/* ── Цех (замесы и техкарты) ──────────────────────────── */
+
+const bagsText = (n) => `${nf.format(n)} меш.`;
+// 12500 кг -> «12,5 т»
+const tonnes = (kg) => `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(kg / 1000)} т`;
+
+async function renderProduction(container) {
+  const data = await api(`/api/production?days=${state.productionDays}`);
+  resetWithChips(container, state.productionDays, (days) => {
+    state.productionDays = days;
+    quietEntry = true;
+    render();
+  });
+  const t = data.totals;
+
+  const hero = el("div", "card hero");
+  hero.append(el("div", "hero__label", "Выпущено"));
+  hero.append(el("div", "hero__value", bagsText(t.bags)));
+  hero.append(el("div", "hero__note", `≈ ${tonnes(t.kg)}`));
+  container.append(hero);
+
+  if (data.canEdit) {
+    const add = el("button", "btn btn--primary", "+ Отметить замес");
+    add.type = "button";
+    add.disabled = !data.cards.length;
+    add.addEventListener("click", () => openPanel("Замес", () => drawBatchForm(data)));
+    container.append(add);
+    if (!data.cards.length) container.append(el("div", "hint", "Сначала заведите техкарту марки — внизу экрана."));
+  }
+
+  const share = t.batches ? Math.round((t.corrected / t.batches) * 100) : 0;
+  container.append(
+    tiles([
+      { label: "Замесов", value: nf.format(t.batches) },
+      {
+        label: "Поправляли",
+        value: nf.format(t.corrected),
+        tone: t.corrected ? "neg" : "",
+        note: t.batches ? `${share}% замесов` : "",
+        noteTone: t.corrected ? "neg" : "",
+      },
+      { label: "Доп. химия", value: amount(t.extraCost), tone: t.extraCost ? "expense" : "" },
+    ]),
+  );
+
+  const marks = el("div", "card");
+  marks.append(el("div", "card__title", "По маркам"));
+  if (!data.byCard.length) {
+    marks.append(el("div", "empty", "За этот период замесов нет"));
+  } else {
+    const rows = el("div", "rows");
+    data.byCard.forEach((r) => {
+      const line = el("div", "row row--stacked");
+      line.append(el("div", "row__label", r.name));
+      line.append(el("div", "row__value", bagsText(r.bags)));
+      line.append(
+        el("div", `row__note${r.corrected ? " row__note--debt" : ""}`,
+          `замесов ${nf.format(r.batches)}${r.corrected ? ` · поправляли ${r.corrected}` : ""}`),
+      );
+      rows.append(line);
+    });
+    marks.append(rows);
+  }
+  container.append(marks);
+
+  const recent = el("div", "card");
+  recent.append(el("div", "card__title", "Последние замесы"));
+  if (!data.recent.length) {
+    recent.append(el("div", "empty", "Пока ничего не отмечено"));
+  } else {
+    const rows = el("div", "rows");
+    data.recent.forEach((b) => {
+      const line = el("div", `row row--stacked${b.cancelled ? " is-cancelled" : ""}`);
+      line.append(el("div", "row__label", `${stamp(b.t)}  ${b.cardName} × ${b.count}`));
+      line.append(el("div", "row__value", bagsText(b.bags)));
+      const foot = el("div", "row__foot");
+      foot.append(
+        el("span", `row__tag${b.ok ? " row__tag--paid" : ""}`, b.cancelled ? "отменён" : b.ok ? "в норме" : "поправлен"),
+      );
+      const fixes = b.additions.map((a) => `${a.name} ${qty(a.qty)} ${a.uom}`.trim()).join(", ");
+      foot.append(el("span", "row__note", [fixes, b.note, b.name].filter(Boolean).join(" · ")));
+      line.append(foot);
+      if (b.cancellable) {
+        const bar = el("div", "row__actions");
+        const cancel = el("button", "mini mini--danger", "Отменить");
+        cancel.type = "button";
+        cancel.addEventListener("click", async () => {
+          const reason = prompt(`Отменить замес «${b.cardName} × ${b.count}»? Напишите причину:`);
+          if (reason === null) return;
+          try {
+            await send(`/api/batches/${b.id}/cancel`, { reason });
+            render();
+          } catch (err) {
+            alert(err.message);
+          }
+        });
+        bar.append(cancel);
+        line.append(bar);
+      }
+      rows.append(line);
+    });
+    recent.append(rows);
+  }
+  container.append(recent);
+
+  const cards = el("div", "card");
+  cards.append(el("div", "card__title", "Техкарты"));
+  const rows = el("div", "rows");
+  if (!data.cards.length) rows.append(el("div", "empty", "Техкарт пока нет"));
+  data.cards.forEach((c) => {
+    const line = el("button", "row row--tap row--stacked person");
+    line.type = "button";
+    line.append(el("div", "person__name", c.name));
+    line.append(el("div", "row__value", `${unitPrice(c.costPerBag)} / меш.`));
+    line.append(chevron());
+    line.append(
+      el("div", `row__note${c.missingPrices ? " row__note--debt" : ""}`,
+        c.missingPrices
+          ? `нет цены у ${c.missingPrices} поз. — себестоимость занижена`
+          : `${c.bags} меш. с замеса · замес ${money(c.costPerBatch)}`),
+    );
+    line.addEventListener("click", () => openPanel(c.name, () => drawCardView(c, data.canEdit)));
+    rows.append(line);
+  });
+  cards.append(rows);
+  if (data.canEdit) {
+    const add = el("button", "btn btn--ghost", "+ Новая техкарта");
+    add.type = "button";
+    add.addEventListener("click", () => openPanel("Новая техкарта", () => drawCardForm(null)));
+    cards.append(add);
+  }
+  container.append(cards);
+}
+
+/* Выбор товара или сырья из МойСклада: поиск по названию, нажатие —
+   выбор. Цена берётся из себестоимости. */
+function catalogPicker(onPick, placeholder = "Найти сырьё по названию") {
+  const wrap = el("div", "picker");
+  const input = el("input", "search");
+  input.placeholder = placeholder;
+  input.autocomplete = "off";
+  const list = el("div", "rows found");
+  let timer = 0;
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = input.value.trim();
+      list.replaceChildren();
+      if (q.length < 2) return;
+      try {
+        const res = await api(`/api/catalog?q=${encodeURIComponent(q)}`);
+        res.items.forEach((item) => {
+          const row = el("button", "row row--tap");
+          row.type = "button";
+          row.append(el("div", "row__label", item.name));
+          row.append(el("div", "row__value row__value--muted", item.cost ? `${unitPrice(item.cost)}/${item.uom || "ед."}` : "без цены"));
+          row.addEventListener("click", () => {
+            input.value = "";
+            list.replaceChildren();
+            onPick(item);
+          });
+          list.append(row);
+        });
+        if (!res.items.length) list.append(el("div", "empty", "Не найдено"));
+      } catch (err) {
+        list.replaceChildren(el("div", "error", err.message));
+      }
+    }, 250);
+  });
+  wrap.append(input, list);
+  return wrap;
+}
+
+function numberField(label, value, attrs = {}) {
+  const wrap = el("label", "field");
+  wrap.append(el("span", "field__label", label));
+  const input = el("input", "search field__input");
+  input.inputMode = "decimal";
+  input.value = value ?? "";
+  Object.assign(input, attrs);
+  wrap.append(input);
+  const read = () => Number(String(input.value).replace(/\s/g, "").replace(",", "."));
+  return { wrap, input, read };
+}
+
+// Строки сырья с количеством; общий блок для техкарты и для доливок
+function qtyRows(items, onChange) {
+  const list = el("div", "rows qty-rows");
+  const draw = () => {
+    list.replaceChildren();
+    if (!items.length) list.append(el("div", "empty", "Пока пусто"));
+    items.forEach((m, i) => {
+      const row = el("div", "row qty-row");
+      row.append(el("div", "row__label", m.name));
+      const input = el("input", "qty-row__input");
+      input.inputMode = "decimal";
+      input.value = m.qty ? String(m.qty).replace(".", ",") : "";
+      input.placeholder = "0";
+      input.addEventListener("input", () => {
+        m.qty = Number(input.value.replace(",", "."));
+        onChange && onChange();
+      });
+      row.append(input, el("span", "row__unit", m.uom || ""));
+      const remove = el("button", "qty-row__remove", "×");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `Убрать ${m.name}`);
+      remove.addEventListener("click", () => {
+        items.splice(i, 1);
+        draw();
+        onChange && onChange();
+      });
+      row.append(remove);
+      list.append(row);
+    });
+  };
+  draw();
+  return { list, draw };
+}
+
+function drawCardView(c, canEdit) {
+  const body = $("#sheet-body");
+  body.replaceChildren();
+  const card = el("div", "card");
+  card.append(el("div", "card__title", `На один замес · ${c.bags} меш. по ${qty(c.bagKg)} кг`));
+  const rows = el("div", "rows");
+  c.materials.forEach((m) => {
+    const line = el("div", "row row--stacked");
+    line.append(el("div", "row__label", m.name));
+    line.append(el("div", "row__value", `${qty(m.qty)} ${m.uom}`.trim()));
+    line.append(
+      el("div", `row__note${m.cost ? "" : " row__note--debt"}`,
+        m.cost ? `${unitPrice(m.cost)} за ${m.uom || "ед."} → ${money(m.line)}` : "нет цены в МойСкладе"),
+    );
+    rows.append(line);
+  });
+  const total = el("div", "row row--total");
+  total.append(el("div", "row__label", "Замес"), el("div", "row__value", money(c.costPerBatch)));
+  const bag = el("div", "row row--total");
+  bag.append(el("div", "row__label", "Мешок"), el("div", "row__value", unitPrice(c.costPerBag)));
+  rows.append(total, bag);
+  card.append(rows);
+  if (c.note) card.append(el("p", "code__note", c.note));
+  body.append(card);
+  if (!canEdit) return;
+
+  const edit = el("button", "btn btn--primary", "Изменить");
+  edit.type = "button";
+  edit.addEventListener("click", () => openPanel(c.name, () => drawCardForm(c)));
+  const archive = el("button", "btn btn--ghost", "Убрать в архив");
+  archive.type = "button";
+  archive.addEventListener("click", async () => {
+    if (!confirm(`Убрать техкарту «${c.name}» в архив? Прошлые замесы останутся.`)) return;
+    try {
+      await send(`/api/techcards/${c.id}/archive`);
+      closeSheet();
+      render();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+  body.append(edit, archive);
+}
+
+function drawCardForm(c) {
+  const body = $("#sheet-body");
+  body.replaceChildren();
+  const form = el("form", "card add-form");
+
+  const name = el("input", "search");
+  name.placeholder = "Марка, например: Плиточный клей 800";
+  name.maxLength = 80;
+  name.value = c ? c.name : "";
+  form.append(name);
+
+  const bags = numberField("Мешков с одного замеса", c ? c.bags : "", { inputMode: "numeric" });
+  const bagKg = numberField("Вес мешка, кг", c ? c.bagKg : 25);
+  const pair = el("div", "field-pair");
+  pair.append(bags.wrap, bagKg.wrap);
+  form.append(pair);
+
+  form.append(el("div", "field__label", "Сырьё на один замес"));
+  const items = c ? c.materials.map((m) => ({ href: m.href, name: m.name, uom: m.uom, qty: m.qty })) : [];
+  const table = qtyRows(items);
+  form.append(table.list);
+  form.append(
+    catalogPicker((item) => {
+      if (items.some((m) => m.href === item.href)) return;
+      items.push({ href: item.href, name: item.name, uom: item.uom, qty: 0 });
+      table.draw();
+    }, "+ Добавить сырьё: начните вводить название"),
+  );
+
+  const note = el("input", "search");
+  note.placeholder = "Заметка: порядок загрузки, время перемешивания";
+  note.maxLength = 300;
+  note.value = c ? c.note || "" : "";
+  form.append(note);
+
+  const submit = el("button", "btn btn--primary", "Сохранить техкарту");
+  submit.type = "submit";
+  const error = el("p", "login__error");
+  error.hidden = true;
+  form.append(submit, error);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const fail = (msg) => {
+      error.textContent = msg;
+      error.hidden = false;
+    };
+    error.hidden = true;
+    if (name.value.trim().length < 2) return fail("Напишите название марки");
+    if (!(bags.read() >= 1)) return fail("Сколько мешков выходит с замеса?");
+    if (!(bagKg.read() > 0)) return fail("Укажите вес мешка");
+    if (!items.length) return fail("Добавьте сырьё");
+    if (items.some((m) => !(m.qty > 0))) return fail("У каждого сырья укажите количество");
+    submit.disabled = true;
+    try {
+      await send("/api/techcards", {
+        id: c ? c.id : "",
+        name: name.value,
+        bags: Math.round(bags.read()),
+        bagKg: bagKg.read(),
+        materials: items,
+        note: note.value,
+      });
+      closeSheet();
+      render();
+    } catch (err) {
+      fail(err.message);
+      submit.disabled = false;
+    }
+  });
+  body.append(form);
+}
+
+function drawBatchForm(data) {
+  const body = $("#sheet-body");
+  body.replaceChildren();
+  const form = el("form", "card add-form");
+
+  form.append(el("div", "field__label", "Марка"));
+  let card = data.cards.length === 1 ? data.cards[0] : null;
+  const pills = el("div", "pills");
+  data.cards.forEach((c) => {
+    const pill = el("button", `pill${card === c ? " is-active" : ""}`, c.name);
+    pill.type = "button";
+    pill.addEventListener("click", () => {
+      card = c;
+      pills.querySelectorAll(".pill").forEach((p) => p.classList.toggle("is-active", p === pill));
+      drawSuggestions();
+      updateBags();
+    });
+    pills.append(pill);
+  });
+  form.append(pills);
+
+  // Сколько замесов подряд — кнопками, без клавиатуры
+  let count = 1;
+  const stepper = el("div", "stepper");
+  const minus = el("button", "stepper__btn", "−");
+  const value = el("div", "stepper__value", "1");
+  const plus = el("button", "stepper__btn", "+");
+  minus.type = plus.type = "button";
+  const bagsNote = el("div", "hint");
+  const updateBags = () => {
+    value.textContent = String(count);
+    bagsNote.textContent = card ? `= ${bagsText(card.bags * count)}` : "";
+  };
+  minus.addEventListener("click", () => {
+    count = Math.max(1, count - 1);
+    updateBags();
+  });
+  plus.addEventListener("click", () => {
+    count = Math.min(100, count + 1);
+    updateBags();
+  });
+  stepper.append(minus, value, plus);
+  form.append(el("div", "field__label", "Замесов"), stepper, bagsNote);
+
+  form.append(el("div", "field__label", "Качество"));
+  let ok = true;
+  const quality = el("div", "roles");
+  const good = el("button", "role is-active", "В норме");
+  const fixed = el("button", "role", "Поправил");
+  good.type = fixed.type = "button";
+  quality.append(good, fixed);
+  form.append(quality);
+
+  // Что добавляли сверх рецепта — видно только если поправляли
+  const fixBox = el("div", "fix");
+  fixBox.hidden = true;
+  const additions = [];
+  const addTable = qtyRows(additions);
+  const suggest = el("div", "pills");
+  const addItem = (item) => {
+    if (additions.some((a) => a.href === item.href)) return;
+    additions.push({ href: item.href, name: item.name, uom: item.uom, qty: 0 });
+    addTable.draw();
+  };
+  function drawSuggestions() {
+    suggest.replaceChildren();
+    // Подсказки: сырьё из техкарты и то, что добавляли раньше
+    const seen = new Map();
+    (card ? card.materials : []).forEach((m) => seen.set(m.href, m));
+    data.recent.forEach((b) => b.additions.forEach((a) => seen.set(a.href, a)));
+    [...seen.values()].slice(0, 12).forEach((m) => {
+      const pill = el("button", "pill", `+ ${m.name}`);
+      pill.type = "button";
+      pill.addEventListener("click", () => addItem(m));
+      suggest.append(pill);
+    });
+  }
+  drawSuggestions();
+  fixBox.append(
+    el("div", "field__label", "Что добавили"),
+    suggest,
+    addTable.list,
+    catalogPicker(addItem, "Другое: начните вводить название"),
+  );
+  form.append(fixBox);
+
+  const setOk = (value) => {
+    ok = value;
+    good.classList.toggle("is-active", ok);
+    fixed.classList.toggle("is-active", !ok);
+    fixBox.hidden = ok;
+  };
+  good.addEventListener("click", () => setOk(true));
+  fixed.addEventListener("click", () => setOk(false));
+
+  const note = el("input", "search");
+  note.placeholder = "Заметка: например, сырой песок";
+  note.maxLength = 300;
+  form.append(note);
+
+  const submit = el("button", "btn btn--primary", "Записать замес");
+  submit.type = "submit";
+  const error = el("p", "login__error");
+  error.hidden = true;
+  form.append(submit, error);
+  updateBags();
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const fail = (msg) => {
+      error.textContent = msg;
+      error.hidden = false;
+    };
+    error.hidden = true;
+    if (!card) return fail("Выберите марку");
+    const used = ok ? [] : additions;
+    if (used.some((a) => !(a.qty > 0))) return fail("Укажите, сколько добавили");
+    if (!ok && !used.length && !note.value.trim()) return fail("Что поправили? Добавьте химию или напишите заметку");
+    submit.disabled = true;
+    try {
+      await send("/api/batches", { cardId: card.id, count, ok, additions: used, note: note.value });
+      closeSheet();
+      render();
+    } catch (err) {
+      fail(err.message);
+      submit.disabled = false;
+    }
+  });
+  body.append(form);
 }
 
 /* ── Профиль и доступы ────────────────────────────────── */
@@ -1237,6 +1946,14 @@ const ACTIONS = {
   code_reset: "Новый код",
   person_disabled: "Доступ отключён",
   person_enabled: "Доступ включён",
+  cash_in: "Приход",
+  cash_out: "Расход",
+  cash_cancel: "Отмена в кассе",
+  shift_closed: "Смена закрыта",
+  techcard_saved: "Техкарта сохранена",
+  techcard_archived: "Техкарта в архиве",
+  batch: "Замес",
+  batch_cancel: "Замес отменён",
 };
 
 // 2026-09-23T18:54:10 -> 23.09 18:54
@@ -1254,9 +1971,16 @@ async function send(path, body) {
   return data;
 }
 
-function openSheet() {
+/* Нижняя панель одна на всё: профиль, формы кассы и цеха. */
+function openPanel(title, draw) {
+  $("#sheet-title").textContent = title;
   $("#sheet").hidden = false;
-  drawSheet();
+  $("#sheet-body").scrollTop = 0;
+  draw();
+}
+
+function openSheet() {
+  openPanel("Профиль", drawSheet);
 }
 
 function closeSheet() {
@@ -1463,7 +2187,7 @@ function drawJournal(list, entries) {
   }
   entries.slice(0, 100).forEach((entry) => {
     const row = el("div", "row row--stacked");
-    const warn = entry.action === "login_failed" || entry.action === "person_disabled";
+    const warn = ["login_failed", "person_disabled", "cash_cancel", "batch_cancel"].includes(entry.action);
     row.append(el("div", "row__label", entry.who || "неизвестный"));
     row.append(el("div", `row__value${warn ? " row__value--unpaid" : ""}`, ACTIONS[entry.action] || entry.action));
     const note = [stamp(entry.t), entry.detail, entry.ip].filter(Boolean).join(" · ");

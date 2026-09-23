@@ -73,10 +73,14 @@ class MoySkladClient:
     required fields (mandatory custom attributes, cost items, etc.).
     """
 
-    def __init__(self, token: str, *, read_only: bool = False) -> None:
-        # Приложению в телефоне МойСклад только показывает данные — ему
-        # запрещено всё, кроме чтения, прямо здесь, на уровне клиента.
+    def __init__(
+        self, token: str, *, read_only: bool = False, write_allow: tuple[str, ...] = ()
+    ) -> None:
+        # Приложению в телефоне запрещено всё, кроме чтения, прямо здесь,
+        # на уровне клиента. Исключения перечисляются поштучно шаблонами
+        # вида "POST /entity/cashin" — всё остальное отклоняется.
         self._read_only = read_only
+        self._write_allow = tuple(re.compile(pattern) for pattern in write_allow)
         self._slots = asyncio.Semaphore(MAX_PARALLEL)
         self._client = httpx.AsyncClient(
             base_url=BASE_URL,
@@ -107,7 +111,9 @@ class MoySkladClient:
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict:
         if self._read_only and method.upper() != "GET":
-            raise MoySkladError(f"Только чтение: {method} {path} запрещён")
+            call = f"{method.upper()} {path}"
+            if not any(pattern.fullmatch(call) for pattern in self._write_allow):
+                raise MoySkladError(f"Только чтение: {call} запрещён")
 
         for attempt in range(MAX_RETRIES + 1):
             async with self._slots:
@@ -226,19 +232,69 @@ class MoySkladClient:
         now = datetime.now()
         operations: list[dict] = []
         for entity, kind in (("cashin", "in"), ("cashout", "out")):
-            for row in await self._documents_between(entity, now, now, expand_agent=True):
+            expand = "agent,expenseItem" if kind == "out" else "agent"
+            for row in await self._documents_between(entity, now, now, expand=expand):
                 operations.append(
                     {
+                        "id": row.get("id", ""),
                         "time": (row.get("moment") or "")[11:16],
                         "sum": row.get("sum", 0) / 100,
                         "kind": kind,
                         "agent": (row.get("agent") or {}).get("name", ""),
+                        "item": (row.get("expenseItem") or {}).get("name", ""),
                         "purpose": row.get("description") or "",
                         "number": row.get("name", ""),
+                        # Отменённая операция остаётся в учёте, но не проведена
+                        "applicable": row.get("applicable", True),
                     }
                 )
         operations.sort(key=lambda op: op["time"], reverse=True)
         return operations
+
+    async def list_expense_items(self) -> list[dict]:
+        """Статьи расходов из справочника МойСклада — те же, что видит
+        бухгалтер. Архивные не показываем."""
+        data = await self._request("GET", "/entity/expenseitem", params={"limit": 1000})
+        return [
+            {"href": row["meta"]["href"], "name": row.get("name", "?")}
+            for row in data.get("rows", [])
+            if not row.get("archived")
+        ]
+
+    async def create_cash_order(
+        self,
+        kind: str,
+        amount: float,
+        agent_href: str,
+        description: str,
+        expense_item_href: str | None = None,
+    ) -> dict:
+        """Приходный или расходный кассовый ордер. У расхода МойСклад
+        требует статью."""
+        entity = "cashin" if kind == "in" else "cashout"
+        payload: dict[str, Any] = {
+            "organization": self._meta(await self.get_default_organization_href(), "organization"),
+            "agent": self._meta(agent_href, "counterparty"),
+            "sum": round(amount * 100),
+            "description": description,
+        }
+        if entity == "cashout":
+            if not expense_item_href:
+                raise MoySkladError("Для расхода нужна статья")
+            payload["expenseItem"] = self._meta(expense_item_href, "expenseitem")
+        return await self._request("POST", f"/entity/{entity}", json=payload)
+
+    async def cancel_cash_order(self, kind: str, doc_id: str, note: str) -> dict:
+        """Отмена без удаления: документ остаётся, но снимается с
+        проведения, а в назначении дописывается, кто и почему отменил."""
+        entity = "cashin" if kind == "in" else "cashout"
+        doc = await self._request("GET", f"/entity/{entity}/{doc_id}")
+        description = f"{note}\n\n{doc.get('description') or ''}".strip()
+        return await self._request(
+            "PUT",
+            f"/entity/{entity}/{doc_id}",
+            json={"applicable": False, "description": description},
+        )
 
     async def get_account_balances(self) -> list[dict]:
         """Current balance per cash register / bank account via MoySklad's
@@ -315,6 +371,9 @@ class MoySkladClient:
                     "name": clean_product_name(row.get("name", "?")),
                     "stock": row.get("stock", 0),
                     "reserve": row.get("reserve", 0),
+                    # Себестоимость единицы по учёту — из неё считаем
+                    # стоимость мешка по техкарте
+                    "cost": (row.get("price") or 0) / 100,
                     "folder": folder.get("name") or "Без категории",
                     # Единица измерения из карточки товара: кг, шт, л…
                     "uom": uom.get("name", ""),
@@ -371,14 +430,17 @@ class MoySkladClient:
         *,
         expand_agent: bool = False,
         agent_href: str | None = None,
+        expand: str | None = None,
     ) -> list[dict]:
         """Every document of one kind whose moment falls in the period,
         page by page. Shared by the cash reports and by shipments.
         """
+        if expand_agent:
+            expand = "agent"
         rows_all: list[dict] = []
         offset = 0
         # С раскрытием связанных объектов МойСклад отдаёт не больше сотни
-        limit = 100 if expand_agent else 1000
+        limit = 100 if expand else 1000
         filter_parts = [
             f"moment>={start.strftime('%Y-%m-%d')} 00:00:00",
             f"moment<={end.strftime('%Y-%m-%d')} 23:59:59",
@@ -391,8 +453,8 @@ class MoySkladClient:
                 "limit": limit,
                 "offset": offset,
             }
-            if expand_agent:
-                params["expand"] = "agent"
+            if expand:
+                params["expand"] = expand
             data = await self._request("GET", f"/entity/{entity}", params=params)
             rows = data.get("rows", [])
             rows_all.extend(rows)
