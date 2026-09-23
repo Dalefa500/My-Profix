@@ -416,7 +416,8 @@ svg { display: block; }
 
 .tabbar {
   position: relative; z-index: 20; flex: none;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  /* Столько колонок, сколько вкладок открыто роли */
+  display: grid; grid-template-columns: repeat(var(--tabs, 5), 1fr);
   /* Кнопки прижаты к нижнему краю: под подписями остаётся небольшой
      зазор от жестовой полосы iPhone, а не вся её зона целиком. */
   height: calc(var(--tabbar-h) + 8px + env(safe-area-inset-bottom) * .5);
@@ -745,9 +746,9 @@ svg { display: block; }
 
 .tooltip {
   position: fixed; z-index: 60; pointer-events: none;
-  background: rgba(22, 18, 22, .82);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  /* Матовая заливка вместо размытия: backdrop-filter на iPhone
+     пересчитывается каждый кадр и роняет плавность. */
+  background: rgba(22, 18, 22, .97);
   color: #fff;
   border: 1px solid var(--glass-edge);
   border-radius: 12px;
@@ -794,3 +795,114 @@ svg { display: block; }
 }
 .skeleton__bar--tall { height: 146px; }
 @keyframes shimmer { to { background-position: -180% 0; } }
+
+/* ── Профиль и доступы ─────────────────────────────────── */
+
+.topbar__action + .topbar__action { margin-left: 6px; }
+
+/* Лист снизу поверх приложения. Подложка просто затемняет — без
+   размытия, по той же причине, что и у карточек. */
+.sheet { position: fixed; inset: 0; z-index: 50; }
+.sheet__backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, .62);
+  animation: fade-in .2s ease;
+}
+.sheet__panel {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  max-width: 640px; margin: 0 auto;
+  max-height: calc(100dvh - 40px - env(safe-area-inset-top));
+  display: flex; flex-direction: column;
+  background: linear-gradient(170deg, #1b181e 0%, #121015 100%);
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-bottom: 0;
+  border-radius: 26px 26px 0 0;
+  box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, .28), 0 -20px 40px -20px rgba(0, 0, 0, .9);
+  animation: sheet-up .38s var(--ios-ease);
+}
+.sheet__head {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 20px 10px;
+}
+.sheet__title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px; font-weight: 400; letter-spacing: .6px;
+}
+.sheet__done {
+  min-height: 44px; padding: 0 6px;
+  font-weight: 700; color: var(--red-light);
+}
+.sheet__body {
+  overflow-y: auto; overscroll-behavior: contain;
+  display: grid; gap: 14px;
+  padding: 6px 16px calc(24px + env(safe-area-inset-bottom));
+}
+@keyframes sheet-up { from { transform: translate3d(0, 100%, 0); } }
+@keyframes fade-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .sheet__panel, .sheet__backdrop { animation: none; }
+}
+
+.who { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.who__name { flex: 1; font-family: Georgia, "Times New Roman", serif; font-size: 20px; }
+.badge {
+  flex: none;
+  font-size: 11px; letter-spacing: .6px; text-transform: uppercase;
+  color: var(--ink-2);
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 999px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.btn { display: block; width: 100%; }
+.btn--ghost {
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .04));
+  border: 1px solid rgba(255, 255, 255, .16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2);
+}
+.btn--ghost:active { transform: translateY(2px) scale(.985); filter: brightness(.85); }
+
+.person-row.is-off .row__label { color: var(--ink-3); text-decoration: line-through; }
+.row__actions { flex: 1 0 100%; display: flex; gap: 8px; margin-top: 6px; }
+.mini {
+  min-height: 40px; padding: 0 14px;
+  border-radius: 12px;
+  font-size: 14px; font-weight: 700;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, .07);
+  border: 1px solid rgba(255, 255, 255, .14);
+  transition: transform .24s cubic-bezier(.22, 1.4, .4, 1);
+}
+.mini:active { transform: scale(.94); transition-duration: .06s; }
+.mini--danger { color: var(--warn); border-color: rgba(255, 108, 92, .4); }
+
+.add-form { display: grid; gap: 12px; }
+.roles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.role {
+  min-height: 46px;
+  border-radius: 14px;
+  font-weight: 700; font-size: 15px;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .14);
+  transition: transform .24s cubic-bezier(.22, 1.4, .4, 1);
+}
+.role:active { transform: scale(.95); transition-duration: .06s; }
+.role.is-active {
+  color: #fff;
+  background: linear-gradient(180deg, #e08b34 0%, #b05c0b 48%, #6b3304 100%);
+  border-color: rgba(255, 255, 255, .3);
+}
+
+.code-card { display: grid; gap: 14px; }
+.code {
+  font-size: 40px; font-weight: 800; letter-spacing: 3px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  padding: 14px 0;
+  user-select: all; -webkit-user-select: all;
+}
+.code__note { color: var(--ink-2); font-size: 14.5px; line-height: 1.5; }

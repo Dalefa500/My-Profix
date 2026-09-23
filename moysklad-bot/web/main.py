@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from bot.moysklad import BASE_URL, MoySkladClient, MoySkladError
 from bot.people import KEY_MATERIALS, TRACKED_COUNTERPARTIES
+from web.access import ROLES, Access, Person, audit, read_audit
 
 load_dotenv()
 
@@ -55,8 +56,14 @@ def _env(name: str) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state.moysklad = MoySkladClient(_env("MOYSKLAD_TOKEN"))
-    app.state.pin = _env("WEB_PIN")
+    # Приложение только показывает данные: клиент откажет в любом запросе,
+    # кроме чтения, ещё до того, как тот уйдёт в МойСклад.
+    app.state.moysklad = MoySkladClient(_env("MOYSKLAD_TOKEN"), read_only=True)
+    app.state.access = Access(
+        _env("WEB_PIN"),
+        _env("WEB_SECRET"),
+        os.environ.get("WEB_OWNER_NAME", "").strip() or "Учредитель",
+    )
     app.state.serializer = URLSafeTimedSerializer(_env("WEB_SECRET"), salt="pmx-session")
     app.state.tracked_hrefs: dict[str, str] = {}
     logger.info("Web app started")
@@ -90,23 +97,50 @@ def _locked_out(ip: str) -> bool:
     return len(attempts) >= MAX_LOGIN_ATTEMPTS
 
 
-def _has_valid_session(request: Request) -> bool:
+def current_person(request: Request) -> Person | None:
     token = request.cookies.get(COOKIE_NAME)
     if not token:
-        return False
+        return None
     try:
-        request.app.state.serializer.loads(token, max_age=SESSION_MAX_AGE)
+        payload = request.app.state.serializer.loads(token, max_age=SESSION_MAX_AGE)
     except (BadSignature, SignatureExpired):
-        return False
-    return True
+        return None
+    return request.app.state.access.session_person(payload)
 
 
-def require_session(request: Request) -> None:
-    if not _has_valid_session(request):
+def require_person(request: Request) -> Person:
+    person = current_person(request)
+    if person is None:
         raise HTTPException(status_code=401, detail="Нужно войти")
+    return person
 
 
-authed = [Depends(require_session)]
+def allow(*tabs: str):
+    """Пускает только тех, кому по роли открыт хотя бы один из разделов."""
+
+    def check(person: Person = Depends(require_person)) -> Person:
+        if not any(person.may(tab) for tab in tabs):
+            raise HTTPException(status_code=403, detail="Этот раздел вам недоступен")
+        return person
+
+    return [Depends(check)]
+
+
+def require_manager(person: Person = Depends(require_person)) -> Person:
+    if not person.can_manage:
+        raise HTTPException(status_code=403, detail="Доступами управляет учредитель")
+    return person
+
+
+def _describe(person: Person) -> dict:
+    return {
+        "authenticated": True,
+        "name": person.name,
+        "role": person.role,
+        "roleLabel": person.role_label,
+        "tabs": person.tabs,
+        "canManage": person.can_manage,
+    }
 
 
 @app.post("/api/login")
@@ -117,31 +151,106 @@ async def login(payload: LoginRequest, request: Request, response: Response) -> 
             status_code=429, detail="Слишком много попыток. Попробуйте через 15 минут."
         )
 
-    if payload.pin != request.app.state.pin:
+    access: Access = request.app.state.access
+    person = access.check_code(payload.pin)
+    if person is None:
         _failed_logins[ip].append(time.time())
+        audit("login_failed", None, ip)
         raise HTTPException(status_code=401, detail="Неверный код")
 
     _failed_logins.pop(ip, None)
+    access.mark_login(person)
+    audit("login", person, ip)
     response.set_cookie(
         COOKIE_NAME,
-        request.app.state.serializer.dumps("ok"),
+        request.app.state.serializer.dumps(access.session_payload(person)),
         max_age=SESSION_MAX_AGE,
         httponly=True,
         secure=True,
         samesite="lax",
     )
-    return {"ok": True}
+    return _describe(person)
 
 
 @app.post("/api/logout")
-async def logout(response: Response) -> dict:
+async def logout(request: Request, response: Response) -> dict:
+    person = current_person(request)
+    if person:
+        audit("logout", person, _client_ip(request))
     response.delete_cookie(COOKIE_NAME)
     return {"ok": True}
 
 
 @app.get("/api/session")
 async def session_state(request: Request) -> dict:
-    return {"authenticated": _has_valid_session(request)}
+    person = current_person(request)
+    return _describe(person) if person else {"authenticated": False}
+
+
+# --- сотрудники и журнал (только учредитель) ------------------------------
+
+
+class NewPerson(BaseModel):
+    name: str
+    role: str
+
+
+class ActiveChange(BaseModel):
+    active: bool
+
+
+# Кого учредитель может завести из приложения
+ASSIGNABLE_ROLES = ["director", "accountant", "cashier", "owner"]
+
+
+@app.get("/api/people")
+async def people(request: Request, _me: Person = Depends(require_manager)) -> dict:
+    return {
+        "people": request.app.state.access.list_people(),
+        "roles": [{"id": role, "label": ROLES[role]["label"]} for role in ASSIGNABLE_ROLES],
+    }
+
+
+@app.post("/api/people")
+async def add_person(
+    payload: NewPerson, request: Request, me: Person = Depends(require_manager)
+) -> dict:
+    if payload.role not in ASSIGNABLE_ROLES:
+        raise HTTPException(status_code=400, detail="Неизвестная роль")
+    try:
+        user, code = request.app.state.access.add(payload.name, payload.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    audit("person_added", me, _client_ip(request), f"{user['name']} · {ROLES[user['role']]['label']}")
+    # Код уходит в ответ один раз — на сервере остаётся только подпись
+    return {"id": user["id"], "name": user["name"], "code": code}
+
+
+@app.post("/api/people/{user_id}/code")
+async def reset_code(user_id: str, request: Request, me: Person = Depends(require_manager)) -> dict:
+    try:
+        user, code = request.app.state.access.new_code(user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    audit("code_reset", me, _client_ip(request), user["name"])
+    return {"id": user["id"], "name": user["name"], "code": code}
+
+
+@app.post("/api/people/{user_id}/active")
+async def set_active(
+    user_id: str, payload: ActiveChange, request: Request, me: Person = Depends(require_manager)
+) -> dict:
+    try:
+        user = request.app.state.access.set_active(user_id, payload.active)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    audit("person_enabled" if payload.active else "person_disabled", me, _client_ip(request), user["name"])
+    return {"ok": True}
+
+
+@app.get("/api/audit")
+async def audit_log(_me: Person = Depends(require_manager)) -> dict:
+    return {"entries": read_audit()}
 
 
 # --- data -----------------------------------------------------------------
@@ -165,15 +274,16 @@ def _month_label(month_key: str) -> str:
     return f"{MONTHS_RU[int(month_key[5:7]) - 1]} {month_key[:4]}"
 
 
-@app.get("/api/summary", dependencies=authed)
+@app.get("/api/summary", dependencies=allow("balance"))
 async def summary(request: Request) -> dict:
     moysklad: MoySkladClient = request.app.state.moysklad
+    # Приход и расход — по всем «Платежам»: и касса, и банк. Остаток
+    # ниже тоже по кассам и счетам вместе, так цифры сходятся.
     try:
-        income, expense = await asyncio.gather(
-            moysklad.sum_cash_today("cashin"), moysklad.sum_cash_today("cashout")
-        )
+        today = await moysklad.money_today()
     except MoySkladError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+    income, expense = today["income"], today["expense"]
 
     accounts: list[dict] = []
     try:
@@ -227,13 +337,13 @@ async def _key_materials(moysklad: MoySkladClient) -> list[dict]:
     return found
 
 
-@app.get("/api/report", dependencies=authed)
+@app.get("/api/report", dependencies=allow("report"))
 async def report(request: Request, days: int = Query(30, ge=1, le=400)) -> dict:
     moysklad: MoySkladClient = request.app.state.moysklad
     start, end, granularity = _period(days)
 
     try:
-        daily = await moysklad.get_daily_cash_summary(start, end)
+        daily = await moysklad.get_daily_money_summary(start, end)
     except MoySkladError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -275,7 +385,7 @@ async def report(request: Request, days: int = Query(30, ge=1, le=400)) -> dict:
     }
 
 
-@app.get("/api/shipments", dependencies=authed)
+@app.get("/api/shipments", dependencies=allow("shipments"))
 async def shipments(request: Request, days: int = Query(30, ge=1, le=400)) -> dict:
     """Отгрузки за период: сколько всего отгружено, по дням (или месяцам
     на длинных периодах) и кому.
@@ -324,7 +434,7 @@ async def shipments(request: Request, days: int = Query(30, ge=1, le=400)) -> di
     }
 
 
-@app.get("/api/shipments/detail", dependencies=authed)
+@app.get("/api/shipments/detail", dependencies=allow("shipments"))
 async def shipment_detail(
     request: Request, href: str, name: str = "", days: int = Query(30, ge=1, le=400)
 ) -> dict:
@@ -376,7 +486,7 @@ async def shipment_detail(
     }
 
 
-@app.get("/api/product-image", dependencies=authed)
+@app.get("/api/product-image", dependencies=allow("shipments", "stock"))
 async def product_image(request: Request, href: str) -> Response:
     """Фото товара из МойСклада. Файл отдаётся только по токену, поэтому
     приложение забирает его через нас, а не напрямую.
@@ -399,7 +509,7 @@ async def product_image(request: Request, href: str) -> Response:
     )
 
 
-@app.get("/api/stock", dependencies=authed)
+@app.get("/api/stock", dependencies=allow("stock"))
 async def stock(request: Request) -> dict:
     moysklad: MoySkladClient = request.app.state.moysklad
     try:
@@ -438,6 +548,38 @@ async def stock(request: Request) -> dict:
     }
 
 
+@app.get("/api/cash", dependencies=allow("cash"))
+async def cash(request: Request) -> dict:
+    """Касса за сегодня — экран кассира: сколько в кассе, что пришло и
+    ушло, по каким документам. Банк, прибыль и долги сюда не попадают.
+    """
+    moysklad: MoySkladClient = request.app.state.moysklad
+    try:
+        operations = await moysklad.cash_today_operations()
+    except MoySkladError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    # Остаток — только по строкам-кассам отчёта «Остатки по счетам»;
+    # банковские счета кассиру не показываем.
+    balance = None
+    try:
+        rows = await moysklad.get_account_balances()
+        cash_rows = [row for row in rows if "касс" in row["name"].lower()]
+        if cash_rows:
+            balance = sum(row["balance"] for row in cash_rows)
+    except MoySkladError:
+        logger.info("Остаток кассы недоступен — показываю только операции")
+
+    income = sum(op["sum"] for op in operations if op["kind"] == "in")
+    expense = sum(op["sum"] for op in operations if op["kind"] == "out")
+    return {
+        "balance": balance,
+        "income": income,
+        "expense": expense,
+        "operations": operations[:200],
+    }
+
+
 async def _tracked(request: Request) -> list[dict]:
     """Resolved tracked counterparties, cached so the drill-down endpoint
     can whitelist the hrefs it accepts from the client."""
@@ -447,7 +589,7 @@ async def _tracked(request: Request) -> list[dict]:
     return resolved
 
 
-@app.get("/api/team", dependencies=authed)
+@app.get("/api/team", dependencies=allow("team"))
 async def team(request: Request, days: int = Query(30, ge=1, le=400)) -> dict:
     moysklad: MoySkladClient = request.app.state.moysklad
     start, end, _granularity = _period(days)
@@ -473,7 +615,7 @@ async def team(request: Request, days: int = Query(30, ge=1, le=400)) -> dict:
     return {"people": people, "total": sum(p["total"] for p in people)}
 
 
-@app.get("/api/team/detail", dependencies=authed)
+@app.get("/api/team/detail", dependencies=allow("team"))
 async def team_detail(request: Request, href: str, days: int = Query(30, ge=1, le=400)) -> dict:
     moysklad: MoySkladClient = request.app.state.moysklad
 

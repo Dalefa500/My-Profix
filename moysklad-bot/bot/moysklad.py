@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -57,6 +58,12 @@ class MoySkladError(RuntimeError):
     """Raised when the MoySklad API returns an error response."""
 
 
+# МойСклад пускает не больше 5 параллельных запросов от пользователя и 45
+# за 3 секунды от аккаунта; сверх этого отвечает 429. Держим запас: бот и
+# приложение ходят с одним токеном.
+MAX_PARALLEL = 4
+MAX_RETRIES = 3
+
 class MoySkladClient:
     """Thin async wrapper around the MoySklad JSON API (REMAP 1.2).
 
@@ -66,7 +73,11 @@ class MoySkladClient:
     required fields (mandatory custom attributes, cost items, etc.).
     """
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, *, read_only: bool = False) -> None:
+        # Приложению в телефоне МойСклад только показывает данные — ему
+        # запрещено всё, кроме чтения, прямо здесь, на уровне клиента.
+        self._read_only = read_only
+        self._slots = asyncio.Semaphore(MAX_PARALLEL)
         self._client = httpx.AsyncClient(
             base_url=BASE_URL,
             headers={
@@ -95,7 +106,25 @@ class MoySkladClient:
         await self._client.aclose()
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict:
-        response = await self._client.request(method, path, **kwargs)
+        if self._read_only and method.upper() != "GET":
+            raise MoySkladError(f"Только чтение: {method} {path} запрещён")
+
+        for attempt in range(MAX_RETRIES + 1):
+            async with self._slots:
+                response = await self._client.request(method, path, **kwargs)
+            if response.status_code != 429 or attempt == MAX_RETRIES:
+                break
+            # Лимит запросов: МойСклад сам говорит, сколько подождать
+            wait_ms = (
+                response.headers.get("X-Lognex-Retry-After")
+                or response.headers.get("X-Lognex-Retry-TimeInterval")
+            )
+            try:
+                delay = float(wait_ms) / 1000 if wait_ms else float(response.headers.get("Retry-After", 1))
+            except ValueError:
+                delay = 1.0
+            await asyncio.sleep(min(max(delay, 0.2), 5.0))
+
         if response.status_code >= 400:
             logger.error("MoySklad API error %s %s: %s", method, path, response.text)
             raise MoySkladError(f"{response.status_code}: {response.text[:500]}")
@@ -173,16 +202,43 @@ class MoySkladClient:
         return await self._request("POST", "/entity/cashout", json=payload)
 
     async def sum_cash_today(self, entity: str) -> float:
-        today = datetime.now().strftime("%Y-%m-%d")
-        data = await self._request(
-            "GET",
-            f"/entity/{entity}",
-            params={
-                "filter": f"moment>={today} 00:00:00;moment<={today} 23:59:59",
-                "limit": 100,
-            },
-        )
-        return sum(row.get("sum", 0) for row in data.get("rows", [])) / 100
+        # Постранично: в загруженный день документов бывает больше сотни
+        now = datetime.now()
+        rows = await self._documents_between(entity, now, now)
+        return sum(row.get("sum", 0) for row in rows) / 100
+
+    async def money_today(self) -> dict[str, float]:
+        """Приход и расход за сегодня по всему регистру «Платежи»: касса и
+        банк вместе — так же, как считает сам МойСклад.
+        """
+        now = datetime.now()
+        totals = {"income": 0.0, "expense": 0.0}
+        for entities, key in ((self.MONEY_IN, "income"), (self.MONEY_OUT, "expense")):
+            for entity in entities:
+                rows = await self._documents_between(entity, now, now)
+                totals[key] += sum(row.get("sum", 0) for row in rows) / 100
+        return totals
+
+    async def cash_today_operations(self) -> list[dict]:
+        """Кассовые ордера за сегодня — то, чем занимается кассир. Только
+        касса: банковские платежи идут мимо него.
+        """
+        now = datetime.now()
+        operations: list[dict] = []
+        for entity, kind in (("cashin", "in"), ("cashout", "out")):
+            for row in await self._documents_between(entity, now, now, expand_agent=True):
+                operations.append(
+                    {
+                        "time": (row.get("moment") or "")[11:16],
+                        "sum": row.get("sum", 0) / 100,
+                        "kind": kind,
+                        "agent": (row.get("agent") or {}).get("name", ""),
+                        "purpose": row.get("description") or "",
+                        "number": row.get("name", ""),
+                    }
+                )
+        operations.sort(key=lambda op: op["time"], reverse=True)
+        return operations
 
     async def get_account_balances(self) -> list[dict]:
         """Current balance per cash register / bank account via MoySklad's
@@ -228,17 +284,28 @@ class MoySkladClient:
                 offset += limit
         return total
 
-    async def get_stock_report(self, limit: int = 100) -> list[dict]:
+    async def get_stock_report(self, limit: int = 1000) -> list[dict]:
         """Current stock quantity per product/material (/report/stock/all),
         grouped by product folder (МойСклад's category/group) so raw
         materials and finished goods can be told apart — assuming the
         account keeps them in separate folders. If a row has no folder,
         it's labelled "Без категории".
         """
-        data = await self._request("GET", "/report/stock/all", params={"limit": limit})
-        rows = data.get("rows") if isinstance(data, dict) else data
-        if not isinstance(rows, list):
-            raise MoySkladError("Неожиданный формат ответа /report/stock/all")
+        # Постранично: раньше читалась одна страница, и всё, что после
+        # сотой позиции, в «Остатках» просто не появлялось.
+        rows: list[dict] = []
+        offset = 0
+        while True:
+            data = await self._request(
+                "GET", "/report/stock/all", params={"limit": limit, "offset": offset}
+            )
+            page = data.get("rows") if isinstance(data, dict) else data
+            if not isinstance(page, list):
+                raise MoySkladError("Неожиданный формат ответа /report/stock/all")
+            rows.extend(page)
+            if len(page) < limit:
+                break
+            offset += limit
         result = []
         for row in rows:
             folder = row.get("folder") or {}
@@ -310,7 +377,8 @@ class MoySkladClient:
         """
         rows_all: list[dict] = []
         offset = 0
-        limit = 1000
+        # С раскрытием связанных объектов МойСклад отдаёт не больше сотни
+        limit = 100 if expand_agent else 1000
         filter_parts = [
             f"moment>={start.strftime('%Y-%m-%d')} 00:00:00",
             f"moment<={end.strftime('%Y-%m-%d')} 23:59:59",
@@ -347,6 +415,21 @@ class MoySkladClient:
                     continue
                 daily.setdefault(day, {"income": 0.0, "expense": 0.0})
                 daily[day][key] += row.get("sum", 0) / 100
+        return daily
+
+    async def get_daily_money_summary(
+        self, start: datetime, end: datetime
+    ) -> dict[str, dict[str, float]]:
+        """То же по дням, но по всему регистру «Платежи»: касса и банк."""
+        daily: dict[str, dict[str, float]] = {}
+        for entities, key in ((self.MONEY_IN, "income"), (self.MONEY_OUT, "expense")):
+            for entity in entities:
+                for row in await self._documents_between(entity, start, end):
+                    day = (row.get("moment") or "")[:10]
+                    if not day:
+                        continue
+                    daily.setdefault(day, {"income": 0.0, "expense": 0.0})
+                    daily[day][key] += row.get("sum", 0) / 100
         return daily
 
     async def _counterparty_names(self) -> dict[str, str]:

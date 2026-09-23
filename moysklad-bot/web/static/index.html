@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
 <link rel="icon" href="/icons/icon-192.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/styles.css?v=29">
+<link rel="stylesheet" href="/styles.css?v=30">
 </head>
 <body>
 
@@ -21,7 +21,7 @@
 <section id="login" class="login">
   <div class="login__inner">
     <h1 class="login__word">PRO<span>FIX</span></h1>
-    <p class="login__sub">Панель руководителя</p>
+    <p class="login__sub">Вход по личному коду</p>
     <form id="login-form" class="login__form" autocomplete="off">
       <input id="pin" class="pin" type="password" inputmode="numeric" pattern="[0-9]*"
              placeholder="Код доступа" aria-label="Код доступа" enterkeyhint="go">
@@ -38,6 +38,11 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
     </button>
     <h1 id="title" class="topbar__title">Баланс</h1>
+    <button id="me" class="topbar__action" type="button" aria-label="Профиль и доступ">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>
+      </svg>
+    </button>
     <button id="refresh" class="topbar__action" type="button" aria-label="Обновить">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v5h-5"/>
@@ -55,6 +60,7 @@
     <section class="view" data-view="shipments" hidden></section>
     <section class="view" data-view="stock" hidden></section>
     <section class="view" data-view="team" hidden></section>
+    <section class="view" data-view="cash" hidden></section>
   </main>
 
   <nav class="tabbar" aria-label="Разделы">
@@ -90,11 +96,29 @@
         <path d="M18 14.5a5.5 5.5 0 0 1 3.5 5.5"/>
       </svg><span>Команда</span>
     </button>
+    <button class="tab" data-tab="cash" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h15A1.5 1.5 0 0 1 21 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 16.5z"/>
+        <path d="M12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/><path d="M6.5 9.5v5"/><path d="M17.5 9.5v5"/>
+      </svg><span>Касса</span>
+    </button>
   </nav>
+</div>
+
+<!-- Профиль: кто вошёл, выход; учредителю — доступы и журнал -->
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet__backdrop" data-close></div>
+  <div class="sheet__panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="sheet__head">
+      <h2 id="sheet-title" class="sheet__title">Профиль</h2>
+      <button class="sheet__done" type="button" data-close>Готово</button>
+    </div>
+    <div id="sheet-body" class="sheet__body"></div>
+  </div>
 </div>
 
 <div id="tooltip" class="tooltip" hidden></div>
 
-<script src="/app.js?v=29"></script>
+<script src="/app.js?v=30"></script>
 </body>
 </html>

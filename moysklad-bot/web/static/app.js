@@ -1,4 +1,6 @@
-/* Profix — панель руководителя. Данные берутся из МойСклад через /api. */
+/* Profix — учёт цеха в телефоне. Данные берутся из МойСклад через /api.
+   Что видно, решает роль: сервер отдаёт только разрешённые разделы,
+   а здесь лишь не показываем вкладки, которые всё равно откажут. */
 
 const PERIODS = [
   { label: "1 день", days: 1 },
@@ -14,9 +16,11 @@ const TABS = {
   shipments: "Отгрузки",
   stock: "Остатки",
   team: "Команда",
+  cash: "Касса",
 };
 
 const state = {
+  me: null, // кто вошёл: имя, роль, доступные вкладки
   tab: "balance",
   reportDays: 30,
   shipmentDays: 30,
@@ -98,12 +102,37 @@ async function api(path) {
 /* ── Вход ─────────────────────────────────────────────── */
 
 function showLogin() {
+  state.me = null;
+  $("#sheet").hidden = true;
   $("#app").hidden = true;
   $("#login").hidden = false;
   $("#pin").value = "";
 }
 
-function showApp() {
+/* Показываем только вкладки своей роли и в том же порядке. Кассиру
+   достаётся одна «Касса» — тогда и полоса вкладок не нужна. */
+function applyRole(me) {
+  state.me = me;
+  state.detail = null;
+  state.stockQuery = "";
+  TAB_ORDER = ALL_TABS.filter((tab) => me.tabs.includes(tab));
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.hidden = !TAB_ORDER.includes(tab.dataset.tab);
+  });
+  const bar = $(".tabbar");
+  bar.hidden = TAB_ORDER.length < 2;
+  bar.style.setProperty("--tabs", TAB_ORDER.length);
+  if (!TAB_ORDER.includes(state.tab)) state.tab = TAB_ORDER[0];
+  document.querySelectorAll(".view").forEach((v) => {
+    v.hidden = v.dataset.view !== state.tab;
+    // Чужие данные от прошлого входа на этом телефоне не оставляем
+    v.replaceChildren();
+  });
+  markTab(state.tab);
+}
+
+function showApp(me) {
+  applyRole(me);
   $("#login").hidden = true;
   $("#app").hidden = false;
   render();
@@ -121,11 +150,9 @@ $("#login-form").addEventListener("submit", async (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pin: $("#pin").value }),
     });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.detail || "Не удалось войти");
-    }
-    showApp();
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || "Не удалось войти");
+    showApp(body);
   } catch (err) {
     error.textContent = err.message;
     error.hidden = false;
@@ -136,7 +163,8 @@ $("#login-form").addEventListener("submit", async (event) => {
 
 /* ── Навигация ────────────────────────────────────────── */
 
-const TAB_ORDER = ["balance", "report", "shipments", "stock", "team"];
+const ALL_TABS = ["balance", "report", "shipments", "stock", "team", "cash"];
+let TAB_ORDER = [...ALL_TABS];
 
 const LEAVING = ["is-leaving", "to-right"];
 
@@ -482,7 +510,8 @@ document.addEventListener("visibilitychange", () => {
 // Само обновляется раз в 20 минут, пока приложение открыто на экране.
 const AUTO_REFRESH_MS = 20 * 60 * 1000;
 setInterval(() => {
-  if (document.hidden || $("#app").hidden || state.detail) return;
+  // Не трогаем экран, пока открыта карточка или профиль
+  if (document.hidden || $("#app").hidden || state.detail || !$("#sheet").hidden) return;
   if (Date.now() - state.loadedAt >= AUTO_REFRESH_MS) render();
 }, 60_000);
 
@@ -545,6 +574,7 @@ async function render() {
       else await renderShipments(container);
     }
     else if (state.tab === "stock") await renderStock(container);
+    else if (state.tab === "cash") await renderCash(container);
     else if (state.detail) await renderTeamDetail(container);
     else await renderTeam(container);
     state.loadedAt = Date.now();
@@ -628,7 +658,8 @@ async function renderBalance(container) {
   container.replaceChildren();
 
   const hero = el("div", "card hero");
-  hero.append(el("div", "hero__label", "Остаток в кассе"));
+  // Сумма по всем кассам и банковским счетам — как в отчёте МойСклада
+  hero.append(el("div", "hero__label", "Кассы и счета"));
   hero.append(
     el("div", `hero__value is-${sign(data.total_balance)}`, money(data.total_balance)),
   );
@@ -1146,6 +1177,301 @@ async function renderTeamDetail(container) {
   container.append(card);
 }
 
+/* ── Касса (кассир) ───────────────────────────────────── */
+
+async function renderCash(container) {
+  const data = await api("/api/cash");
+  container.replaceChildren();
+
+  const hero = el("div", "card hero");
+  if (data.balance === null) {
+    hero.append(el("div", "hero__label", "Итог по кассе сегодня"));
+    const net = data.income - data.expense;
+    hero.append(el("div", `hero__value is-${sign(net)}`, money(net)));
+  } else {
+    hero.append(el("div", "hero__label", "В кассе"));
+    hero.append(el("div", `hero__value is-${sign(data.balance)}`, money(data.balance)));
+  }
+  container.append(hero);
+
+  container.append(
+    tiles([
+      { label: "Приход сегодня", value: amount(data.income), tone: "income" },
+      { label: "Расход сегодня", value: amount(data.expense), tone: "expense" },
+    ]),
+  );
+
+  const card = el("div", "card");
+  card.append(el("div", "card__title", "Операции за сегодня"));
+  if (!data.operations.length) {
+    card.append(el("div", "empty", "Сегодня операций нет"));
+  } else {
+    const rows = el("div", "rows");
+    data.operations.forEach((op) => {
+      const income = op.kind === "in";
+      const line = el("div", "row row--stacked");
+      line.append(el("div", "row__label", `${op.time}  ${op.agent || (income ? "Приход" : "Расход")}`));
+      line.append(
+        el(
+          "div",
+          `row__value row__value--${income ? "paid" : "unpaid"}`,
+          `${income ? "+" : "−"}${money(op.sum)}`,
+        ),
+      );
+      const note = [op.number ? `№${op.number}` : "", op.purpose].filter(Boolean).join(" · ");
+      if (note) line.append(el("div", "row__note", note));
+      rows.append(line);
+    });
+    card.append(rows);
+  }
+  container.append(card);
+}
+
+/* ── Профиль и доступы ────────────────────────────────── */
+
+const ACTIONS = {
+  login: "Вход",
+  login_failed: "Неверный код",
+  logout: "Выход",
+  person_added: "Выдан доступ",
+  code_reset: "Новый код",
+  person_disabled: "Доступ отключён",
+  person_enabled: "Доступ включён",
+};
+
+// 2026-09-23T18:54:10 -> 23.09 18:54
+const stamp = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)} ${iso.slice(11, 16)}` : "—");
+
+async function send(path, body) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new AuthError("Нужно войти заново");
+  if (!res.ok) throw new Error(data.detail || `Ошибка ${res.status}`);
+  return data;
+}
+
+function openSheet() {
+  $("#sheet").hidden = false;
+  drawSheet();
+}
+
+function closeSheet() {
+  $("#sheet").hidden = true;
+  $("#sheet-body").replaceChildren();
+}
+
+$("#me").addEventListener("click", openSheet);
+document.querySelectorAll("#sheet [data-close]").forEach((node) =>
+  node.addEventListener("click", closeSheet),
+);
+
+async function drawSheet() {
+  const body = $("#sheet-body");
+  const me = state.me;
+  body.replaceChildren();
+
+  const who = el("div", "card");
+  who.append(el("div", "card__title", "Вы вошли как"));
+  const line = el("div", "who");
+  line.append(el("div", "who__name", me.name));
+  line.append(el("div", "badge", me.roleLabel));
+  who.append(line);
+  const out = el("button", "btn btn--ghost", "Выйти");
+  out.type = "button";
+  out.addEventListener("click", async () => {
+    await send("/api/logout").catch(() => {});
+    closeSheet();
+    state.me = null;
+    showLogin();
+  });
+  who.append(out);
+  body.append(who);
+
+  if (!me.canManage) return;
+
+  const staff = el("div", "card");
+  staff.append(el("div", "card__title", "Доступ сотрудников"));
+  const list = el("div", "rows");
+  list.append(el("div", "empty", "Загружаю…"));
+  staff.append(list);
+  body.append(staff);
+
+  const add = el("div", "card");
+  body.append(add);
+
+  const journal = el("div", "card");
+  journal.append(el("div", "card__title", "Журнал действий"));
+  const entries = el("div", "rows");
+  journal.append(entries);
+  body.append(journal);
+
+  try {
+    const [people, log] = await Promise.all([api("/api/people"), api("/api/audit")]);
+    drawPeople(list, people.people);
+    drawAddForm(add, people.roles);
+    drawJournal(entries, log.entries);
+  } catch (err) {
+    if (err instanceof AuthError) {
+      closeSheet();
+      showLogin();
+      return;
+    }
+    list.replaceChildren(el("div", "error", err.message));
+  }
+}
+
+function drawPeople(list, people) {
+  list.replaceChildren();
+  if (!people.length) {
+    list.append(el("div", "empty", "Пока никого. Добавьте сотрудника ниже."));
+    return;
+  }
+  people.forEach((person) => {
+    const row = el("div", `row row--stacked person-row${person.active ? "" : " is-off"}`);
+    row.append(el("div", "row__label", person.name));
+    row.append(el("div", "badge", person.roleLabel));
+    row.append(
+      el(
+        "div",
+        "row__note",
+        person.active
+          ? `последний вход: ${person.lastLogin ? stamp(person.lastLogin) : "ещё не входил"}`
+          : "доступ отключён",
+      ),
+    );
+    const actions = el("div", "row__actions");
+
+    const code = el("button", "mini", "Новый код");
+    code.type = "button";
+    code.addEventListener("click", async () => {
+      if (!confirm(`Выдать ${person.name} новый код? Старый сразу перестанет работать.`)) return;
+      try {
+        const res = await send(`/api/people/${person.id}/code`);
+        showCode(res.name, res.code);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+
+    const toggle = el("button", `mini${person.active ? " mini--danger" : ""}`, person.active ? "Отключить" : "Включить");
+    toggle.type = "button";
+    toggle.addEventListener("click", async () => {
+      if (person.active && !confirm(`Отключить ${person.name}? Он сразу потеряет доступ.`)) return;
+      try {
+        await send(`/api/people/${person.id}/active`, { active: !person.active });
+        drawSheet();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+
+    actions.append(code, toggle);
+    row.append(actions);
+    list.append(row);
+  });
+}
+
+function drawAddForm(card, roles) {
+  card.replaceChildren(el("div", "card__title", "Добавить сотрудника"));
+  const form = el("form", "add-form");
+  const name = el("input", "search");
+  name.placeholder = "Имя, например: Мадина, кассир";
+  name.maxLength = 60;
+  name.autocomplete = "off";
+  form.append(name);
+
+  // Роль — крупными кнопками, а не выпадающим списком: так проще попасть
+  const pick = el("div", "roles");
+  let role = roles[0].id;
+  roles.forEach((r) => {
+    const b = el("button", `role${r.id === role ? " is-active" : ""}`, r.label);
+    b.type = "button";
+    b.addEventListener("click", () => {
+      role = r.id;
+      pick.querySelectorAll(".role").forEach((x) => x.classList.toggle("is-active", x === b));
+    });
+    pick.append(b);
+  });
+  form.append(pick);
+
+  const submit = el("button", "btn btn--primary", "Выдать код");
+  submit.type = "submit";
+  form.append(submit);
+  const error = el("p", "login__error");
+  error.hidden = true;
+  form.append(error);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.hidden = true;
+    submit.disabled = true;
+    try {
+      const res = await send("/api/people", { name: name.value, role });
+      showCode(res.name, res.code);
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  card.append(form);
+}
+
+/* Код показывается один раз: на сервере хранится только его подпись,
+   и посмотреть его снова нельзя — только выдать новый. */
+function showCode(name, code) {
+  const body = $("#sheet-body");
+  body.replaceChildren();
+  const card = el("div", "card code-card");
+  card.append(el("div", "card__title", `Код для: ${name}`));
+  card.append(el("div", "code", code.replace(/(\d{4})(?=\d)/g, "$1 ")));
+  card.append(
+    el(
+      "p",
+      "code__note",
+      "Код показывается один раз. Передайте его лично и не пересылайте в общие чаты. " +
+        "Если код потеряется — выдайте новый, старый перестанет работать.",
+    ),
+  );
+  const copy = el("button", "btn btn--ghost", "Скопировать");
+  copy.type = "button";
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      copy.textContent = "Скопировано";
+    } catch {
+      copy.textContent = "Не удалось — перепишите вручную";
+    }
+  });
+  const back = el("button", "btn btn--primary", "Готово");
+  back.type = "button";
+  back.addEventListener("click", drawSheet);
+  card.append(copy, back);
+  body.append(card);
+}
+
+function drawJournal(list, entries) {
+  list.replaceChildren();
+  if (!entries.length) {
+    list.append(el("div", "empty", "Записей пока нет"));
+    return;
+  }
+  entries.slice(0, 100).forEach((entry) => {
+    const row = el("div", "row row--stacked");
+    const warn = entry.action === "login_failed" || entry.action === "person_disabled";
+    row.append(el("div", "row__label", entry.who || "неизвестный"));
+    row.append(el("div", `row__value${warn ? " row__value--unpaid" : ""}`, ACTIONS[entry.action] || entry.action));
+    const note = [stamp(entry.t), entry.detail, entry.ip].filter(Boolean).join(" · ");
+    row.append(el("div", "row__note", note));
+    list.append(row);
+  });
+}
+
 /* ── Графики ──────────────────────────────────────────── */
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -1352,5 +1678,5 @@ if ("serviceWorker" in navigator) {
 }
 
 api("/api/session")
-  .then((data) => (data.authenticated ? showApp() : showLogin()))
+  .then((data) => (data.authenticated ? showApp(data) : showLogin()))
   .catch(showLogin);
