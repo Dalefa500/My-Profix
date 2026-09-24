@@ -419,10 +419,10 @@ def whatsapp_url() -> str:
 
 
 # Картинка карточки лежит на GitHub Pages: Instagram берёт её только по
-# публичной ссылке. Квадратная — Instagram обрезает картинку карточки
-# до квадрата, а GIF не показывает вовсе (проверено вживую).
+# публичной ссылке. Квадратный холст с круглым значком на прозрачном
+# фоне — Instagram обрезает картинку до квадрата, а GIF не показывает.
 WA_CARD_BASE = os.getenv("WA_CARD_BASE", "https://dalefa500.github.io/My-Profix/img").rstrip("/")
-WA_CARD_IMAGE = os.getenv("WA_CARD_IMAGE", "wa-card-sq.png").strip()
+WA_CARD_IMAGE = os.getenv("WA_CARD_IMAGE", "wa-badge.png").strip()
 
 
 async def _post_message(recipient: dict[str, str], message: dict[str, Any]) -> httpx.Response:
@@ -436,28 +436,33 @@ async def _post_message(recipient: dict[str, str], message: dict[str, Any]) -> h
 
 
 async def send_whatsapp_card(recipient: dict[str, str], tajik: bool) -> bool:
-    """Карточка с логотипом и кнопкой «Написать в WhatsApp».
+    """Круглый значок PROFIX с WhatsApp и кнопка под ним.
 
-    Номер клиент не видит — только кнопку. Пробуем карточку с картинкой,
-    потом простую кнопку. True — если что-то из этого дошло.
+    Номер клиент не видит. Лишнего текста в карточке нет: у Instagram
+    заголовок обязателен, поэтому сначала пробуем невидимый, потом
+    «PROFIX», потом простую кнопку без картинки. True — если дошло.
     """
-    title = "Навиштан ба WhatsApp" if tajik else "Написать в WhatsApp"
-    button = {"type": "web_url", "url": whatsapp_url(), "title": title}
-    card = {"attachment": {"type": "template", "payload": {
-        "template_type": "generic",
-        "elements": [{
-            "title": "Ба мо дар WhatsApp нависед" if tajik else "Напишите нам в WhatsApp",
-            "subtitle": "PROFIX · зуд ҷавоб медиҳем" if tajik else "PROFIX · ответим быстро",
-            "image_url": f"{WA_CARD_BASE}/{WA_CARD_IMAGE}",
-            "buttons": [button],
-        }],
-    }}}
+    wa = whatsapp_url()
+    button = {"type": "web_url", "url": wa, "title": "Навиштан" if tajik else "Написать"}
+
+    def card(title: str) -> dict[str, Any]:
+        return {"attachment": {"type": "template", "payload": {
+            "template_type": "generic",
+            "elements": [{
+                "title": title,
+                "image_url": f"{WA_CARD_BASE}/{WA_CARD_IMAGE}",
+                "default_action": {"type": "web_url", "url": wa},
+                "buttons": [button],
+            }],
+        }}}
+
     plain = {"attachment": {"type": "template", "payload": {
         "template_type": "button",
-        "text": "WhatsApp-и PROFIX 👇" if tajik else "WhatsApp PROFIX 👇",
-        "buttons": [button],
+        "text": "WhatsApp PROFIX 👇",
+        "buttons": [{**button, "title": "Навиштан ба WhatsApp" if tajik else "Написать в WhatsApp"}],
     }}}
-    for kind, message in (("карточка", card), ("кнопка", plain)):
+    attempts = (("карточка", card("\u2060")), ("карточка PROFIX", card("PROFIX")), ("кнопка", plain))
+    for kind, message in attempts:
         resp = await _post_message(recipient, message)
         if resp.status_code < 400:
             return True
