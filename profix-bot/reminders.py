@@ -12,6 +12,14 @@
     python3 reminders.py          обычный запуск (из cron)
     python3 reminders.py --test   прислать проверочное сообщение сейчас
     python3 reminders.py --list   показать ближайшие даты, ничего не слать
+    python3 reminders.py --anthropic-balance 20
+                                  после пополнения Anthropic: сколько теперь
+                                  на балансе (в долларах)
+
+Anthropic не отдаёт остаток баланса через API. Поэтому бот сам пишет свои
+расходы в data/spend.json, а здесь из суммы последнего пополнения
+вычитаются траты с того дня — и когда денег остаётся на день-два работы,
+приходит напоминание.
 """
 
 from __future__ import annotations
@@ -30,6 +38,8 @@ DATA = HERE / "data"
 PAYMENTS = HERE / "payments.json"
 CARDS = DATA / "cards.json"
 SENT_LOG = DATA / "reminders-sent.json"
+SPEND = DATA / "spend.json"                      # пишет бот: расход на Claude по дням
+ANTHROPIC_BALANCE = DATA / "anthropic-balance.json"  # сумма после пополнения
 
 TZ = timezone(timedelta(hours=5))  # Душанбе, без перехода на летнее время
 SEND_FROM_HOUR = 10
@@ -180,12 +190,45 @@ def send(env: dict[str, str], text: str) -> bool:
     return ok
 
 
+def anthropic_estimate(today: date) -> tuple[float, float, int] | None:
+    """(остаток $, средний расход $/день, дней хватит) или None, если сумма не задана."""
+    bal = load_json(ANTHROPIC_BALANCE, None)
+    if not bal:
+        return None
+    spend = load_json(SPEND, {})
+    since = bal["date"]
+    spent = sum(v for d, v in spend.items() if d >= since)
+    # День пополнения мог начаться с трат ещё до него — вычитаем их.
+    spent -= bal.get("spent_same_day_before", 0.0)
+    left = bal["amount"] - spent
+    week = [spend.get((today - timedelta(days=i)).isoformat(), 0.0) for i in range(1, 8)]
+    days_with_data = [v for v in week if v > 0] or [spend.get(today.isoformat(), 0.0)]
+    per_day = max(sum(days_with_data) / max(len(days_with_data), 1), 0.01)
+    return left, per_day, int(left / per_day)
+
+
 def main(argv: list[str]) -> int:
     env = load_env()
     now = datetime.now(TZ)
     today = now.date()
     payments = load_json(PAYMENTS, [])
     cards = load_json(CARDS, {})
+
+    if "--anthropic-balance" in argv:
+        i = argv.index("--anthropic-balance")
+        try:
+            amount = float(argv[i + 1].replace(",", ".").lstrip("$"))
+        except (IndexError, ValueError):
+            print("укажите сумму: python3 reminders.py --anthropic-balance 20")
+            return 1
+        spend = load_json(SPEND, {})
+        DATA.mkdir(exist_ok=True)
+        ANTHROPIC_BALANCE.write_text(json.dumps({
+            "amount": amount, "date": today.isoformat(),
+            "spent_same_day_before": spend.get(today.isoformat(), 0.0),
+        }), encoding="utf-8")
+        print(f"записал: на балансе Anthropic ${amount:.2f} на {today}")
+        return 0
 
     if "--test" in argv:
         sent = send(env, "✅ Проверка: напоминания об оплатах PROFIX работают.\n"
@@ -194,6 +237,12 @@ def main(argv: list[str]) -> int:
         return 0 if sent else 1
 
     if "--list" in argv:
+        est = anthropic_estimate(today)
+        if est:
+            left, per_day, days = est
+            print(f"Anthropic: осталось ≈ ${left:.2f}, тратится ≈ ${per_day:.2f}/день, хватит ≈ на {days} дн.")
+        else:
+            print("Anthropic: сумма баланса не задана (python3 reminders.py --anthropic-balance СУММА)")
         for item in payments:
             due = next_due(item, today, env, now)
             auto = " (по данным Timeweb)" if item.get("source") == "timeweb" and env.get("TIMEWEB_TOKEN") else ""
@@ -217,6 +266,26 @@ def main(argv: list[str]) -> int:
         if send(env, format_message(item, due, days, cards)):
             sent_log[key] = now.isoformat(timespec="minutes")
             print(f"{now:%Y-%m-%d %H:%M} отправлено: {key}", flush=True)
+
+    est = anthropic_estimate(today)
+    if est:
+        left, per_day, days = est
+        key = f"anthropic-low|{today.isoformat()}"
+        if days <= 1 and key not in sent_log:
+            cards = load_json(CARDS, {})
+            if left <= 0:
+                head = "💳 По расчёту баланс Anthropic закончился — бот может перейти на заготовки."
+            elif days < 1:
+                head = f"💳 Баланс Anthropic: осталось примерно ${left:.2f} — меньше чем на день работы бота."
+            else:
+                head = f"💳 Баланс Anthropic: осталось примерно ${left:.2f} — хватит примерно на день."
+            text = (f"{head}\n"
+                    f"Пополнить: https://console.anthropic.com/settings/billing — "
+                    f"{cards.get('visa1814', 'Visa •••• 1814')}\n"
+                    f"После пополнения выполните на сервере:\n"
+                    f"python3 reminders.py --anthropic-balance СУММА")
+            if send(env, text):
+                sent_log[key] = now.isoformat(timespec="minutes")
 
     # Старые записи больше не нужны — храним только последние 60 дней.
     cutoff = (today - timedelta(days=60)).isoformat()

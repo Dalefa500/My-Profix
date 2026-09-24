@@ -259,6 +259,87 @@ def remember(sender: str, role: str, text: str) -> None:
 
 # ── разговор ───────────────────────────────────────────────────────
 
+# ── расходы на Claude ─────────────────────────────────────────────
+#
+# Anthropic не отдаёт остаток баланса через API, поэтому бот сам считает,
+# сколько потратил: в каждом ответе есть число токенов. Цены — за миллион
+# токенов (ввод, вывод); запись в кеш стоит 1.25× ввода, чтение — 0.1×.
+# Это оценка, а не выписка: для напоминания «деньги скоро кончатся»
+# точности хватает.
+PRICE_PER_MTOK = {
+    "claude-opus-5": (5.0, 25.0),
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+SPEND_FILE = STATE_FILE.parent / "spend.json"
+BILLING_ALERT_FILE = STATE_FILE.parent / "billing-alert.json"
+BILLING_ALERT_EVERY = 6 * 60 * 60  # не чаще раза в 6 часов
+
+
+def _dushanbe_day() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(time.time() + 5 * 3600))
+
+
+def record_spend(usage: Any) -> None:
+    price_in, price_out = PRICE_PER_MTOK.get(MODEL, PRICE_PER_MTOK["claude-opus-5"])
+    fresh = getattr(usage, "input_tokens", 0) or 0
+    written = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    read = getattr(usage, "cache_read_input_tokens", 0) or 0
+    out = getattr(usage, "output_tokens", 0) or 0
+    cost = (fresh * price_in + written * price_in * 1.25
+            + read * price_in * 0.1 + out * price_out) / 1_000_000
+    try:
+        spend = json.loads(SPEND_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        spend = {}
+    day = _dushanbe_day()
+    spend[day] = round(spend.get(day, 0.0) + cost, 6)
+    try:
+        SPEND_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SPEND_FILE.write_text(json.dumps(spend, indent=1), encoding="utf-8")
+    except OSError as exc:
+        print(f"не смог записать расходы: {exc}", flush=True)
+
+
+def _is_billing_error(exc: Exception) -> bool:
+    return (getattr(exc, "status_code", None) == 402
+            or "credit balance" in str(exc).lower()
+            or "billing_error" in str(exc))
+
+
+async def alert_owner(text: str) -> None:
+    if not (TG_TOKEN and TG_CHAT_IDS):
+        return
+    async with httpx.AsyncClient(timeout=20) as http:
+        for chat_id in TG_CHAT_IDS:
+            try:
+                await http.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+                                json={"chat_id": chat_id, "text": text})
+            except httpx.HTTPError as exc:
+                print(f"не смог предупредить владельца в Telegram: {exc}", flush=True)
+
+
+async def warn_billing_once() -> None:
+    """Баланс Anthropic кончился — сразу сказать владельцу, но не спамить."""
+    try:
+        last = json.loads(BILLING_ALERT_FILE.read_text(encoding="utf-8")).get("ts", 0)
+    except (FileNotFoundError, json.JSONDecodeError):
+        last = 0
+    if time.time() - last < BILLING_ALERT_EVERY:
+        return
+    await alert_owner(
+        "⚠️ Баланс Anthropic закончился — бот Фарзона сейчас отвечает клиентам "
+        "заготовками, без живого разговора.\n"
+        "Пополните: https://console.anthropic.com/settings/billing (Visa •••• 1814). "
+        "После пополнения выполните на сервере: python3 reminders.py --anthropic-balance СУММА"
+    )
+    try:
+        BILLING_ALERT_FILE.write_text(json.dumps({"ts": time.time()}), encoding="utf-8")
+    except OSError:
+        pass
+
+
 async def ask_claude(messages: list[dict[str, str]], system: str = "") -> str | None:
     if BRAIN == "fallback":
         return None
@@ -293,9 +374,13 @@ async def ask_claude(messages: list[dict[str, str]], system: str = "") -> str | 
         )
     except Exception as exc:
         print(f"Claude не ответил: {exc}", flush=True)
+        if _is_billing_error(exc):
+            await warn_billing_once()
         return None
     finally:
         await client.close()
+
+    record_spend(resp.usage)
 
     if resp.stop_reason == "refusal":
         print("Claude отказался отвечать", flush=True)

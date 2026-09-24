@@ -5,11 +5,5 @@
     "pay": "card:visa3578",
     "note": "Пополнить баланс: https://timeweb.cloud/my/finances — без оплаты сервер отключат и бот перестанет отвечать клиентам. Дату напоминание берёт из Timeweb само.",
     "source": "timeweb"
-  },
-  {
-    "title": "Anthropic — баланс бота (автопополнение)",
-    "monthly_day": 1,
-    "pay": "card:visa1814",
-    "note": "Проверьте, что на карте есть деньги, иначе автопополнение не пройдёт и бот начнёт отвечать заготовками. Баланс: https://console.anthropic.com/settings/billing"
   }
 ]
