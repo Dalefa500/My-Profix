@@ -433,9 +433,10 @@ def whatsapp_url() -> str:
 # публичной ссылке. Instagram показывает её квадратом во всю ширину
 # карточки (уменьшить нельзя), прозрачность заливает белым, а GIF не
 # проигрывает — поэтому это квадратный логотип PROFIX с короткой
-# подсказкой под ним на языке клиента: wa-profix-ru.png / wa-profix-tj.png.
+# подписью «Всё для ремонта вашего дома» на языке клиента:
+# wa-home-ru.png / wa-home-tj.png.
 WA_CARD_BASE = os.getenv("WA_CARD_BASE", "https://dalefa500.github.io/My-Profix/img").rstrip("/")
-WA_CARD_IMAGE = os.getenv("WA_CARD_IMAGE", "wa-profix-{lang}.png").strip()
+WA_CARD_IMAGE = os.getenv("WA_CARD_IMAGE", "wa-home-{lang}.png").strip()
 
 
 async def _post_message(recipient: dict[str, str], message: dict[str, Any]) -> httpx.Response:
