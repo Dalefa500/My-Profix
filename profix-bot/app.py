@@ -388,31 +388,49 @@ def whatsapp_url() -> str:
     return "https://wa.me/" + re.sub(r"\D", "", MANAGER_WHATSAPP)
 
 
-async def send_whatsapp_button(recipient_id: str, tajik: bool) -> None:
-    """Отдельное сообщение с кнопкой «Написать в WhatsApp».
+# Анимированные карточки лежат на GitHub Pages: Instagram берёт
+# картинку только по публичной ссылке.
+WA_CARD_BASE = os.getenv("WA_CARD_BASE", "https://dalefa500.github.io/powermix-site/img").rstrip("/")
 
-    Номер клиент не видит — только кнопку. Если Instagram шаблон не
-    принял, шлём ссылку обычным сообщением: номер в ней виден, зато
-    клиент всё равно сможет написать.
-    """
-    title = "Навиштан ба WhatsApp" if tajik else "Написать в WhatsApp"
-    caption = "WhatsApp-и PROFIX 👇" if tajik else "WhatsApp PROFIX 👇"
+
+async def _post_message(recipient_id: str, message: dict[str, Any]) -> httpx.Response:
     url = f"https://graph.instagram.com/{GRAPH_API_VERSION}/me/messages"
-    payload = {
-        "template_type": "button",
-        "text": caption,
-        "buttons": [{"type": "web_url", "url": whatsapp_url(), "title": title}],
-    }
     async with httpx.AsyncClient(timeout=20) as http:
-        resp = await http.post(
+        return await http.post(
             url,
             params={"access_token": IG_ACCESS_TOKEN},
-            json={"recipient": {"id": recipient_id},
-                  "message": {"attachment": {"type": "template", "payload": payload}}},
+            json={"recipient": {"id": recipient_id}, "message": message},
         )
-    if resp.status_code < 400:
-        return
-    print(f"кнопка WhatsApp не ушла: {resp.status_code} {resp.text[:300]}", flush=True)
+
+
+async def send_whatsapp_button(recipient_id: str, tajik: bool) -> None:
+    """Отдельное сообщение: анимированная карточка и кнопка WhatsApp.
+
+    Номер клиент не видит — только кнопку. Пробуем по очереди, от
+    самого красивого к самому простому: карточка с картинкой, просто
+    кнопка, голая ссылка (номер в ней виден, но написать можно).
+    """
+    title = "Навиштан ба WhatsApp" if tajik else "Написать в WhatsApp"
+    button = {"type": "web_url", "url": whatsapp_url(), "title": title}
+    card = {"attachment": {"type": "template", "payload": {
+        "template_type": "generic",
+        "elements": [{
+            "title": "Ба мо дар WhatsApp нависед" if tajik else "Напишите нам в WhatsApp",
+            "subtitle": "PROFIX · зуд ҷавоб медиҳем" if tajik else "PROFIX · ответим быстро",
+            "image_url": f"{WA_CARD_BASE}/wa-card-{'tj' if tajik else 'ru'}.gif",
+            "buttons": [button],
+        }],
+    }}}
+    plain = {"attachment": {"type": "template", "payload": {
+        "template_type": "button",
+        "text": "WhatsApp-и PROFIX 👇" if tajik else "WhatsApp PROFIX 👇",
+        "buttons": [button],
+    }}}
+    for kind, message in (("карточка", card), ("кнопка", plain)):
+        resp = await _post_message(recipient_id, message)
+        if resp.status_code < 400:
+            return
+        print(f"WhatsApp: {kind} не ушла: {resp.status_code} {resp.text[:300]}", flush=True)
     await send_message(recipient_id, whatsapp_url())
 
 
