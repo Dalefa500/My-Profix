@@ -138,12 +138,15 @@ Direct. Отвечаешь клиентам, которые пришли из п
   грунтовку PROFIX, под штукатурку — работы нашей бригадой.
 - Номер телефона проси естественно, когда разговор к этому подошёл,
   а не в первом же сообщении.{
-  " Если клиенту удобнее написать самому — сначала всё же предложи"
-  " оставить номер: так менеджер перезвонит сам. Если он всё равно"
-  " хочет написать сам, дай кнопку WhatsApp: ответь ОДНОЙ меткой"
-  " [WHATSAPP], без всякого текста. Бот сам пришлёт карточку с"
-  " логотипом и кнопкой — комментировать её («нажмите кнопку ниже»)"
-  " не нужно. Сам номер WhatsApp и ссылку на него НИКОГДА не пиши."
+  " Если клиент просит WhatsApp, ваш номер или хочет написать сам —"
+  " НЕ уговаривай оставить номер и не проси писать телефон сюда."
+  " Поблагодари за обращение одной тёплой фразой (например: «Спасибо,"
+  " что обратились в PROFIX! Будем рады помочь с ремонтом.» /"
+  " «Ташаккур, ки ба PROFIX муроҷиат кардед! Бо хурсандӣ дар таъмир"
+  " кӯмак мекунем.») и в самом конце поставь метку [WHATSAPP]. Бот сам"
+  " пришлёт следом карточку с логотипом и кнопкой WhatsApp —"
+  " про кнопку не пиши («нажмите ниже» и т.п. не нужно). Сам номер"
+  " WhatsApp и ссылку на него НИКОГДА не пиши."
   if MANAGER_WHATSAPP else ""
   }
 - Получил номер — поблагодари и скажи, что менеджер свяжется.
@@ -311,6 +314,27 @@ def looks_tajik(text: str) -> bool:
 
 GREETING_RU = "Здравствуйте! Меня зовут Фарзона, я представитель компании PROFIX."
 GREETING_TJ = "Салом! Номи ман Фарзона, ман намояндаи ширкати PROFIX ҳастам."
+
+
+_OPENER_RE = re.compile(
+    r"^\s*(?:здравствуй\w*|добр\w+\s+\w+|привет\w*|салом\w*|ассалом\w*)[^.!?]*[.!?]\s*",
+    re.IGNORECASE)
+_NAME_SENTENCE_RE = re.compile(r"^[^.!?]*фарзона[^.!?]*[.!?]\s*", re.IGNORECASE)
+
+
+def with_greeting(reply: str, tajik: bool) -> str:
+    """Первый ответ начинается ровно с нашего приветствия.
+
+    Своё приветствие модели («Привет! Я Фарзона…») срезаем, чтобы не
+    здороваться дважды, и ставим точную фразу, которую выбрал владелец.
+    """
+    greeting = GREETING_TJ if tajik else GREETING_RU
+    if reply.startswith(greeting):
+        return reply
+    rest = reply
+    for _ in range(2):
+        rest = _NAME_SENTENCE_RE.sub("", _OPENER_RE.sub("", rest, count=1), count=1)
+    return f"{greeting} {rest.strip()}".strip()
 
 
 def fallback_reply(text: str) -> str:
@@ -631,8 +655,8 @@ async def handle_message(sender: str, text: str) -> None:
     # В первом ответе Фарзона обязательно представляется. Промпт это
     # требует, а здесь страховка на случай, если модель забыла.
     tajik = looks_tajik(text)
-    if first_reply and "фарзона" not in reply.lower():
-        reply = f"{GREETING_TJ if tajik else GREETING_RU} {reply}"
+    if first_reply:
+        reply = with_greeting(reply, tajik)
 
     wants_button = bool(MANAGER_WHATSAPP) and (
         WHATSAPP_MARK in reply or bool(_WA_NOTE_RE.search(reply)))
@@ -643,12 +667,12 @@ async def handle_message(sender: str, text: str) -> None:
     stripped = strip_our_number(reply)
     if stripped != reply:
         reply, wants_button = stripped, bool(MANAGER_WHATSAPP)
-    remember(sender, "assistant", WHATSAPP_MARK if wants_button else reply)
-    if wants_button:
-        # Только карточка с логотипом и кнопкой — без подписи над ней.
-        await send_whatsapp_button(sender, tajik)
-    elif reply:
+    remember(sender, "assistant", f"{reply} {WHATSAPP_MARK}".strip() if wants_button else reply)
+    # Сначала короткая благодарность, следом карточка WhatsApp.
+    if reply:
         await send_message(sender, reply)
+    if wants_button:
+        await send_whatsapp_button(sender, tajik)
 
     # Появился телефон — заявка созрела. Один лид на диалог, чтобы
     # менеджер не получал одно и то же по три раза.
