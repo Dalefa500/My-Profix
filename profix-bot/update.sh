@@ -15,10 +15,21 @@ SHA=$(curl -fsS "https://api.github.com/repos/$REPO/commits/$BRANCH" \
 [ -n "$SHA" ] || { echo "Не удалось узнать последнюю версию на GitHub"; exit 1; }
 echo "── Версия $SHA ──"
 
-for f in app.py catalog_data.py update.sh; do
+for f in app.py catalog_data.py update.sh reminders.py payments.json; do
     curl -fsS -o "$f.new" "https://raw.githubusercontent.com/$REPO/$SHA/profix-bot/$f"
     mv "$f.new" "$f"
 done
+
+# Напоминания об оплатах: скрипт запускается каждый час, а сообщение
+# в Telegram шлёт один раз в сутки начиная с 10:00 по Душанбе.
+mkdir -p data
+if command -v python3 >/dev/null 2>&1; then
+    CRON_LINE="7 * * * * cd $(pwd) && python3 reminders.py >> data/reminders.log 2>&1 # profix-reminders"
+    ( crontab -l 2>/dev/null | grep -v "profix-reminders"; echo "$CRON_LINE" ) | crontab -
+    echo "── Напоминания об оплатах включены ──"
+else
+    echo "!! На сервере нет python3 — напоминания об оплатах не включены"
+fi
 
 echo "── Пересобираю бота ──"
 docker compose up -d --build
