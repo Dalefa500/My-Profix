@@ -18,6 +18,10 @@ def _owner_ids() -> list[str]:
 
 
 async def notify_owners(text: str) -> None:
+    # Учредитель попросил не присылать в Telegram события приложения
+    # (касса, замесы) — журнал в приложении остаётся. Вернуть: APP_TELEGRAM_NOTIFY=1.
+    if os.environ.get("APP_TELEGRAM_NOTIFY", "0").strip() != "1":
+        return
     token = os.environ.get("BOT_TOKEN", "").strip()
     chat_ids = _owner_ids()
     if not token or not chat_ids:

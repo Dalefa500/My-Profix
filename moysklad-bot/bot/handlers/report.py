@@ -73,6 +73,39 @@ async def build_balance_only_text(moysklad: MoySkladClient) -> str:
     return f"📊 Остаток кассы\n\n{await _balance_block(moysklad)}"
 
 
+MONTHS_RU = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль",
+             "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+
+
+async def build_month_report_text(moysklad: MoySkladClient, year: int, month: int) -> str:
+    """Касса за календарный месяц: по дням, итоги и остаток на счетах."""
+    start = datetime(year, month, 1)
+    end = datetime(year + (month == 12), month % 12 + 1, 1)
+    try:
+        daily = await moysklad.get_daily_cash_summary(start, min(end, datetime.now()))
+    except MoySkladError:
+        logger.exception("Failed to build month report")
+        return "⚠️ Не получилось получить данные из МойСклад для отчёта за месяц."
+
+    total_income = sum(d["income"] for d in daily.values())
+    total_expense = sum(d["expense"] for d in daily.values())
+    rows = [
+        [day[8:10] + "." + day[5:7], fmt(daily[day]["income"]), fmt(daily[day]["expense"])]
+        for day in sorted(daily)
+    ]
+    body = render_table(["Дата", "Доход", "Расход"], rows) if rows else "(за месяц нет записей)"
+    totals = render_table(
+        ["Итого", "Сумма"],
+        [
+            ["Доход", fmt(total_income)],
+            ["Расход", fmt(total_expense)],
+            ["Прибыль", fmt(total_income - total_expense)],
+        ],
+    )
+    return (f"📅 Касса за {MONTHS_RU[month - 1]} {year}\n\n{body}\n\n{totals}"
+            f"\n\n{await _balance_block(moysklad)}")
+
+
 async def build_period_report_text(moysklad: MoySkladClient, period_key: str) -> str:
     now = datetime.now()
     label, days = CP_PERIOD_DAYS[period_key]

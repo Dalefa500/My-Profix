@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import os
 import socket
 from typing import Any, Awaitable, Callable
 
@@ -15,7 +16,7 @@ from aiogram.types import BotCommand, TelegramObject, Update
 
 from .config import Config, load_config
 from .handlers import routers
-from .handlers.report import build_full_report_text
+from .handlers.report import build_full_report_text, build_month_report_text
 from .moysklad import MoySkladClient
 
 logging.basicConfig(level=logging.INFO)
@@ -81,10 +82,23 @@ async def daily_report_loop(bot: Bot, moysklad: MoySkladClient, config: Config) 
         )
         hour, minute = 20, 0
 
+    # CASH_REPORT: off — ничего не присылать (так попросил учредитель:
+    # в Telegram только заявки и напоминания об оплатах), monthly — касса
+    # за месяц в последний день месяца, daily — отчёт каждый день.
+    schedule = os.environ.get("CASH_REPORT", "off").strip().lower()
+    if schedule == "off":
+        return
+
     while True:
         await asyncio.sleep(_seconds_until(hour, minute))
+        today = dt.date.today()
+        if schedule == "monthly" and (today + dt.timedelta(days=1)).month == today.month:
+            continue
         try:
-            text = await build_full_report_text(moysklad)
+            if schedule == "monthly":
+                text = await build_month_report_text(moysklad, today.year, today.month)
+            else:
+                text = await build_full_report_text(moysklad)
         except Exception:
             logger.exception("Failed to build scheduled daily report")
             continue
@@ -102,6 +116,22 @@ async def main() -> None:
         session=Ipv4OnlySession(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    # Меню и команды бота учредитель попросил убрать: заявки из Instagram
+    # и напоминания об оплатах шлют другие сервисы тем же ботом, а этот
+    # процесс остаётся только ради отчёта по CASH_REPORT (по умолчанию выключен).
+    # Вернуть меню: TELEGRAM_MENU=1.
+    if os.environ.get("TELEGRAM_MENU", "0").strip() != "1":
+        await bot.delete_my_commands()
+        moysklad = MoySkladClient(config.moysklad_token)
+        logger.info("Menu disabled; only the scheduled cash report runs")
+        try:
+            await daily_report_loop(bot, moysklad, config)
+            await asyncio.Event().wait()  # CASH_REPORT=off: просто не выходим
+        finally:
+            await moysklad.close()
+            await bot.session.close()
+        return
+
     await bot.set_my_commands(
         [
             BotCommand(command="start", description="Открыть меню"),
