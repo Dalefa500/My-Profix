@@ -1548,6 +1548,7 @@ async function renderProduction(container) {
       foot.append(
         el("span", `row__tag${b.ok ? " row__tag--paid" : ""}`, b.cancelled ? "отменён" : b.ok ? "в норме" : "поправлен"),
       );
+      if (b.enterId && !b.cancelled) foot.append(el("span", "row__tag row__tag--ms", "в МойСкладе"));
       const fixes = b.additions.map((a) => `${a.name} ${qty(a.qty)} ${a.uom}`.trim()).join(", ");
       foot.append(el("span", "row__note", [fixes, b.note, b.name].filter(Boolean).join(" · ")));
       line.append(foot);
@@ -1601,6 +1602,48 @@ async function renderProduction(container) {
     cards.append(add);
   }
   container.append(cards);
+
+  container.append(writeOffCard(data));
+}
+
+/* Списание в МойСкладе: включает только учредитель. Пока бухгалтер
+   вносит оприходование и списание вручную, включать нельзя — сырьё
+   спишется дважды. */
+function writeOffCard(data) {
+  const card = el("div", `card${data.writeOff ? "" : " card--muted"}`);
+  card.append(el("div", "card__title", "Списание в МойСкладе"));
+  const missing = data.cards.filter((c) => !c.productHref).length;
+  card.append(
+    el(
+      "p",
+      "code__note",
+      data.writeOff
+        ? "Включено: каждый замес сам списывает сырьё и оприходует мешки в МойСкладе. Вручную их больше не вносите."
+        : "Выключено: замесы видны только здесь, в МойСкладе ничего не меняется.",
+    ),
+  );
+  if (missing) {
+    card.append(
+      el("p", "code__note is-neg", `У ${missing} ${missing % 10 === 1 && missing % 100 !== 11 ? "техкарты" : "техкарт"} не выбран готовый мешок из МойСклада — такие замесы при включённом списании не запишутся.`),
+    );
+  }
+  if (!data.canToggle) return card;
+  const toggle = el("button", `btn ${data.writeOff ? "btn--ghost" : "btn--primary"}`, data.writeOff ? "Выключить" : "Включить списание");
+  toggle.type = "button";
+  toggle.addEventListener("click", async () => {
+    const ask = data.writeOff
+      ? "Выключить? Новые замесы перестанут попадать в МойСклад."
+      : "Включить? С этого момента каждый замес сам создаёт в МойСкладе списание сырья и оприходование мешков.\n\nБухгалтер должен перестать вносить их вручную — иначе сырьё спишется дважды.";
+    if (!confirm(ask)) return;
+    try {
+      await send("/api/production/settings", { writeOff: !data.writeOff });
+      render();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+  card.append(toggle);
+  return card;
 }
 
 /* Выбор товара или сырья из МойСклада: поиск по названию, нажатие —
@@ -1693,6 +1736,10 @@ function drawCardView(c, canEdit) {
   body.replaceChildren();
   const card = el("div", "card");
   card.append(el("div", "card__title", `На один замес · ${c.bags} меш. по ${qty(c.bagKg)} кг`));
+  card.append(
+    el("p", `code__note${c.productHref ? "" : " is-neg"}`,
+      c.productHref ? `Готовый мешок в МойСкладе: ${c.productName}` : "Готовый мешок в МойСкладе не выбран"),
+  );
   const rows = el("div", "rows");
   c.materials.forEach((m) => {
     const line = el("div", "row row--stacked");
@@ -1738,12 +1785,24 @@ function drawCardForm(c) {
   const form = el("form", "card add-form");
 
   const name = el("input", "search");
-  name.placeholder = "Марка, например: Плиточный клей 800";
+  name.placeholder = "Марка, например: клей 800";
   name.maxLength = 80;
   name.value = c ? c.name : "";
   form.append(name);
 
-  const bags = numberField("Мешков с одного замеса", c ? c.bags : "", { inputMode: "numeric" });
+  // Какой товар МойСклада оприходовать — нужен, когда включено списание
+  form.append(el("div", "field__label", "Готовый мешок в МойСкладе"));
+  let product = c && c.productHref ? { href: c.productHref, name: c.productName } : null;
+  const productName = el("div", "chosen", product ? product.name : "не выбран");
+  form.append(
+    productName,
+    catalogPicker((item) => {
+      product = item;
+      productName.textContent = item.name;
+    }, "Найти мешок по названию"),
+  );
+
+  const bags = numberField("Мешков с замеса", c ? c.bags : "", { inputMode: "numeric" });
   const bagKg = numberField("Вес мешка, кг", c ? c.bagKg : 25);
   const pair = el("div", "field-pair");
   pair.append(bags.wrap, bagKg.wrap);
@@ -1758,11 +1817,11 @@ function drawCardForm(c) {
       if (items.some((m) => m.href === item.href)) return;
       items.push({ href: item.href, name: item.name, uom: item.uom, qty: 0 });
       table.draw();
-    }, "+ Добавить сырьё: начните вводить название"),
+    }, "+ Добавить сырьё"),
   );
 
   const note = el("input", "search");
-  note.placeholder = "Заметка: порядок загрузки, время перемешивания";
+  note.placeholder = "Заметка: порядок загрузки";
   note.maxLength = 300;
   note.value = c ? c.note || "" : "";
   form.append(note);
@@ -1790,6 +1849,8 @@ function drawCardForm(c) {
       await send("/api/techcards", {
         id: c ? c.id : "",
         name: name.value,
+        productHref: product ? product.href : "",
+        productName: product ? product.name : "",
         bags: Math.round(bags.read()),
         bagKg: bagKg.read(),
         materials: items,
@@ -1954,6 +2015,8 @@ const ACTIONS = {
   techcard_archived: "Техкарта в архиве",
   batch: "Замес",
   batch_cancel: "Замес отменён",
+  writeoff_on: "Списание в МойСкладе включено",
+  writeoff_off: "Списание в МойСкладе выключено",
 };
 
 // 2026-09-23T18:54:10 -> 23.09 18:54

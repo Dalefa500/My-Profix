@@ -1010,3 +1010,7 @@ svg { display: block; }
 .qty-row__remove:active { background: rgba(255, 255, 255, .08); }
 .fix { display: grid; gap: 10px; }
 .picker { display: grid; gap: 8px; }
+
+.row__tag--ms { color: var(--income); border-color: rgba(74, 151, 216, .45); }
+.card--muted { border-color: rgba(255, 255, 255, .1); }
+.code__note.is-neg { color: var(--warn); }

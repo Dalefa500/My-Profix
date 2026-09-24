@@ -285,9 +285,12 @@ class MoySkladClient:
         return await self._request("POST", f"/entity/{entity}", json=payload)
 
     async def cancel_cash_order(self, kind: str, doc_id: str, note: str) -> dict:
-        """Отмена без удаления: документ остаётся, но снимается с
-        проведения, а в назначении дописывается, кто и почему отменил."""
         entity = "cashin" if kind == "in" else "cashout"
+        return await self.unpost(entity, doc_id, note)
+
+    async def unpost(self, entity: str, doc_id: str, note: str) -> dict:
+        """Отмена без удаления: документ остаётся, но снимается с
+        проведения, а в описании дописывается, кто и почему отменил."""
         doc = await self._request("GET", f"/entity/{entity}/{doc_id}")
         description = f"{note}\n\n{doc.get('description') or ''}".strip()
         return await self._request(
@@ -295,6 +298,35 @@ class MoySkladClient:
             f"/entity/{entity}/{doc_id}",
             json={"applicable": False, "description": description},
         )
+
+    @staticmethod
+    def assortment_meta(href: str) -> dict:
+        """Ссылка на товар или модификацию — тип берётся из самой ссылки."""
+        match = re.search(r"/entity/(product|variant|bundle|service)/", href)
+        return MoySkladClient._meta(href, match.group(1) if match else "product")
+
+    async def create_stock_document(self, entity: str, positions: list[dict], description: str) -> dict:
+        """Списание (loss) сырья или оприходование (enter) готовых мешков
+        на основной склад. positions: [{"href", "quantity", "price"?}],
+        цена — в сомони за единицу."""
+        if entity not in ("loss", "enter"):
+            raise MoySkladError(f"Неизвестный складской документ: {entity}")
+        rows = []
+        for position in positions:
+            row: dict[str, Any] = {
+                "quantity": position["quantity"],
+                "assortment": self.assortment_meta(position["href"]),
+            }
+            if "price" in position:
+                row["price"] = round(position["price"] * 100)
+            rows.append(row)
+        payload = {
+            "organization": self._meta(await self.get_default_organization_href(), "organization"),
+            "store": self._meta(await self.get_default_store_href(), "store"),
+            "description": description,
+            "positions": rows,
+        }
+        return await self._request("POST", f"/entity/{entity}", json=payload)
 
     async def get_account_balances(self) -> list[dict]:
         """Current balance per cash register / bank account via MoySklad's

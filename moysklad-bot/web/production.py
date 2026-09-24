@@ -10,8 +10,12 @@
 настоящую себестоимость с учётом доливок, какие марки приходится
 поправлять чаще и сколько химии уходит сверх рецепта.
 
-Сырьё в МойСкладе пока не списывается: как у завода оформляется выпуск,
-ещё не решено, и двойное списание хуже, чем никакого.
+Выпуск на заводе оформляется оприходованием мешков и списанием сырья.
+Когда учредитель включает «Списание в МойСкладе», каждый замес сам
+создаёт оба документа: списание сырья по техкарте (с доливками) и
+оприходование мешков по себестоимости замеса. Выключено по умолчанию:
+пока бухгалтер вносит их вручную, автоматика задвоила бы списание.
+Отмена замеса снимает оба документа с проведения, не удаляя их.
 """
 
 from __future__ import annotations
@@ -25,14 +29,30 @@ from pydantic import BaseModel, Field
 
 from bot.moysklad import BASE_URL, MoySkladClient, MoySkladError
 from web import store
-from web.access import Person, allow, audit, client_ip, require_can, require_person
+from web.access import Person, allow, audit, client_ip, require_can, require_manager, require_person
 
 router = APIRouter()
 editor = require_can("production_edit")
 
 CARDS_FILE = "techcards.json"
 BATCHES_FILE = "batches.jsonl"
+SETTINGS_FILE = "settings.json"
 CATALOG_TTL = 300
+
+# Что цеху разрешено в МойСкладе: создать списание и оприходование и
+# снять их с проведения при отмене замеса.
+PRODUCTION_WRITE_ALLOW = (
+    r"POST /entity/(loss|enter)",
+    r"PUT /entity/(loss|enter)/[0-9a-f-]{36}",
+)
+
+
+def _settings() -> dict:
+    return store.read_json(SETTINGS_FILE, {})
+
+
+def write_off_enabled() -> bool:
+    return bool(_settings().get("productionWriteOff"))
 
 
 def _key(href: str) -> str:
@@ -151,7 +171,26 @@ async def production(
         "recent": recent,
         "cards": sorted(priced, key=lambda c: c["name"]),
         "canEdit": me.can("production_edit"),
+        "writeOff": write_off_enabled(),
+        "canToggle": me.can_manage,
     }
+
+
+class WriteOffSetting(BaseModel):
+    writeOff: bool
+
+
+@router.post("/api/production/settings")
+async def production_settings(
+    payload: WriteOffSetting, request: Request, me: Person = Depends(require_manager)
+) -> dict:
+    settings = _settings()
+    settings.update(
+        {"productionWriteOff": payload.writeOff, "changedBy": me.name, "changedAt": store.now()}
+    )
+    store.write_json(SETTINGS_FILE, settings)
+    audit("writeoff_on" if payload.writeOff else "writeoff_off", me, client_ip(request))
+    return {"ok": True, "writeOff": payload.writeOff}
 
 
 # --- техкарты -------------------------------------------------------------
@@ -174,7 +213,9 @@ def _check_href(href: str) -> str:
 class TechCard(BaseModel):
     id: str = ""
     name: str = Field(min_length=2, max_length=80)
+    # Готовый мешок в МойСкладе — его оприходует замес
     productHref: str = ""
+    productName: str = Field("", max_length=120)
     bags: int = Field(ge=1, le=1000)
     bagKg: float = Field(25, gt=0, le=100)
     materials: list[Material] = Field(min_length=1, max_length=30)
@@ -189,6 +230,7 @@ async def save_card(payload: TechCard, request: Request, me: Person = Depends(ed
         "id": payload.id or f"tc_{secrets.token_hex(4)}",
         "name": payload.name.strip(),
         "productHref": _check_href(payload.productHref) if payload.productHref else "",
+        "productName": payload.productName.strip() if payload.productHref else "",
         "bags": payload.bags,
         "bagKg": payload.bagKg,
         "materials": [
@@ -260,6 +302,11 @@ async def add_batch(payload: Batch, request: Request, me: Person = Depends(edito
 
     bags = card["bags"] * payload.count
     base_cost = _priced(card, prices)["costPerBatch"] * payload.count
+
+    documents: dict[str, str] = {}
+    if write_off_enabled():
+        documents = await _post_to_moysklad(request, card, payload.count, additions, bags, base_cost + extra, me)
+
     entry = {
         "id": f"b_{secrets.token_hex(5)}",
         "t": store.now(),
@@ -275,13 +322,55 @@ async def add_batch(payload: Batch, request: Request, me: Person = Depends(edito
         "extraCost": extra,
         "baseCost": base_cost,
         "note": payload.note.strip(),
+        **documents,
     }
     store.append(BATCHES_FILE, entry)
     status = "в норме" if payload.ok else "поправлен: " + ", ".join(
         f"{a['name']} {a['qty']:g} {a['uom']}".strip() for a in additions
     )
-    audit("batch", me, client_ip(request), f"{card['name']} × {payload.count} · {status}")
-    return {"ok": True, "id": entry["id"]}
+    posted = " · в МойСкладе" if documents else ""
+    audit("batch", me, client_ip(request), f"{card['name']} × {payload.count} · {status}{posted}")
+    return {"ok": True, "id": entry["id"], "posted": bool(documents)}
+
+
+async def _post_to_moysklad(
+    request: Request, card: dict, count: int, additions: list[dict], bags: int, cost: float, me: Person
+) -> dict[str, str]:
+    """Списание сырья и оприходование мешков за один замес. Сначала
+    списание: если оприходование потом не пройдёт, списание снимается
+    с проведения — половинчатого выпуска в учёте не остаётся."""
+    if not card.get("productHref"):
+        raise HTTPException(
+            status_code=400,
+            detail="В техкарте не выбран готовый мешок из МойСклада — откройте техкарту и укажите его",
+        )
+    used: dict[str, float] = {}
+    for m in card["materials"]:
+        used[m["href"]] = used.get(m["href"], 0.0) + m["qty"] * count
+    for a in additions:
+        used[a["href"]] = used.get(a["href"], 0.0) + a["qty"]
+
+    moysklad: MoySkladClient = request.app.state.moysklad
+    description = f"Замес: {card['name']} × {count} — {me.name} (приложение Profix)"
+    try:
+        loss = await moysklad.create_stock_document(
+            "loss", [{"href": href, "quantity": qty} for href, qty in used.items()], description
+        )
+    except MoySkladError as exc:
+        raise HTTPException(status_code=502, detail=f"Списание в МойСклад не прошло: {exc}")
+    try:
+        enter = await moysklad.create_stock_document(
+            "enter",
+            [{"href": card["productHref"], "quantity": bags, "price": cost / bags}],
+            description,
+        )
+    except MoySkladError as exc:
+        try:
+            await moysklad.unpost("loss", loss["id"], "ОТМЕНЕНО: оприходование не прошло")
+        except MoySkladError:
+            pass
+        raise HTTPException(status_code=502, detail=f"Оприходование в МойСклад не прошло: {exc}")
+    return {"lossId": loss.get("id", ""), "enterId": enter.get("id", "")}
 
 
 class CancelBatch(BaseModel):
@@ -297,6 +386,15 @@ async def cancel_batch(
     today = datetime.now().date().isoformat()
     if not batch or batch["by"] != me.id or not batch["t"].startswith(today) or batch_id in cancelled:
         raise HTTPException(status_code=403, detail="Этот замес отменить нельзя")
+    # Документы в МойСкладе снимаем с проведения раньше, чем отмечаем
+    # отмену у себя: не вышло там — замес остаётся действующим и здесь.
+    note = f"ОТМЕНЕНО {datetime.now():%d.%m %H:%M} — {me.name}: {payload.reason}"
+    try:
+        for entity, key in (("enter", "enterId"), ("loss", "lossId")):
+            if batch.get(key):
+                await request.app.state.moysklad.unpost(entity, batch[key], note)
+    except MoySkladError as exc:
+        raise HTTPException(status_code=502, detail=f"МойСклад не принял отмену: {exc}")
     store.append(BATCHES_FILE, {"cancel": batch_id, "by": me.id, "t": store.now(), "reason": payload.reason})
     audit("batch_cancel", me, client_ip(request), f"{batch['cardName']} × {batch['count']} · {payload.reason}")
     return {"ok": True}

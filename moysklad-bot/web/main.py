@@ -40,6 +40,7 @@ from web.access import (
 from web.access import client_ip as _client_ip
 from web.cash import CASH_WRITE_ALLOW
 from web.cash import router as cash_router
+from web.production import PRODUCTION_WRITE_ALLOW
 from web.production import router as production_router
 
 load_dotenv()
@@ -69,11 +70,14 @@ def _env(name: str) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # В МойСклад приложение только читает. Единственное исключение —
-    # кассовые ордера кассира (создать и снять с проведения); любой
-    # другой запрос, кроме чтения, клиент отклонит ещё до отправки.
+    # В МойСклад приложение только читает. Исключения поштучно: кассовые
+    # ордера кассира и списание/оприходование замеса — создать и снять
+    # с проведения. Любой другой запрос, кроме чтения, клиент отклонит
+    # ещё до отправки.
     app.state.moysklad = MoySkladClient(
-        _env("MOYSKLAD_TOKEN"), read_only=True, write_allow=CASH_WRITE_ALLOW
+        _env("MOYSKLAD_TOKEN"),
+        read_only=True,
+        write_allow=CASH_WRITE_ALLOW + PRODUCTION_WRITE_ALLOW,
     )
     app.state.access = Access(
         _env("WEB_PIN"),
