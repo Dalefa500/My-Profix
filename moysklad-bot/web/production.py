@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import secrets
@@ -32,6 +33,7 @@ from pydantic import BaseModel, Field
 from bot.moysklad import BASE_URL, MoySkladClient, MoySkladError
 from web import store
 from web.access import Person, allow, audit, client_ip, require_can, require_manager, require_person
+from web.notify import notify_owners
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -145,14 +147,21 @@ async def production(
         (b for b in batches if b["t"][:10] >= since), key=lambda b: b["t"], reverse=True
     )[:40]:
         own_today = b["by"] == me.id and b["t"].startswith(today) and b["id"] not in cancelled
+        recipe = _recipe_of(b)
+        legacy = not recipe
+        if legacy:
+            # Записан до того, как замес стал хранить рецепт: для формы
+            # берём нынешнюю техкарту марки
+            recipe = next((c["materials"] for c in cards if c["id"] == b["cardId"]), [])
         recent.append(
             {
                 **b,
-                "recipe": _recipe_of(b),
+                "recipe": recipe,
                 "cancelled": b["id"] in cancelled,
-                # Свой сегодняшний замес можно исправить или отменить
+                # Свой сегодняшний замес можно исправить или отменить;
+                # проведённый до обновления — только отменить
                 "cancellable": own_today,
-                "editable": own_today,
+                "editable": own_today and not (legacy and (b.get("lossId") or b.get("enterId"))),
             }
         )
 
@@ -289,6 +298,9 @@ class Batch(BaseModel):
     count: int = Field(ge=1, le=100)
     ok: bool
     deltas: list[Delta] = Field(default_factory=list, max_length=20)
+    # Прежнее имя поля: приложение на телефоне, открытое до обновления,
+    # ещё шлёт добавки так — их нельзя молча потерять.
+    additions: list[Delta] = Field(default_factory=list, max_length=20)
     note: str = Field("", max_length=300)
 
 
@@ -320,10 +332,16 @@ def _ledger() -> tuple[dict[str, dict], set[str]]:
     for entry in store.read_lines(BATCHES_FILE):
         if entry.get("cancel"):
             cancelled.add(entry["cancel"])
+        elif entry.get("reconcile"):
+            base = batches.get(entry["reconcile"])
+            if base is not None:
+                base.setdefault("reconcile", []).append(
+                    {"t": entry.get("t", ""), "reason": entry.get("reason", ""), "docs": entry.get("docs", [])}
+                )
         elif entry.get("amend"):
             base = batches.get(entry["amend"])
             if base is not None:
-                for key in ("ok", "deltas", "extraCost", "note", "lossId", "enterId"):
+                for key in ("ok", "deltas", "extraCost", "baseCost", "note", "lossId", "enterId"):
                     if key in entry:
                         base[key] = entry[key]
                 base["amendedAt"] = entry.get("t", "")
@@ -366,12 +384,15 @@ def _resolve_deltas(
                 raise HTTPException(
                     status_code=400, detail=f"«{row['name']}» нет в техкарте — убавлять нечего"
                 )
-            if planned[href] + row["qty"] < -EPSILON:
+            # Допуск на округление в телефоне: «убрать всё» может прийти
+            # как −4,0004 при 4 по техкарте — это ноль, а не перебор.
+            if planned[href] + row["qty"] < -0.0005:
                 raise HTTPException(
                     status_code=400,
                     detail=f"«{row['name']}»: по техкарте {planned[href]:g} {row['uom']}, "
                     f"убавить больше нельзя",
                 )
+            row["qty"] = max(row["qty"], -planned[href])
         cost = prices.get(href, 0.0)
         extra += cost * row["qty"]
         deltas.append({**row, "cost": cost})
@@ -398,12 +419,13 @@ async def add_batch(payload: Batch, request: Request, me: Person = Depends(edito
     card = next((c for c in _cards() if c["id"] == payload.cardId and not c.get("archived")), None)
     if card is None:
         raise HTTPException(status_code=404, detail="Техкарта не найдена")
-    if not payload.ok and not payload.deltas and not payload.note.strip():
+    raw = payload.deltas + [a for a in payload.additions if a.qty > 0]
+    if not payload.ok and not raw and not payload.note.strip():
         raise HTTPException(status_code=400, detail="Что поправили? Укажите химию или напишите")
 
     prices = {i["href"]: i["cost"] for i in await _catalog(request)}
     snapshot = _snapshot(card)
-    deltas, extra = _resolve_deltas(payload.deltas, snapshot["recipe"], payload.count, prices)
+    deltas, extra = _resolve_deltas(raw, snapshot["recipe"], payload.count, prices)
     bags = card["bags"] * payload.count
     base_cost = _priced(card, prices)["costPerBatch"] * payload.count
 
@@ -439,6 +461,16 @@ async def add_batch(payload: Batch, request: Request, me: Person = Depends(edito
     return {"ok": True, "id": entry["id"], "posted": bool(documents)}
 
 
+# Один процесс uvicorn — хватает замка в памяти. Второй запрос по тому
+# же замесу (повтор после обрыва связи, отмена с другого телефона) ждёт
+# первый и потом видит уже его результат, а не старое состояние.
+_batch_locks: dict[str, asyncio.Lock] = {}
+
+
+def _batch_lock(batch_id: str) -> asyncio.Lock:
+    return _batch_locks.setdefault(batch_id, asyncio.Lock())
+
+
 def _own_today(batch_id: str, me: Person, action: str) -> dict:
     batches, cancelled = _ledger()
     batch = batches.get(batch_id)
@@ -450,54 +482,95 @@ def _own_today(batch_id: str, me: Person, action: str) -> dict:
     return batch
 
 
+def _doc_label(entity: str, doc_id: str) -> str:
+    return f"{'списание' if entity == 'loss' else 'оприходование'} {doc_id}"
+
+
+async def _flag(request: Request, me: Person, batch_id: str | None, problems: list[str], reason: str) -> None:
+    """Откат сам не прошёл — дальше только руками. Пометка у замеса,
+    запись в журнал и сообщение учредителю: документы нужно сверить."""
+    if not problems:
+        return
+    detail = f"{reason}: " + "; ".join(problems)
+    logger.error("Сверить с МойСкладом: %s", detail)
+    if batch_id:
+        store.append(BATCHES_FILE, {"reconcile": batch_id, "t": store.now(), "reason": reason, "docs": problems})
+    audit("moysklad_check", me, client_ip(request), detail)
+    await notify_owners(f"⚠️ Проверьте в МойСкладе ({me.name}): {detail}")
+
+
+def _same_deltas(old: list[dict], new: list[dict]) -> bool:
+    shape = lambda rows: {d["href"]: round(d["qty"], 6) for d in rows}  # noqa: E731
+    return shape(old) == shape(new)
+
+
+async def _restore(moysklad: MoySkladClient, touched: list[list]) -> list[str]:
+    """Провести обратно то, что успели снять, с прежним описанием."""
+    problems = []
+    for entity, doc_id, original in touched:
+        try:
+            await moysklad.repost(entity, doc_id, original)
+        except MoySkladError:
+            problems.append(f"{_doc_label(entity, doc_id)} осталось снятым с проведения")
+    return problems
+
+
 @router.post("/api/batches/{batch_id}/amend")
 async def amend_batch(
     batch_id: str, payload: Amend, request: Request, me: Person = Depends(editor)
 ) -> dict:
-    batch = _own_today(batch_id, me, "изменить")
-    if not payload.ok and not payload.deltas and not payload.note.strip():
-        raise HTTPException(status_code=400, detail="Что поправили? Укажите химию или напишите")
+    async with _batch_lock(batch_id):
+        batch = _own_today(batch_id, me, "изменить")
+        if not payload.ok and not payload.deltas and not payload.note.strip():
+            raise HTTPException(status_code=400, detail="Что поправили? Укажите химию или напишите")
 
-    recipe = _recipe_of(batch)
-    if not recipe:
-        # Старая запись без рецепта — берём техкарту, если она ещё есть
-        card = next((c for c in _cards() if c["id"] == batch["cardId"]), None)
-        if card is None:
-            raise HTTPException(status_code=409, detail="Техкарта этого замеса не найдена")
-        recipe = card["materials"]
-
-    prices = {i["href"]: i["cost"] for i in await _catalog(request)}
-    deltas, extra = _resolve_deltas(payload.deltas, recipe, batch["count"], prices)
-
-    documents: dict[str, str] = {}
-    if batch.get("lossId") or batch.get("enterId"):
-        # Замес уже в МойСкладе — меняем его документы на исправленные
-        snapshot = {
-            "recipe": recipe,
-            "productHref": batch.get("productHref") or "",
-        }
-        if not snapshot["productHref"]:
+        posted = bool(batch.get("lossId") or batch.get("enterId"))
+        recipe = _recipe_of(batch)
+        if not recipe:
+            if posted:
+                # Проведён до обновления, рецепта при нём нет: по нынешней
+                # техкарте его не пересобрать — можно ошибиться в списании.
+                raise HTTPException(
+                    status_code=409,
+                    detail="Замес записан до обновления приложения — отмените его и запишите заново",
+                )
             card = next((c for c in _cards() if c["id"] == batch["cardId"]), None)
-            snapshot["productHref"] = (card or {}).get("productHref", "")
-        documents = await _replace_in_moysklad(
-            request, batch, snapshot, deltas, batch.get("baseCost", 0.0) + extra, me
-        )
+            if card is None:
+                raise HTTPException(status_code=409, detail="Техкарта этого замеса не найдена")
+            recipe = card["materials"]
 
-    entry = {
-        "amend": batch_id,
-        "t": store.now(),
-        "by": me.id,
-        "name": me.name,
-        "ok": payload.ok,
-        "deltas": deltas,
-        "extraCost": extra,
-        "note": payload.note.strip(),
-        **documents,
-    }
-    store.append(BATCHES_FILE, entry)
+        prices = {i["href"]: i["cost"] for i in await _catalog(request)}
+        deltas, extra = _resolve_deltas(payload.deltas, recipe, batch["count"], prices)
+        base_cost = batch.get("baseCost", 0.0)
+
+        documents: dict[str, str] = {}
+        if posted and _same_deltas(batch.get("deltas", []), deltas):
+            # Химия та же — списание и оприходование верны, МойСклад не
+            # трогаем; меняются только качество и заметка.
+            deltas, extra = batch.get("deltas", []), batch.get("extraCost", 0.0)
+        elif posted:
+            # Пересчитываем по одним и тем же, сегодняшним ценам и рецепт,
+            # и отклонения — иначе цена мешка съезжает от правки к правке.
+            base_cost = sum(prices.get(_key(m["href"]), 0.0) * m["qty"] for m in recipe) * batch["count"]
+            snapshot = {"recipe": recipe, "productHref": batch.get("productHref", "")}
+            documents = await _replace_in_moysklad(request, batch, snapshot, deltas, base_cost + extra, me)
+
+        entry = {
+            "amend": batch_id,
+            "t": store.now(),
+            "by": me.id,
+            "name": me.name,
+            "ok": payload.ok,
+            "deltas": deltas,
+            "extraCost": extra,
+            "baseCost": base_cost,
+            "note": payload.note.strip(),
+            **documents,
+        }
+        store.append(BATCHES_FILE, entry)
     changes = _describe_deltas(deltas) or "как в техкарте"
-    posted = " · в МойСкладе заменено" if documents else ""
-    audit("batch_amend", me, client_ip(request), f"{batch['cardName']} × {batch['count']} · {changes}{posted}")
+    posted_note = " · в МойСкладе заменено" if documents else ""
+    audit("batch_amend", me, client_ip(request), f"{batch['cardName']} × {batch['count']} · {changes}{posted_note}")
     return {"ok": True, "posted": bool(documents)}
 
 
@@ -511,6 +584,7 @@ async def _post_to_moysklad(
     cost: float,
     me: Person,
     suffix: str = "",
+    batch_id: str | None = None,
 ) -> dict[str, str]:
     """Списание сырья и оприходование мешков за один замес. Сначала
     списание: если оприходование потом не пройдёт, списание снимается
@@ -540,7 +614,11 @@ async def _post_to_moysklad(
         try:
             await moysklad.unpost("loss", loss["id"], "ОТМЕНЕНО: оприходование не прошло")
         except MoySkladError:
-            logger.error("Не удалось снять списание %s после сбоя оприходования", loss.get("id"))
+            await _flag(
+                request, me, batch_id,
+                [f"{_doc_label('loss', loss.get('id', '?'))} осталось проведённым без оприходования"],
+                "оприходование не прошло",
+            )
         raise HTTPException(status_code=502, detail=f"Оприходование в МойСклад не прошло: {exc}")
     return {"lossId": loss.get("id", ""), "enterId": enter.get("id", "")}
 
@@ -550,31 +628,32 @@ async def _replace_in_moysklad(
 ) -> dict[str, str]:
     """Исправленный замес в МойСкладе: новые списание и оприходование,
     старые — снять с проведения с пометкой. Если по дороге что-то не
-    прошло, возвращаем как было: новые снимаем, старые проводим обратно."""
+    прошло, возвращаем как было: новые снимаем, старые проводим обратно
+    с прежним описанием. Чего вернуть не удалось — помечаем «сверить»."""
     moysklad: MoySkladClient = request.app.state.moysklad
     stamp = f"{datetime.now():%d.%m %H:%M}"
     new = await _post_to_moysklad(
         request, batch["cardName"], snapshot, batch["count"], deltas, batch["bags"], cost, me,
-        suffix=f" · исправлен {stamp}",
+        suffix=f" · исправлен {stamp}", batch_id=batch["id"],
     )
     note = f"ИЗМЕНЕНО {stamp} — {me.name}: заменён исправленным документом"
-    unposted: list[tuple[str, str]] = []
+    # [документ, id, прежнее описание]; запоминаем до вызова — снятие,
+    # оборвавшееся по таймауту, могло всё же пройти, и его тоже откатываем
+    touched: list[list] = []
     try:
         for entity, key in (("enter", "enterId"), ("loss", "lossId")):
             if batch.get(key):
-                await moysklad.unpost(entity, batch[key], note)
-                unposted.append((entity, batch[key]))
+                item = [entity, batch[key], None]
+                touched.append(item)
+                item[2] = await moysklad.unpost(entity, batch[key], note)
     except MoySkladError as exc:
-        for entity, doc_id in unposted:
-            try:
-                await moysklad.repost(entity, doc_id)
-            except MoySkladError:
-                logger.error("Не удалось провести обратно %s %s", entity, doc_id)
+        problems = await _restore(moysklad, touched)
         for entity, key in (("enter", "enterId"), ("loss", "lossId")):
             try:
                 await moysklad.unpost(entity, new[key], "ОТМЕНЕНО: исправление не прошло")
             except MoySkladError:
-                logger.error("Не удалось снять новый %s %s", entity, new[key])
+                problems.append(f"новое {_doc_label(entity, new[key])} осталось проведённым")
+        await _flag(request, me, batch["id"], problems, "исправление не прошло")
         raise HTTPException(status_code=502, detail=f"МойСклад не принял исправление: {exc}")
     return new
 
@@ -587,16 +666,24 @@ class CancelBatch(BaseModel):
 async def cancel_batch(
     batch_id: str, payload: CancelBatch, request: Request, me: Person = Depends(editor)
 ) -> dict:
-    batch = _own_today(batch_id, me, "отменить")
-    # Документы в МойСкладе снимаем с проведения раньше, чем отмечаем
-    # отмену у себя: не вышло там — замес остаётся действующим и здесь.
-    note = f"ОТМЕНЕНО {datetime.now():%d.%m %H:%M} — {me.name}: {payload.reason}"
-    try:
-        for entity, key in (("enter", "enterId"), ("loss", "lossId")):
-            if batch.get(key):
-                await request.app.state.moysklad.unpost(entity, batch[key], note)
-    except MoySkladError as exc:
-        raise HTTPException(status_code=502, detail=f"МойСклад не принял отмену: {exc}")
-    store.append(BATCHES_FILE, {"cancel": batch_id, "by": me.id, "t": store.now(), "reason": payload.reason})
+    async with _batch_lock(batch_id):
+        batch = _own_today(batch_id, me, "отменить")
+        # Документы в МойСкладе снимаем с проведения раньше, чем отмечаем
+        # отмену у себя: не вышло там — всё возвращаем, и замес остаётся
+        # действующим и здесь.
+        moysklad: MoySkladClient = request.app.state.moysklad
+        note = f"ОТМЕНЕНО {datetime.now():%d.%m %H:%M} — {me.name}: {payload.reason}"
+        touched: list[list] = []
+        try:
+            for entity, key in (("enter", "enterId"), ("loss", "lossId")):
+                if batch.get(key):
+                    item = [entity, batch[key], None]
+                    touched.append(item)
+                    item[2] = await moysklad.unpost(entity, batch[key], note)
+        except MoySkladError as exc:
+            problems = await _restore(moysklad, touched)
+            await _flag(request, me, batch_id, problems, "отмена не прошла")
+            raise HTTPException(status_code=502, detail=f"МойСклад не принял отмену: {exc}")
+        store.append(BATCHES_FILE, {"cancel": batch_id, "by": me.id, "t": store.now(), "reason": payload.reason})
     audit("batch_cancel", me, client_ip(request), f"{batch['cardName']} × {batch['count']} · {payload.reason}")
     return {"ok": True}

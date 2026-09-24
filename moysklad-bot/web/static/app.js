@@ -1348,6 +1348,10 @@ async function drawCashForm(kind) {
   const search = el("input", "search");
   search.placeholder = "Найти контрагента";
   search.autocomplete = "off";
+  search.enterKeyHint = "search";
+  search.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") event.preventDefault();
+  });
   const found = el("div", "rows found");
   let timer = 0;
   search.addEventListener("input", () => {
@@ -1510,12 +1514,15 @@ async function renderProduction(container) {
         note: t.batches ? `${share}% замесов` : "",
         noteTone: t.corrected ? "neg" : "",
       },
-      {
-        label: "Химия к рецепту",
-        value: `${t.extraCost > 0 ? "+" : t.extraCost < 0 ? "−" : ""}${amount(Math.abs(t.extraCost))}`,
-        tone: t.extraCost > 0 ? "expense" : t.extraCost < 0 ? "pos" : "",
-        note: t.extraCost > 0 ? "сверх рецепта" : t.extraCost < 0 ? "меньше рецепта" : "",
-      },
+      (() => {
+        const e = Math.round(t.extraCost);
+        return {
+          label: "Химия к рецепту",
+          value: `${e > 0 ? "+" : e < 0 ? "−" : ""}${amount(Math.abs(e))}`,
+          tone: e > 0 ? "expense" : e < 0 ? "pos" : "",
+          note: e > 0 ? "сверх рецепта" : e < 0 ? "меньше рецепта" : "",
+        };
+      })(),
     ]),
   );
 
@@ -1555,17 +1562,21 @@ async function renderProduction(container) {
       );
       if (b.enterId && !b.cancelled) foot.append(el("span", "row__tag row__tag--ms", "в МойСкладе"));
       if (b.amendedAt && !b.cancelled) foot.append(el("span", "row__tag row__tag--ms", `изменён ${b.amendedAt.slice(11, 16)}`));
+      // Откат в МойСкладе не прошёл сам — документы надо сверить руками
+      if (b.reconcile && b.reconcile.length) foot.append(el("span", "row__tag", "сверить с МойСкладом"));
       line.append(foot);
       // Отклонения от техкарты со знаком: +0,5 кг добавили, −0,3 кг меньше
       const fixes = (b.deltas || []).map((d) => `${d.name} ${signed(d.qty)} ${d.uom}`.trim()).join(", ");
       const about = [fixes, b.note, b.name].filter(Boolean).join(" · ");
       if (about) line.append(el("div", "row__note", about));
-      if (b.editable) {
+      if (b.editable || b.cancellable) {
         const bar = el("div", "row__actions");
-        const edit = el("button", "mini", "Изменить химию");
-        edit.type = "button";
-        edit.addEventListener("click", () => openPanel("Исправить замес", () => drawBatchForm(data, b)));
-        bar.append(edit);
+        if (b.editable) {
+          const edit = el("button", "mini", "Изменить химию");
+          edit.type = "button";
+          edit.addEventListener("click", () => openPanel("Исправить замес", () => drawBatchForm(data, b)));
+          bar.append(edit);
+        }
         const cancel = el("button", "mini mini--danger", "Отменить");
         cancel.type = "button";
         cancel.addEventListener("click", async () => {
@@ -1665,6 +1676,11 @@ function catalogPicker(onPick, placeholder = "Найти сырьё по наз�
   const input = el("input", "search");
   input.placeholder = placeholder;
   input.autocomplete = "off";
+  input.enterKeyHint = "search";
+  // Поиск лежит внутри формы замеса: «Ввод» здесь — не «записать замес»
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") event.preventDefault();
+  });
   const list = el("div", "rows found");
   let timer = 0;
   input.addEventListener("input", () => {
@@ -1896,6 +1912,9 @@ function deltaRows(recipe, getCount, rows) {
     list.replaceChildren();
     rows.forEach((r, i) => {
       const planned = r.perBatch * getCount();
+      // Замесов стало меньше — убавка не может быть больше нового плана
+      if (r.perBatch && r.qty < -planned) r.qty = -planned;
+      r.invalid = false;
       const line = el("div", "row row--stacked delta-row");
       line.append(el("div", "row__label", r.name));
       const minus = el("button", "delta__btn", "−");
@@ -1915,8 +1934,10 @@ function deltaRows(recipe, getCount, rows) {
         line.classList.toggle("is-plus", r.qty > 0);
         line.classList.toggle("is-minus", r.qty < 0);
       };
-      // Меньше нуля в итоге не бывает: убавить можно только положенное
-      const clamp = (v) => round3(Math.max(v, -planned));
+      // Меньше нуля в итоге не бывает: убавить можно только положенное.
+      // Сначала округляем, потом ограничиваем — иначе «убрать всё» могло
+      // выйти чуть больше плана, и сервер бы отказал.
+      const clamp = (v) => Math.max(round3(v), -planned);
       const step = stepFor(r.perBatch ? planned : Math.max(r.qty, 1));
       minus.addEventListener("click", () => {
         r.qty = clamp(r.qty - step);
@@ -1930,7 +1951,15 @@ function deltaRows(recipe, getCount, rows) {
       });
       input.addEventListener("change", () => {
         const v = parseSigned(input.value);
-        r.qty = Number.isFinite(v) ? clamp(v) : 0;
+        if (!Number.isFinite(v)) {
+          // Опечатку не превращаем молча в ноль — подсвечиваем
+          r.invalid = true;
+          line.classList.add("is-invalid");
+          return;
+        }
+        r.invalid = false;
+        line.classList.remove("is-invalid");
+        r.qty = clamp(v);
         input.value = r.qty ? signed(r.qty) : "0";
         paint();
       });
@@ -1978,6 +2007,7 @@ function drawBatchForm(data, batch = null) {
       const pill = el("button", `pill${card === c ? " is-active" : ""}`, c.name);
       pill.type = "button";
       pill.addEventListener("click", () => {
+        if (c === card) return;
         card = c;
         pills.querySelectorAll(".pill").forEach((p) => p.classList.toggle("is-active", p === pill));
         resetRows();
@@ -2037,9 +2067,10 @@ function drawBatchForm(data, batch = null) {
   // Подсказки: что добавляли сверх техкарты в прошлые разы
   const suggest = el("div", "pills");
   const addExtra = (item) => {
-    if (!card || rows.some((r) => r.href === item.href)) return;
+    if (!card || rows.some((r) => r.href === item.href)) return false;
     rows.push({ href: item.href, name: item.name, uom: item.uom, perBatch: 0, qty: 0 });
     deltas.draw();
+    return true;
   };
   function drawSuggestions() {
     suggest.replaceChildren();
@@ -2053,8 +2084,7 @@ function drawBatchForm(data, batch = null) {
       const pill = el("button", "pill", `+ ${d.name}`);
       pill.type = "button";
       pill.addEventListener("click", () => {
-        addExtra(d);
-        pill.remove();
+        if (addExtra(d)) pill.remove();
       });
       suggest.append(pill);
     });
@@ -2099,6 +2129,8 @@ function drawBatchForm(data, batch = null) {
     };
     error.hidden = true;
     if (!card) return fail("Выберите марку");
+    const typo = rows.find((r) => r.invalid);
+    if (typo) return fail(`Проверьте количество: ${typo.name}`);
     const changed = rows
       .filter((r) => Math.abs(r.qty) > 1e-9)
       .map((r) => ({ href: r.href, name: r.name, uom: r.uom, qty: r.qty }));
@@ -2139,6 +2171,7 @@ const ACTIONS = {
   batch: "Замес",
   batch_cancel: "Замес отменён",
   batch_amend: "Замес исправлен",
+  moysklad_check: "Сверить с МойСкладом",
   writeoff_on: "Списание в МойСкладе включено",
   writeoff_off: "Списание в МойСкладе выключено",
 };
@@ -2374,7 +2407,7 @@ function drawJournal(list, entries) {
   }
   entries.slice(0, 100).forEach((entry) => {
     const row = el("div", "row row--stacked");
-    const warn = ["login_failed", "person_disabled", "cash_cancel", "batch_cancel"].includes(entry.action);
+    const warn = ["login_failed", "person_disabled", "cash_cancel", "batch_cancel", "moysklad_check"].includes(entry.action);
     row.append(el("div", "row__label", entry.who || "неизвестный"));
     row.append(el("div", `row__value${warn ? " row__value--unpaid" : ""}`, ACTIONS[entry.action] || entry.action));
     const note = [stamp(entry.t), entry.detail, entry.ip].filter(Boolean).join(" · ");

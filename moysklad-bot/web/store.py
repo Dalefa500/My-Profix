@@ -46,8 +46,18 @@ def write_json(name: str, data) -> None:
 def append(name: str, entry: dict) -> None:
     with _lock:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        with open(_path(name), "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        path = _path(name)
+        # Если прошлая запись оборвалась на полуслове (сбой питания), без
+        # перевода строки новая склеилась бы с ней и пропала бы тоже.
+        torn = False
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(-1, os.SEEK_END)
+                torn = fh.read(1) != b"\n"
+        except OSError:
+            pass
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(("\n" if torn else "") + json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def read_lines(name: str) -> list[dict]:

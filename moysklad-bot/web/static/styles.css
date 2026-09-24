@@ -1030,3 +1030,4 @@ svg { display: block; }
 .delta-row.is-plus .delta__input { color: var(--expense); border-color: rgba(204, 127, 34, .5); }
 .delta-row.is-minus .delta__input { color: var(--good); border-color: rgba(63, 191, 127, .5); }
 .hint--left { text-align: left; font-size: 13.5px; }
+.delta-row.is-invalid .delta__input { color: var(--warn); border-color: var(--warn); }

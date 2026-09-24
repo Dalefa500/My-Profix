@@ -117,7 +117,12 @@ class MoySkladClient:
 
         for attempt in range(MAX_RETRIES + 1):
             async with self._slots:
-                response = await self._client.request(method, path, **kwargs)
+                try:
+                    response = await self._client.request(method, path, **kwargs)
+                except httpx.HTTPError as exc:
+                    # Таймаут и обрыв связи — та же ошибка МойСклада, что и
+                    # отказ: иначе мимо неё проходят все откаты у вызывающих.
+                    raise MoySkladError(f"Нет связи с МойСкладом: {exc.__class__.__name__}") from exc
             if response.status_code != 429 or attempt == MAX_RETRIES:
                 break
             # Лимит запросов: МойСклад сам говорит, сколько подождать
@@ -284,24 +289,30 @@ class MoySkladClient:
             payload["expenseItem"] = self._meta(expense_item_href, "expenseitem")
         return await self._request("POST", f"/entity/{entity}", json=payload)
 
-    async def cancel_cash_order(self, kind: str, doc_id: str, note: str) -> dict:
+    async def cancel_cash_order(self, kind: str, doc_id: str, note: str) -> str:
         entity = "cashin" if kind == "in" else "cashout"
         return await self.unpost(entity, doc_id, note)
 
-    async def unpost(self, entity: str, doc_id: str, note: str) -> dict:
+    async def unpost(self, entity: str, doc_id: str, note: str) -> str:
         """Отмена без удаления: документ остаётся, но снимается с
-        проведения, а в описании дописывается, кто и почему отменил."""
+        проведения, а в описании дописывается, кто и почему отменил.
+        Возвращает прежнее описание — чтобы при откате вернуть его."""
         doc = await self._request("GET", f"/entity/{entity}/{doc_id}")
-        description = f"{note}\n\n{doc.get('description') or ''}".strip()
-        return await self._request(
+        original = doc.get("description") or ""
+        await self._request(
             "PUT",
             f"/entity/{entity}/{doc_id}",
-            json={"applicable": False, "description": description},
+            json={"applicable": False, "description": f"{note}\n\n{original}".strip()},
         )
+        return original
 
-    async def repost(self, entity: str, doc_id: str) -> dict:
-        """Провести документ обратно — откат, если замена сорвалась."""
-        return await self._request("PUT", f"/entity/{entity}/{doc_id}", json={"applicable": True})
+    async def repost(self, entity: str, doc_id: str, description: str | None = None) -> dict:
+        """Провести документ обратно — откат, если замена сорвалась.
+        С описанием — вернуть и его, без пометки об отмене."""
+        payload: dict[str, Any] = {"applicable": True}
+        if description is not None:
+            payload["description"] = description
+        return await self._request("PUT", f"/entity/{entity}/{doc_id}", json=payload)
 
     @staticmethod
     def assortment_meta(href: str) -> dict:
@@ -970,7 +981,10 @@ class MoySkladClient:
             return None
         # Ссылка на файл ведёт на хранилище и сама по себе уже подписана;
         # httpx снимет заголовок авторизации на чужом хосте.
-        response = await self._client.get(miniature, follow_redirects=True)
+        try:
+            response = await self._client.get(miniature, follow_redirects=True)
+        except httpx.HTTPError:
+            return None
         if response.status_code >= 400:
             return None
         return response.content, response.headers.get("content-type", "image/jpeg")
