@@ -56,15 +56,25 @@ ask "   Новый токен (Enter — пропустить): "
 if [ -n "$REPLY_VALUE" ]; then
     new_moysklad="$REPLY_VALUE"
     if verify; then
+        # Без Accept-Encoding: gzip МойСклад отвечает 415 ещё до проверки
+        # токена — так любой, даже верный, токен выглядел бы негодным.
         code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
             -H "Authorization: Bearer $new_moysklad" \
+            -H "Accept-Encoding: gzip" \
             "https://api.moysklad.ru/api/remap/1.2/context/employee") || code=000
-        [ "$code" = "000" ] && no_network "МойСклада"
-        if [ "$code" != "200" ]; then
-            echo "   Токен не подошёл (ответ $code). Ничего не меняю."
-            exit 1
-        fi
-        echo "   Проверка пройдена."
+        case "$code" in
+            200) echo "   Проверка пройдена." ;;
+            000) no_network "МойСклада" ;;
+            401) echo "   МойСклад говорит: токен неверный или удалён. Ничего не меняю."
+                 echo "   Выдайте новый токен и скопируйте его ещё раз."
+                 exit 1 ;;
+            403) echo "   Токен верный, но у этого пользователя нет доступа к API."
+                 echo "   Выдайте токен под главным логином (владельца). Ничего не меняю."
+                 exit 1 ;;
+            *)   echo "   МойСклад ответил кодом $code — это не про сам токен."
+                 echo "   Ничего не меняю. Напишите этот код тому, кто настраивал."
+                 exit 1 ;;
+        esac
     fi
     changed="$changed МойСклад"
 fi
