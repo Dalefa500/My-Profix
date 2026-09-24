@@ -226,11 +226,22 @@ def _save_state(state: dict[str, Any]) -> None:
 STATE: dict[str, Any] = _load_state()
 
 
+# Раньше после карточки WhatsApp в историю писалась пометка вроде
+# «(отправлена кнопка WhatsApp)», и модель начала слать её клиенту
+# текстом. Теперь в историю идёт сама метка, а старые пометки в уже
+# сохранённых диалогах и в ответах модели распознаём и заменяем.
+_WA_NOTE_RE = re.compile(r"\(отправлен\w*\s+(?:карточк\w*|кнопк\w*)[^)]*whatsapp[^)]*\)", re.IGNORECASE)
+
+
 def history_for(sender: str) -> list[dict[str, str]]:
     item = STATE.get(sender)
     if not item or time.time() - item.get("ts", 0) > DIALOG_TTL:
         return []
-    return item.get("messages", [])
+    messages = item.get("messages", [])
+    for m in messages:
+        if m.get("role") == "assistant" and _WA_NOTE_RE.search(m.get("content", "")):
+            m["content"] = WHATSAPP_MARK
+    return messages
 
 
 def remember(sender: str, role: str, text: str) -> None:
@@ -621,15 +632,16 @@ async def handle_message(sender: str, text: str) -> None:
     if first_reply and "фарзона" not in reply.lower():
         reply = f"{GREETING_TJ if tajik else GREETING_RU} {reply}"
 
-    wants_button = WHATSAPP_MARK in reply and bool(MANAGER_WHATSAPP)
-    reply = reply.replace(WHATSAPP_MARK, "").strip()
+    wants_button = bool(MANAGER_WHATSAPP) and (
+        WHATSAPP_MARK in reply or bool(_WA_NOTE_RE.search(reply)))
+    reply = _WA_NOTE_RE.sub("", reply.replace(WHATSAPP_MARK, "")).strip()
     # Номер WhatsApp в тексте не показываем. Модель его не знает, но
     # может повторить из старой переписки — тогда вырезаем его и шлём
     # кнопку вместо цифр.
     stripped = strip_our_number(reply)
     if stripped != reply:
         reply, wants_button = stripped, bool(MANAGER_WHATSAPP)
-    remember(sender, "assistant", "(отправлена карточка с кнопкой WhatsApp)" if wants_button else reply)
+    remember(sender, "assistant", WHATSAPP_MARK if wants_button else reply)
     if wants_button:
         # Только карточка с логотипом и кнопкой — без подписи над ней.
         await send_whatsapp_button(sender, tajik)
