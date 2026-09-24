@@ -304,12 +304,25 @@ async def ask_claude(messages: list[dict[str, str]], system: str = "") -> str | 
     return "\n".join(p.strip() for p in parts if p.strip()) or None
 
 
-_TAJIK_WORDS = ("салом", "рахмат", "раҳмат", "чанд", "нарх", "мехоҳам", "мехохам", "лозим")
+# Таджикский часто набирают русской раскладкой, без ҳ, ҷ, ӣ — поэтому
+# кроме особых букв смотрим и на частые слова, записанные по-русски.
+_TAJIK_WORDS_RE = re.compile(
+    r"\b(?:салом\w*|ассалом\w*|рахмат|раҳмат|ташаккур|чанд|нарх\w*|мехо[хҳ]\w*|лозим\w*"
+    r"|ди[хҳ]ед|фирист\w*|ра[кқ]ам\w*|шумо|шуморо|барои|кадом|лутфан|кунед|намоед"
+    r"|[хҳ]аст\w*|нест|чи|чӣ|кай|куҷо|кучо|хуб|бале|не[ -]?не|мебахшед|бисёр|хона\w*"
+    r"|ман|мо|ба|аз|ва|дар|бо|ин|он|ки)\b",
+    re.IGNORECASE)
 
 
 def looks_tajik(text: str) -> bool:
     lowered = text.lower()
-    return any(ch in lowered for ch in "қғӣӯҳҷ") or any(w in lowered for w in _TAJIK_WORDS)
+    if any(ch in lowered for ch in "қғӣӯҳҷ"):
+        return True
+    # Короткие служебные слова (ба, аз, ва…) встречаются и в русском
+    # тексте случайно, поэтому нужно хотя бы два таджикских слова —
+    # или одно, если сообщение совсем короткое.
+    hits = len(_TAJIK_WORDS_RE.findall(lowered))
+    return hits >= 2 or (hits == 1 and len(lowered.split()) <= 3)
 
 
 GREETING_RU = "Здравствуйте! Меня зовут Фарзона, я представитель компании PROFIX."
@@ -652,9 +665,11 @@ async def handle_message(sender: str, text: str) -> None:
 
     reply = await ask_claude(history) or fallback_reply(text)
 
+    # Язык клиента: по его сообщению или по ответу Фарзоны — модель
+    # отвечает на языке клиента и в таджикском почти всегда пишет ҳ, ҷ, ӣ.
+    tajik = looks_tajik(text) or looks_tajik(reply.replace(WHATSAPP_MARK, ""))
     # В первом ответе Фарзона обязательно представляется. Промпт это
     # требует, а здесь страховка на случай, если модель забыла.
-    tajik = looks_tajik(text)
     if first_reply:
         reply = with_greeting(reply, tajik)
 
