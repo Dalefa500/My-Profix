@@ -384,6 +384,22 @@ async def send_message(recipient_id: str, text: str) -> None:
 WHATSAPP_MARK = "[WHATSAPP]"
 
 
+def strip_our_number(text: str) -> str:
+    """Убирает из текста наш номер WhatsApp в любом написании и ссылки wa.me."""
+    digits = re.sub(r"\D", "", MANAGER_WHATSAPP)
+    if not digits:
+        return text
+    text = re.sub(r"https?://(?:wa\.me|api\.whatsapp\.com)/\S*", "", text)
+    local = digits[-9:]
+    # Цифры номера, между которыми могут стоять пробелы, скобки и дефисы.
+    sep = r"[\s\-().]*"
+    pattern = r"\+?(?:" + sep.join(digits[:-9]) + sep + r")?" + sep.join(local)
+    text = re.sub(pattern, "", text)
+    text = re.sub(r"\s+([.,!?:;])", r"\1", text)
+    text = re.sub(r"[:—-]\s*([.!?]|$)", r"\1", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
 def whatsapp_url() -> str:
     return "https://wa.me/" + re.sub(r"\D", "", MANAGER_WHATSAPP)
 
@@ -391,6 +407,9 @@ def whatsapp_url() -> str:
 # Анимированные карточки лежат на GitHub Pages: Instagram берёт
 # картинку только по публичной ссылке.
 WA_CARD_BASE = os.getenv("WA_CARD_BASE", "https://dalefa500.github.io/powermix-site/img").rstrip("/")
+# gif — анимация, png — неподвижная картинка на случай, если Instagram
+# анимацию в карточке не покажет.
+WA_CARD_EXT = os.getenv("WA_CARD_EXT", "gif").strip().lstrip(".") or "gif"
 
 
 async def _post_message(recipient_id: str, message: dict[str, Any]) -> httpx.Response:
@@ -417,7 +436,7 @@ async def send_whatsapp_button(recipient_id: str, tajik: bool) -> None:
         "elements": [{
             "title": "Ба мо дар WhatsApp нависед" if tajik else "Напишите нам в WhatsApp",
             "subtitle": "PROFIX · зуд ҷавоб медиҳем" if tajik else "PROFIX · ответим быстро",
-            "image_url": f"{WA_CARD_BASE}/wa-card-{'tj' if tajik else 'ru'}.gif",
+            "image_url": f"{WA_CARD_BASE}/wa-card-{'tj' if tajik else 'ru'}.{WA_CARD_EXT}",
             "buttons": [button],
         }],
     }}}
@@ -567,6 +586,12 @@ async def handle_message(sender: str, text: str) -> None:
 
     wants_button = WHATSAPP_MARK in reply and bool(MANAGER_WHATSAPP)
     reply = reply.replace(WHATSAPP_MARK, "").strip()
+    # Номер WhatsApp в тексте не показываем. Модель его не знает, но
+    # может повторить из старой переписки — тогда вырезаем его и шлём
+    # кнопку вместо цифр.
+    stripped = strip_our_number(reply)
+    if stripped != reply:
+        reply, wants_button = stripped, bool(MANAGER_WHATSAPP)
     remember(sender, "assistant", reply + (" (отправлена кнопка WhatsApp)" if wants_button else ""))
     if reply:
         await send_message(sender, reply)
