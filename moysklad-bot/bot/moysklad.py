@@ -299,6 +299,10 @@ class MoySkladClient:
             json={"applicable": False, "description": description},
         )
 
+    async def repost(self, entity: str, doc_id: str) -> dict:
+        """Провести документ обратно — откат, если замена сорвалась."""
+        return await self._request("PUT", f"/entity/{entity}/{doc_id}", json={"applicable": True})
+
     @staticmethod
     def assortment_meta(href: str) -> dict:
         """Ссылка на товар или модификацию — тип берётся из самой ссылки."""

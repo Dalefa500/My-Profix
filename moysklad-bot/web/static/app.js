@@ -1510,7 +1510,12 @@ async function renderProduction(container) {
         note: t.batches ? `${share}% замесов` : "",
         noteTone: t.corrected ? "neg" : "",
       },
-      { label: "Доп. химия", value: amount(t.extraCost), tone: t.extraCost ? "expense" : "" },
+      {
+        label: "Химия к рецепту",
+        value: `${t.extraCost > 0 ? "+" : t.extraCost < 0 ? "−" : ""}${amount(Math.abs(t.extraCost))}`,
+        tone: t.extraCost > 0 ? "expense" : t.extraCost < 0 ? "pos" : "",
+        note: t.extraCost > 0 ? "сверх рецепта" : t.extraCost < 0 ? "меньше рецепта" : "",
+      },
     ]),
   );
 
@@ -1549,11 +1554,18 @@ async function renderProduction(container) {
         el("span", `row__tag${b.ok ? " row__tag--paid" : ""}`, b.cancelled ? "отменён" : b.ok ? "в норме" : "поправлен"),
       );
       if (b.enterId && !b.cancelled) foot.append(el("span", "row__tag row__tag--ms", "в МойСкладе"));
-      const fixes = b.additions.map((a) => `${a.name} ${qty(a.qty)} ${a.uom}`.trim()).join(", ");
-      foot.append(el("span", "row__note", [fixes, b.note, b.name].filter(Boolean).join(" · ")));
+      if (b.amendedAt && !b.cancelled) foot.append(el("span", "row__tag row__tag--ms", `изменён ${b.amendedAt.slice(11, 16)}`));
       line.append(foot);
-      if (b.cancellable) {
+      // Отклонения от техкарты со знаком: +0,5 кг добавили, −0,3 кг меньше
+      const fixes = (b.deltas || []).map((d) => `${d.name} ${signed(d.qty)} ${d.uom}`.trim()).join(", ");
+      const about = [fixes, b.note, b.name].filter(Boolean).join(" · ");
+      if (about) line.append(el("div", "row__note", about));
+      if (b.editable) {
         const bar = el("div", "row__actions");
+        const edit = el("button", "mini", "Изменить химию");
+        edit.type = "button";
+        edit.addEventListener("click", () => openPanel("Исправить замес", () => drawBatchForm(data, b)));
+        bar.append(edit);
         const cancel = el("button", "mini mini--danger", "Отменить");
         cancel.type = "button";
         cancel.addEventListener("click", async () => {
@@ -1866,111 +1878,217 @@ function drawCardForm(c) {
   body.append(form);
 }
 
-function drawBatchForm(data) {
+// +0,5 / −0,3 / 0 — отклонение со знаком, минус настоящий, а не дефис
+const signed = (n) => (n > 0 ? "+" : n < 0 ? "−" : "") + qty(Math.abs(n));
+// Принимает и «-0,3», и «−0,3», и «+1»
+const parseSigned = (text) => Number(String(text).replace(/\s/g, "").replace("−", "-").replace(",", "."));
+// Шаг кнопок: химия — по 0,1, цемент и песок — крупнее
+const stepFor = (planned) => (planned >= 100 ? 10 : planned >= 10 ? 1 : 0.1);
+const round3 = (n) => Math.round(n * 1000) / 1000;
+
+/* Химия и сырьё этого замеса: по каждой строке техкарты — сколько
+   положено и на сколько отклонились, кнопками «−» и «+» (на цифровой
+   клавиатуре iPhone минуса нет) или вводом. Сверх техкарты можно
+   добавить любое сырьё. */
+function deltaRows(recipe, getCount, rows) {
+  const list = el("div", "rows qty-rows");
+  const draw = () => {
+    list.replaceChildren();
+    rows.forEach((r, i) => {
+      const planned = r.perBatch * getCount();
+      const line = el("div", "row row--stacked delta-row");
+      line.append(el("div", "row__label", r.name));
+      const minus = el("button", "delta__btn", "−");
+      const input = el("input", "qty-row__input delta__input");
+      const plus = el("button", "delta__btn", "+");
+      minus.type = plus.type = "button";
+      minus.setAttribute("aria-label", `Меньше: ${r.name}`);
+      plus.setAttribute("aria-label", `Больше: ${r.name}`);
+      input.inputMode = "decimal";
+      input.value = r.qty ? signed(r.qty) : "0";
+      const total = el("div", "row__note");
+      const paint = () => {
+        const fact = planned + r.qty;
+        total.textContent = r.perBatch
+          ? `по техкарте ${qty(planned)} ${r.uom} → положили ${qty(Math.max(fact, 0))} ${r.uom}`
+          : `сверх техкарты → положили ${qty(Math.max(r.qty, 0))} ${r.uom}`;
+        line.classList.toggle("is-plus", r.qty > 0);
+        line.classList.toggle("is-minus", r.qty < 0);
+      };
+      // Меньше нуля в итоге не бывает: убавить можно только положенное
+      const clamp = (v) => round3(Math.max(v, -planned));
+      const step = stepFor(r.perBatch ? planned : Math.max(r.qty, 1));
+      minus.addEventListener("click", () => {
+        r.qty = clamp(r.qty - step);
+        input.value = r.qty ? signed(r.qty) : "0";
+        paint();
+      });
+      plus.addEventListener("click", () => {
+        r.qty = clamp(r.qty + step);
+        input.value = r.qty ? signed(r.qty) : "0";
+        paint();
+      });
+      input.addEventListener("change", () => {
+        const v = parseSigned(input.value);
+        r.qty = Number.isFinite(v) ? clamp(v) : 0;
+        input.value = r.qty ? signed(r.qty) : "0";
+        paint();
+      });
+      const controls = el("div", "delta");
+      controls.append(minus, input, plus, el("span", "row__unit", r.uom || ""));
+      line.append(controls, total);
+      if (!r.perBatch) {
+        const remove = el("button", "qty-row__remove", "×");
+        remove.type = "button";
+        remove.setAttribute("aria-label", `Убрать ${r.name}`);
+        remove.addEventListener("click", () => {
+          rows.splice(i, 1);
+          draw();
+        });
+        controls.append(remove);
+      }
+      paint();
+      list.append(line);
+    });
+  };
+  draw();
+  return { list, draw };
+}
+
+/* Замес: новый или исправление своего сегодняшнего. При исправлении
+   марка и число замесов те же — меняются химия, качество и заметка. */
+function drawBatchForm(data, batch = null) {
   const body = $("#sheet-body");
   body.replaceChildren();
   const form = el("form", "card add-form");
 
-  form.append(el("div", "field__label", "Марка"));
-  let card = data.cards.length === 1 ? data.cards[0] : null;
-  const pills = el("div", "pills");
-  data.cards.forEach((c) => {
-    const pill = el("button", `pill${card === c ? " is-active" : ""}`, c.name);
-    pill.type = "button";
-    pill.addEventListener("click", () => {
-      card = c;
-      pills.querySelectorAll(".pill").forEach((p) => p.classList.toggle("is-active", p === pill));
-      drawSuggestions();
+  let card = null;
+  let count = batch ? batch.count : 1;
+  const bagsNote = el("div", "hint");
+
+  if (batch) {
+    card = { id: batch.cardId, name: batch.cardName, materials: batch.recipe, bags: batch.bagsPerBatch || batch.bags / batch.count };
+    form.append(el("div", "field__label", "Замес"));
+    form.append(el("div", "chosen", `${batch.cardName} × ${batch.count} · ${bagsText(batch.bags)} · ${stamp(batch.t)}`));
+  } else {
+    form.append(el("div", "field__label", "Марка"));
+    card = data.cards.length === 1 ? data.cards[0] : null;
+    const pills = el("div", "pills");
+    data.cards.forEach((c) => {
+      const pill = el("button", `pill${card === c ? " is-active" : ""}`, c.name);
+      pill.type = "button";
+      pill.addEventListener("click", () => {
+        card = c;
+        pills.querySelectorAll(".pill").forEach((p) => p.classList.toggle("is-active", p === pill));
+        resetRows();
+        updateBags();
+      });
+      pills.append(pill);
+    });
+    form.append(pills);
+
+    // Сколько замесов подряд — кнопками, без клавиатуры
+    const stepper = el("div", "stepper");
+    const minus = el("button", "stepper__btn", "−");
+    const value = el("div", "stepper__value", "1");
+    const plus = el("button", "stepper__btn", "+");
+    minus.type = plus.type = "button";
+    minus.addEventListener("click", () => {
+      count = Math.max(1, count - 1);
+      value.textContent = String(count);
       updateBags();
     });
-    pills.append(pill);
-  });
-  form.append(pills);
+    plus.addEventListener("click", () => {
+      count = Math.min(100, count + 1);
+      value.textContent = String(count);
+      updateBags();
+    });
+    stepper.append(minus, value, plus);
+    form.append(el("div", "field__label", "Замесов"), stepper, bagsNote);
+  }
 
-  // Сколько замесов подряд — кнопками, без клавиатуры
-  let count = 1;
-  const stepper = el("div", "stepper");
-  const minus = el("button", "stepper__btn", "−");
-  const value = el("div", "stepper__value", "1");
-  const plus = el("button", "stepper__btn", "+");
-  minus.type = plus.type = "button";
-  const bagsNote = el("div", "hint");
-  const updateBags = () => {
-    value.textContent = String(count);
-    bagsNote.textContent = card ? `= ${bagsText(card.bags * count)}` : "";
-  };
-  minus.addEventListener("click", () => {
-    count = Math.max(1, count - 1);
-    updateBags();
-  });
-  plus.addEventListener("click", () => {
-    count = Math.min(100, count + 1);
-    updateBags();
-  });
-  stepper.append(minus, value, plus);
-  form.append(el("div", "field__label", "Замесов"), stepper, bagsNote);
+  // Строки отклонений: вся техкарта плюс то, что добавили сверх неё
+  let rows = [];
+  const table = el("div");
+  let deltas = null;
+  function resetRows() {
+    const known = new Map((batch ? batch.deltas || [] : []).map((d) => [d.href, d.qty]));
+    rows = (card ? card.materials : []).map((m) => ({
+      href: m.href, name: m.name, uom: m.uom, perBatch: m.qty, qty: known.get(m.href) || 0,
+    }));
+    (batch ? batch.deltas || [] : []).forEach((d) => {
+      if (!rows.some((r) => r.href === d.href)) rows.push({ href: d.href, name: d.name, uom: d.uom, perBatch: 0, qty: d.qty });
+    });
+    deltas = deltaRows(card ? card.materials : [], () => count, rows);
+    table.replaceChildren(card ? deltas.list : el("div", "empty", "Выберите марку"));
+    drawSuggestions();
+  }
+  function updateBags() {
+    if (!batch) bagsNote.textContent = card ? `= ${bagsText(card.bags * count)}` : "";
+    if (deltas) deltas.draw();
+  }
 
-  form.append(el("div", "field__label", "Качество"));
-  let ok = true;
-  const quality = el("div", "roles");
-  const good = el("button", "role is-active", "В норме");
-  const fixed = el("button", "role", "Поправил");
-  good.type = fixed.type = "button";
-  quality.append(good, fixed);
-  form.append(quality);
+  form.append(
+    el("div", "field__label", "Химия и сырьё в этом замесе"),
+    el("div", "hint hint--left", "Положили больше или меньше техкарты — поправьте кнопками «−» и «+»."),
+    table,
+  );
 
-  // Что добавляли сверх рецепта — видно только если поправляли
-  const fixBox = el("div", "fix");
-  fixBox.hidden = true;
-  const additions = [];
-  const addTable = qtyRows(additions);
+  // Подсказки: что добавляли сверх техкарты в прошлые разы
   const suggest = el("div", "pills");
-  const addItem = (item) => {
-    if (additions.some((a) => a.href === item.href)) return;
-    additions.push({ href: item.href, name: item.name, uom: item.uom, qty: 0 });
-    addTable.draw();
+  const addExtra = (item) => {
+    if (!card || rows.some((r) => r.href === item.href)) return;
+    rows.push({ href: item.href, name: item.name, uom: item.uom, perBatch: 0, qty: 0 });
+    deltas.draw();
   };
   function drawSuggestions() {
     suggest.replaceChildren();
-    // Подсказки: сырьё из техкарты и то, что добавляли раньше
     const seen = new Map();
-    (card ? card.materials : []).forEach((m) => seen.set(m.href, m));
-    data.recent.forEach((b) => b.additions.forEach((a) => seen.set(a.href, a)));
-    [...seen.values()].slice(0, 12).forEach((m) => {
-      const pill = el("button", "pill", `+ ${m.name}`);
+    data.recent.forEach((b) =>
+      (b.deltas || []).forEach((d) => {
+        if (!rows.some((r) => r.href === d.href)) seen.set(d.href, d);
+      }),
+    );
+    [...seen.values()].slice(0, 8).forEach((d) => {
+      const pill = el("button", "pill", `+ ${d.name}`);
       pill.type = "button";
-      pill.addEventListener("click", () => addItem(m));
+      pill.addEventListener("click", () => {
+        addExtra(d);
+        pill.remove();
+      });
       suggest.append(pill);
     });
   }
-  drawSuggestions();
-  fixBox.append(
-    el("div", "field__label", "Что добавили"),
-    suggest,
-    addTable.list,
-    catalogPicker(addItem, "Другое: начните вводить название"),
-  );
-  form.append(fixBox);
+  form.append(suggest, catalogPicker(addExtra, "+ Другое сырьё сверх техкарты"));
 
+  form.append(el("div", "field__label", "Качество"));
+  let ok = batch ? batch.ok : true;
+  const quality = el("div", "roles");
+  const good = el("button", `role${ok ? " is-active" : ""}`, "В норме");
+  const fixed = el("button", `role${ok ? "" : " is-active"}`, "Поправил");
+  good.type = fixed.type = "button";
   const setOk = (value) => {
     ok = value;
     good.classList.toggle("is-active", ok);
     fixed.classList.toggle("is-active", !ok);
-    fixBox.hidden = ok;
   };
   good.addEventListener("click", () => setOk(true));
   fixed.addEventListener("click", () => setOk(false));
+  quality.append(good, fixed);
+  form.append(quality);
 
   const note = el("input", "search");
   note.placeholder = "Заметка: например, сырой песок";
   note.maxLength = 300;
+  note.value = batch ? batch.note || "" : "";
   form.append(note);
 
-  const submit = el("button", "btn btn--primary", "Записать замес");
+  const submit = el("button", "btn btn--primary", batch ? "Сохранить исправление" : "Записать замес");
   submit.type = "submit";
   const error = el("p", "login__error");
   error.hidden = true;
   form.append(submit, error);
+  resetRows();
   updateBags();
 
   form.addEventListener("submit", async (event) => {
@@ -1981,12 +2099,17 @@ function drawBatchForm(data) {
     };
     error.hidden = true;
     if (!card) return fail("Выберите марку");
-    const used = ok ? [] : additions;
-    if (used.some((a) => !(a.qty > 0))) return fail("Укажите, сколько добавили");
-    if (!ok && !used.length && !note.value.trim()) return fail("Что поправили? Добавьте химию или напишите заметку");
+    const changed = rows
+      .filter((r) => Math.abs(r.qty) > 1e-9)
+      .map((r) => ({ href: r.href, name: r.name, uom: r.uom, qty: r.qty }));
+    if (!ok && !changed.length && !note.value.trim()) return fail("Что поправили? Измените химию или напишите заметку");
     submit.disabled = true;
     try {
-      await send("/api/batches", { cardId: card.id, count, ok, additions: used, note: note.value });
+      if (batch) {
+        await send(`/api/batches/${batch.id}/amend`, { ok, deltas: changed, note: note.value });
+      } else {
+        await send("/api/batches", { cardId: card.id, count, ok, deltas: changed, note: note.value });
+      }
       closeSheet();
       render();
     } catch (err) {
@@ -2015,6 +2138,7 @@ const ACTIONS = {
   techcard_archived: "Техкарта в архиве",
   batch: "Замес",
   batch_cancel: "Замес отменён",
+  batch_amend: "Замес исправлен",
   writeoff_on: "Списание в МойСкладе включено",
   writeoff_off: "Списание в МойСкладе выключено",
 };

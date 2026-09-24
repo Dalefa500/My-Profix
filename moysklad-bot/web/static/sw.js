@@ -1,11 +1,11 @@
 /* Кэш оболочки приложения: интерфейс открывается мгновенно, а цифры
    всегда берутся из сети — финансовые данные не кэшируются никогда. */
 
-const CACHE = "profix-shell-v33";
+const CACHE = "profix-shell-v34";
 const SHELL = [
   "/",
-  "/styles.css?v=33",
-  "/app.js?v=33",
+  "/styles.css?v=34",
+  "/app.js?v=34",
   "/manifest.json",
   "/icons/icon-192.png",
   "/icons/logo.png",

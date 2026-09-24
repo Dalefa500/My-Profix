@@ -1014,3 +1014,19 @@ svg { display: block; }
 .row__tag--ms { color: var(--income); border-color: rgba(74, 151, 216, .45); }
 .card--muted { border-color: rgba(255, 255, 255, .1); }
 .code__note.is-neg { color: var(--warn); }
+
+/* Отклонение от техкарты: «−  +0,5  +» — крупные кнопки под палец */
+.delta { display: flex; align-items: center; gap: 8px; flex: 1 0 100%; margin-top: 8px; }
+.delta__btn {
+  width: 48px; height: 44px; flex: none;
+  border-radius: 12px;
+  font-size: 24px; font-weight: 700;
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .16);
+  transition: transform .24s cubic-bezier(.22, 1.4, .4, 1);
+}
+.delta__btn:active { transform: scale(.9); transition-duration: .06s; }
+.delta__input { width: 92px; text-align: center; }
+.delta-row.is-plus .delta__input { color: var(--expense); border-color: rgba(204, 127, 34, .5); }
+.delta-row.is-minus .delta__input { color: var(--good); border-color: rgba(63, 191, 127, .5); }
+.hint--left { text-align: left; font-size: 13.5px; }

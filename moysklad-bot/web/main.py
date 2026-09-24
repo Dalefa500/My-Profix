@@ -18,7 +18,8 @@ from typing import AsyncIterator
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer
 from pydantic import BaseModel
@@ -95,6 +96,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(cash_router)
+
+
+# Телефон показывает detail как текст. Стандартный ответ FastAPI — список
+# на английском с повтором введённого значения; на нечисловом «NaN» он
+# ещё и падал при сериализации. Отвечаем одной понятной строкой.
+FIELD_NAMES = {
+    "amount": "сумма",
+    "counted": "сумма",
+    "qty": "количество",
+    "count": "число замесов",
+    "bags": "мешков с замеса",
+    "bagKg": "вес мешка",
+    "name": "название",
+    "reason": "причина",
+    "note": "заметка",
+    "comment": "комментарий",
+    "materials": "сырьё",
+    "deltas": "химия",
+}
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    fields = [str(part) for err in exc.errors() for part in err.get("loc", ()) if str(part) in FIELD_NAMES]
+    what = FIELD_NAMES[fields[0]] if fields else "введённые данные"
+    return JSONResponse(status_code=422, content={"detail": f"Проверьте: {what}"})
 app.include_router(production_router)
 
 
