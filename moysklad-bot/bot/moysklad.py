@@ -58,6 +58,11 @@ class MoySkladError(RuntimeError):
     """Raised when the MoySklad API returns an error response."""
 
 
+class MoySkladUnreachable(MoySkladError):
+    """Связь оборвалась или ответ не дождались. Для записи это значит
+    «неизвестно»: МойСклад мог запрос и выполнить."""
+
+
 # МойСклад пускает не больше 5 параллельных запросов от пользователя и 45
 # за 3 секунды от аккаунта; сверх этого отвечает 429. Держим запас: бот и
 # приложение ходят с одним токеном.
@@ -120,9 +125,10 @@ class MoySkladClient:
                 try:
                     response = await self._client.request(method, path, **kwargs)
                 except httpx.HTTPError as exc:
-                    # Таймаут и обрыв связи — та же ошибка МойСклада, что и
-                    # отказ: иначе мимо неё проходят все откаты у вызывающих.
-                    raise MoySkladError(f"Нет связи с МойСкладом: {exc.__class__.__name__}") from exc
+                    # Таймаут и обрыв связи — тоже ошибка МойСклада, иначе
+                    # мимо неё проходят все откаты у вызывающих. Отдельным
+                    # типом: запись при этом могла и пройти.
+                    raise MoySkladUnreachable(f"Нет связи с МойСкладом: {exc.__class__.__name__}") from exc
             if response.status_code != 429 or attempt == MAX_RETRIES:
                 break
             # Лимит запросов: МойСклад сам говорит, сколько подождать
@@ -297,14 +303,29 @@ class MoySkladClient:
         """Отмена без удаления: документ остаётся, но снимается с
         проведения, а в описании дописывается, кто и почему отменил.
         Возвращает прежнее описание — чтобы при откате вернуть его."""
+        original = await self.get_description(entity, doc_id)
+        await self.mark_unposted(entity, doc_id, note, original)
+        return original
+
+    async def get_description(self, entity: str, doc_id: str) -> str:
         doc = await self._request("GET", f"/entity/{entity}/{doc_id}")
-        original = doc.get("description") or ""
-        await self._request(
+        return doc.get("description") or ""
+
+    async def mark_unposted(self, entity: str, doc_id: str, note: str, original: str) -> dict:
+        return await self._request(
             "PUT",
             f"/entity/{entity}/{doc_id}",
             json={"applicable": False, "description": f"{note}\n\n{original}".strip()},
         )
-        return original
+
+    async def find_by_external_code(self, entity: str, code: str) -> dict | None:
+        """Документ по нашему коду — чтобы узнать, прошла ли запись, ответ
+        на которую не дошёл."""
+        data = await self._request(
+            "GET", f"/entity/{entity}", params={"filter": f"externalCode={code}", "limit": 1}
+        )
+        rows = data.get("rows") or []
+        return rows[0] if rows else None
 
     async def repost(self, entity: str, doc_id: str, description: str | None = None) -> dict:
         """Провести документ обратно — откат, если замена сорвалась.
@@ -320,7 +341,9 @@ class MoySkladClient:
         match = re.search(r"/entity/(product|variant|bundle|service)/", href)
         return MoySkladClient._meta(href, match.group(1) if match else "product")
 
-    async def create_stock_document(self, entity: str, positions: list[dict], description: str) -> dict:
+    async def create_stock_document(
+        self, entity: str, positions: list[dict], description: str, external_code: str = ""
+    ) -> dict:
         """Списание (loss) сырья или оприходование (enter) готовых мешков
         на основной склад. positions: [{"href", "quantity", "price"?}],
         цена — в сомони за единицу."""
@@ -341,6 +364,10 @@ class MoySkladClient:
             "description": description,
             "positions": rows,
         }
+        if external_code:
+            # Свой код у каждого документа: если ответ не дойдёт, по нему
+            # можно найти, создан ли документ на самом деле
+            payload["externalCode"] = external_code
         return await self._request("POST", f"/entity/{entity}", json=payload)
 
     async def get_account_balances(self) -> list[dict]:

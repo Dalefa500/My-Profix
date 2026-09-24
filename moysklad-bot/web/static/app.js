@@ -1914,7 +1914,6 @@ function deltaRows(recipe, getCount, rows) {
       const planned = r.perBatch * getCount();
       // Замесов стало меньше — убавка не может быть больше нового плана
       if (r.perBatch && r.qty < -planned) r.qty = -planned;
-      r.invalid = false;
       const line = el("div", "row row--stacked delta-row");
       line.append(el("div", "row__label", r.name));
       const minus = el("button", "delta__btn", "−");
@@ -1925,6 +1924,17 @@ function deltaRows(recipe, getCount, rows) {
       plus.setAttribute("aria-label", `Больше: ${r.name}`);
       input.inputMode = "decimal";
       input.value = r.qty ? signed(r.qty) : "0";
+      // Опечатка переживает перерисовку (сменили число замесов, добавили
+      // сырьё) — иначе она молча превратилась бы в прежнее число
+      if (r.invalid) {
+        input.value = r.raw;
+        line.classList.add("is-invalid");
+      }
+      const valid = () => {
+        r.invalid = false;
+        r.raw = "";
+        line.classList.remove("is-invalid");
+      };
       const total = el("div", "row__note");
       const paint = () => {
         const fact = planned + r.qty;
@@ -1940,11 +1950,13 @@ function deltaRows(recipe, getCount, rows) {
       const clamp = (v) => Math.max(round3(v), -planned);
       const step = stepFor(r.perBatch ? planned : Math.max(r.qty, 1));
       minus.addEventListener("click", () => {
+        valid();
         r.qty = clamp(r.qty - step);
         input.value = r.qty ? signed(r.qty) : "0";
         paint();
       });
       plus.addEventListener("click", () => {
+        valid();
         r.qty = clamp(r.qty + step);
         input.value = r.qty ? signed(r.qty) : "0";
         paint();
@@ -1954,11 +1966,11 @@ function deltaRows(recipe, getCount, rows) {
         if (!Number.isFinite(v)) {
           // Опечатку не превращаем молча в ноль — подсвечиваем
           r.invalid = true;
+          r.raw = input.value;
           line.classList.add("is-invalid");
           return;
         }
-        r.invalid = false;
-        line.classList.remove("is-invalid");
+        valid();
         r.qty = clamp(v);
         input.value = r.qty ? signed(r.qty) : "0";
         paint();
@@ -2084,7 +2096,8 @@ function drawBatchForm(data, batch = null) {
       const pill = el("button", "pill", `+ ${d.name}`);
       pill.type = "button";
       pill.addEventListener("click", () => {
-        if (addExtra(d)) pill.remove();
+        // Уже добавлено через поиск — подсказка просто лишняя
+        if (addExtra(d) || rows.some((r) => r.href === d.href)) pill.remove();
       });
       suggest.append(pill);
     });

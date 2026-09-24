@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from bot.moysklad import BASE_URL, MoySkladClient, MoySkladError
+from bot.moysklad import BASE_URL, MoySkladClient, MoySkladError, MoySkladUnreachable
 from web import store
 from web.access import Person, allow, audit, client_ip, require_can, require_manager, require_person
 from web.notify import notify_owners
@@ -429,14 +429,16 @@ async def add_batch(payload: Batch, request: Request, me: Person = Depends(edito
     bags = card["bags"] * payload.count
     base_cost = _priced(card, prices)["costPerBatch"] * payload.count
 
+    batch_id = f"b_{secrets.token_hex(5)}"
     documents: dict[str, str] = {}
     if write_off_enabled():
         documents = await _post_to_moysklad(
-            request, card["name"], snapshot, payload.count, deltas, bags, base_cost + extra, me
+            request, card["name"], snapshot, payload.count, deltas, bags, base_cost + extra, me,
+            batch_id=batch_id,
         )
 
     entry = {
-        "id": f"b_{secrets.token_hex(5)}",
+        "id": batch_id,
         "t": store.now(),
         "by": me.id,
         "name": me.name,
@@ -505,14 +507,39 @@ def _same_deltas(old: list[dict], new: list[dict]) -> bool:
 
 
 async def _restore(moysklad: MoySkladClient, touched: list[list]) -> list[str]:
-    """Провести обратно то, что успели снять, с прежним описанием."""
+    """Провести обратно с прежним описанием то, что могли успеть снять:
+    сюда попадает только то, по чему запрос на снятие уже ушёл."""
     problems = []
     for entity, doc_id, original in touched:
         try:
             await moysklad.repost(entity, doc_id, original)
         except MoySkladError:
-            problems.append(f"{_doc_label(entity, doc_id)} осталось снятым с проведения")
+            problems.append(f"{_doc_label(entity, doc_id)} — не удалось провести обратно, проверьте")
     return problems
+
+
+async def _unpost_all(moysklad: MoySkladClient, docs: list[tuple[str, str]], note: str, touched: list[list]) -> None:
+    """Снять документы с проведения. Описание читаем до изменения, и в
+    touched документ попадает только перед самим изменением: не прошло
+    чтение — документ не тронут, и откатывать нечего."""
+    for entity, doc_id in docs:
+        original = await moysklad.get_description(entity, doc_id)
+        touched.append([entity, doc_id, original])
+        await moysklad.mark_unposted(entity, doc_id, note, original)
+
+
+async def _undo_maybe_created(moysklad: MoySkladClient, entity: str, code: str) -> list[str]:
+    """Ответ на создание не дошёл — документ мог появиться. Ищем по
+    нашему коду: нашёлся — снимаем с проведения; не смогли проверить —
+    сообщаем, что проверить нужно руками."""
+    try:
+        doc = await moysklad.find_by_external_code(entity, code)
+        if doc and doc.get("applicable", True):
+            await moysklad.unpost(entity, doc["id"], "ОТМЕНЕНО: ответ МойСклада не дошёл, запись откатана")
+        return []
+    except MoySkladError:
+        label = "списание" if entity == "loss" else "оприходование"
+        return [f"{label} могло создаться без ответа (код {code}) — проверьте"]
 
 
 @router.post("/api/batches/{batch_id}/amend")
@@ -598,27 +625,35 @@ async def _post_to_moysklad(
 
     moysklad: MoySkladClient = request.app.state.moysklad
     description = f"Замес: {card_name} × {count} — {me.name} (приложение Profix){suffix}"
+    # Свой код у каждого документа: если ответ на создание не дойдёт, по
+    # коду видно, появился ли документ на самом деле
+    tag = f"pmx-{batch_id or 'batch'}-{secrets.token_hex(3)}"
+    loss_code, enter_code = f"{tag}-loss", f"{tag}-enter"
     try:
         loss = await moysklad.create_stock_document(
-            "loss", [{"href": href, "quantity": qty} for href, qty in used.items()], description
+            "loss", [{"href": href, "quantity": qty} for href, qty in used.items()], description, loss_code
         )
     except MoySkladError as exc:
+        if isinstance(exc, MoySkladUnreachable):
+            await _flag(request, me, batch_id, await _undo_maybe_created(moysklad, "loss", loss_code),
+                        "списание без ответа")
         raise HTTPException(status_code=502, detail=f"Списание в МойСклад не прошло: {exc}")
     try:
         enter = await moysklad.create_stock_document(
             "enter",
             [{"href": snapshot["productHref"], "quantity": bags, "price": max(cost, 0.0) / bags}],
             description,
+            enter_code,
         )
     except MoySkladError as exc:
+        problems: list[str] = []
+        if isinstance(exc, MoySkladUnreachable):
+            problems += await _undo_maybe_created(moysklad, "enter", enter_code)
         try:
             await moysklad.unpost("loss", loss["id"], "ОТМЕНЕНО: оприходование не прошло")
         except MoySkladError:
-            await _flag(
-                request, me, batch_id,
-                [f"{_doc_label('loss', loss.get('id', '?'))} осталось проведённым без оприходования"],
-                "оприходование не прошло",
-            )
+            problems.append(f"{_doc_label('loss', loss.get('id', '?'))} могло остаться проведённым без оприходования")
+        await _flag(request, me, batch_id, problems, "оприходование не прошло")
         raise HTTPException(status_code=502, detail=f"Оприходование в МойСклад не прошло: {exc}")
     return {"lossId": loss.get("id", ""), "enterId": enter.get("id", "")}
 
@@ -637,22 +672,17 @@ async def _replace_in_moysklad(
         suffix=f" · исправлен {stamp}", batch_id=batch["id"],
     )
     note = f"ИЗМЕНЕНО {stamp} — {me.name}: заменён исправленным документом"
-    # [документ, id, прежнее описание]; запоминаем до вызова — снятие,
-    # оборвавшееся по таймауту, могло всё же пройти, и его тоже откатываем
+    old = [(entity, batch[key]) for entity, key in (("enter", "enterId"), ("loss", "lossId")) if batch.get(key)]
     touched: list[list] = []
     try:
-        for entity, key in (("enter", "enterId"), ("loss", "lossId")):
-            if batch.get(key):
-                item = [entity, batch[key], None]
-                touched.append(item)
-                item[2] = await moysklad.unpost(entity, batch[key], note)
+        await _unpost_all(moysklad, old, note, touched)
     except MoySkladError as exc:
         problems = await _restore(moysklad, touched)
         for entity, key in (("enter", "enterId"), ("loss", "lossId")):
             try:
                 await moysklad.unpost(entity, new[key], "ОТМЕНЕНО: исправление не прошло")
             except MoySkladError:
-                problems.append(f"новое {_doc_label(entity, new[key])} осталось проведённым")
+                problems.append(f"новое {_doc_label(entity, new[key])} могло остаться проведённым")
         await _flag(request, me, batch["id"], problems, "исправление не прошло")
         raise HTTPException(status_code=502, detail=f"МойСклад не принял исправление: {exc}")
     return new
@@ -673,13 +703,10 @@ async def cancel_batch(
         # действующим и здесь.
         moysklad: MoySkladClient = request.app.state.moysklad
         note = f"ОТМЕНЕНО {datetime.now():%d.%m %H:%M} — {me.name}: {payload.reason}"
+        docs = [(entity, batch[key]) for entity, key in (("enter", "enterId"), ("loss", "lossId")) if batch.get(key)]
         touched: list[list] = []
         try:
-            for entity, key in (("enter", "enterId"), ("loss", "lossId")):
-                if batch.get(key):
-                    item = [entity, batch[key], None]
-                    touched.append(item)
-                    item[2] = await moysklad.unpost(entity, batch[key], note)
+            await _unpost_all(moysklad, docs, note, touched)
         except MoySkladError as exc:
             problems = await _restore(moysklad, touched)
             await _flag(request, me, batch_id, problems, "отмена не прошла")

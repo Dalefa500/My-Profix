@@ -285,7 +285,7 @@ def audit(action: str, person: Person | None, ip: str, detail: str = "") -> None
             with open(AUDIT_PATH, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
             if AUDIT_PATH.stat().st_size > AUDIT_MAX_BYTES:
-                lines = AUDIT_PATH.read_text(encoding="utf-8").splitlines()[-AUDIT_KEEP_LINES:]
+                lines = AUDIT_PATH.read_text(encoding="utf-8", errors="replace").splitlines()[-AUDIT_KEEP_LINES:]
                 tmp = AUDIT_PATH.with_suffix(".tmp")
                 tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 os.replace(tmp, AUDIT_PATH)
@@ -295,7 +295,9 @@ def audit(action: str, person: Person | None, ip: str, detail: str = "") -> None
 
 def read_audit(limit: int = 200) -> list[dict]:
     try:
-        lines = AUDIT_PATH.read_text(encoding="utf-8").splitlines()[-limit:]
+        # errors="replace": оборванная посреди буквы строка просто не
+        # разберётся ниже, а не уронит чтение всего журнала
+        lines = AUDIT_PATH.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
     except OSError:
         return []
     entries = []

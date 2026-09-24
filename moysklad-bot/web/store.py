@@ -62,13 +62,15 @@ def append(name: str, entry: dict) -> None:
 
 def read_lines(name: str) -> list[dict]:
     try:
-        lines = _path(name).read_text(encoding="utf-8").splitlines()
+        raw = _path(name).read_bytes()
     except OSError:
         return []
     entries = []
-    for line in lines:
+    # Каждую строку разбираем отдельно: оборванная посреди русской буквы
+    # не должна ронять чтение всего файла.
+    for line in raw.split(b"\n"):
         try:
-            entries.append(json.loads(line))
-        except ValueError:
+            entries.append(json.loads(line.decode("utf-8")))
+        except ValueError:  # в том числе UnicodeDecodeError
             continue
     return entries

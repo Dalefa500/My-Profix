@@ -18,7 +18,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from bot.moysklad import BASE_URL, MoySkladClient, MoySkladError
+from bot.moysklad import BASE_URL, MoySkladClient, MoySkladError, MoySkladUnreachable
 from web import store
 from web.access import Person, allow, audit, client_ip, require_can
 from web.notify import notify_owners
@@ -185,9 +185,18 @@ async def add_operation(
                 raise HTTPException(status_code=400, detail="Выберите статью расхода")
 
         description = "\n\n".join(filter(None, [comment, f"Внёс: {me.name} (приложение Profix)"]))
-        doc = await moysklad.create_cash_order(
-            payload.kind, amount, agent_href, description, item["href"] if item else None
-        )
+        try:
+            doc = await moysklad.create_cash_order(
+                payload.kind, amount, agent_href, description, item["href"] if item else None
+            )
+        except MoySkladUnreachable:
+            # Ответ не дошёл, а запись могла пройти: повтор вслепую
+            # провёл бы операцию дважды
+            raise HTTPException(
+                status_code=502,
+                detail="Нет связи с МойСкладом — операция могла записаться. "
+                "Обновите список операций и проверьте, прежде чем вносить снова.",
+            )
     except MoySkladError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
