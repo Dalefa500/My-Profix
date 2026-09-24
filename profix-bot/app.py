@@ -189,6 +189,8 @@ COMMENT_SYSTEM = SYSTEM + """
 - Своё имя в комментарии НЕ называй — представишься только в директе.
 - Никаких номеров телефона и WhatsApp в комментарии — ни нашего, ни
   чужого, даже если просят. Всё это только в директе.
+- Просят номер телефона или WhatsApp — ответь: «Отправили вам в директ 👌»
+  (по-таджикски: «Ба директ фиристодем 👌»). Сам номер не пиши.
 - Ответь по существу вопроса, если он есть.
 - В конце позови в личку: «написали вам в директ» или «подробности в директе».
 - Никаких цен, даже если спрашивают прямо.
@@ -400,34 +402,44 @@ def strip_our_number(text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
+_CONTACT_RE = re.compile(
+    r"номер|телефон|тел\b|контакт|ватсап|вацап|вотсап|whats\s*app|вотс|\bwa\b"
+    r"|рақам|раками|рақами|телефонатон|позвон|связ",
+    re.IGNORECASE,
+)
+
+
+def asks_contact(text: str) -> bool:
+    """Клиент просит номер телефона или WhatsApp."""
+    return bool(_CONTACT_RE.search(text))
+
+
 def whatsapp_url() -> str:
     return "https://wa.me/" + re.sub(r"\D", "", MANAGER_WHATSAPP)
 
 
-# Анимированные карточки лежат на GitHub Pages: Instagram берёт
-# картинку только по публичной ссылке.
+# Картинка карточки лежит на GitHub Pages: Instagram берёт её только по
+# публичной ссылке. Квадратная — Instagram обрезает картинку карточки
+# до квадрата, а GIF не показывает вовсе (проверено вживую).
 WA_CARD_BASE = os.getenv("WA_CARD_BASE", "https://dalefa500.github.io/My-Profix/img").rstrip("/")
-# png по умолчанию: GIF в карточке Instagram не показывает вовсе —
-# проверено вживую, карточка пришла без картинки.
-WA_CARD_EXT = os.getenv("WA_CARD_EXT", "png").strip().lstrip(".") or "png"
+WA_CARD_IMAGE = os.getenv("WA_CARD_IMAGE", "wa-card-sq.png").strip()
 
 
-async def _post_message(recipient_id: str, message: dict[str, Any]) -> httpx.Response:
+async def _post_message(recipient: dict[str, str], message: dict[str, Any]) -> httpx.Response:
     url = f"https://graph.instagram.com/{GRAPH_API_VERSION}/me/messages"
     async with httpx.AsyncClient(timeout=20) as http:
         return await http.post(
             url,
             params={"access_token": IG_ACCESS_TOKEN},
-            json={"recipient": {"id": recipient_id}, "message": message},
+            json={"recipient": recipient, "message": message},
         )
 
 
-async def send_whatsapp_button(recipient_id: str, tajik: bool) -> None:
-    """Отдельное сообщение: анимированная карточка и кнопка WhatsApp.
+async def send_whatsapp_card(recipient: dict[str, str], tajik: bool) -> bool:
+    """Карточка с логотипом и кнопкой «Написать в WhatsApp».
 
-    Номер клиент не видит — только кнопку. Пробуем по очереди, от
-    самого красивого к самому простому: карточка с картинкой, просто
-    кнопка, голая ссылка (номер в ней виден, но написать можно).
+    Номер клиент не видит — только кнопку. Пробуем карточку с картинкой,
+    потом простую кнопку. True — если что-то из этого дошло.
     """
     title = "Навиштан ба WhatsApp" if tajik else "Написать в WhatsApp"
     button = {"type": "web_url", "url": whatsapp_url(), "title": title}
@@ -436,7 +448,7 @@ async def send_whatsapp_button(recipient_id: str, tajik: bool) -> None:
         "elements": [{
             "title": "Ба мо дар WhatsApp нависед" if tajik else "Напишите нам в WhatsApp",
             "subtitle": "PROFIX · зуд ҷавоб медиҳем" if tajik else "PROFIX · ответим быстро",
-            "image_url": f"{WA_CARD_BASE}/wa-card-{'tj' if tajik else 'ru'}.{WA_CARD_EXT}",
+            "image_url": f"{WA_CARD_BASE}/{WA_CARD_IMAGE}",
             "buttons": [button],
         }],
     }}}
@@ -446,11 +458,18 @@ async def send_whatsapp_button(recipient_id: str, tajik: bool) -> None:
         "buttons": [button],
     }}}
     for kind, message in (("карточка", card), ("кнопка", plain)):
-        resp = await _post_message(recipient_id, message)
+        resp = await _post_message(recipient, message)
         if resp.status_code < 400:
-            return
+            return True
         print(f"WhatsApp: {kind} не ушла: {resp.status_code} {resp.text[:300]}", flush=True)
-    await send_message(recipient_id, whatsapp_url())
+    return False
+
+
+async def send_whatsapp_button(recipient_id: str, tajik: bool) -> None:
+    """Кнопка WhatsApp в директе; не вышло — голая ссылка, чтобы клиент
+    всё равно смог написать (номер в ней виден)."""
+    if not await send_whatsapp_card({"id": recipient_id}, tajik):
+        await send_message(recipient_id, whatsapp_url())
 
 
 async def reply_to_comment(comment_id: str, text: str) -> None:
@@ -494,12 +513,24 @@ async def handle_comment(comment_id: str, author: str, text: str) -> None:
         public = "Спасибо за вопрос! Написали вам в директ."
     await reply_to_comment(comment_id, public)
 
+    tajik = looks_tajik(text)
+    # Спрашивают номер или WhatsApp — первым сообщением в директ сразу
+    # шлём карточку с кнопкой. По комментарию Meta разрешает написать
+    # только одно сообщение, поэтому это и будет оно.
+    if asks_contact(text) and MANAGER_WHATSAPP:
+        if await send_whatsapp_card({"comment_id": comment_id}, tajik):
+            return
+        print("карточка по комментарию не ушла — шлём текст", flush=True)
+
     opener = await ask_claude([{"role": "user", "content":
         f"Клиент написал под нашей публикацией: «{text}». "
         f"Напиши ему первое сообщение в директ: поздоровайся, ответь по делу "
         f"и мягко выясни задачу."}])
     if opener:
-        await send_private_reply(comment_id, opener.replace(WHATSAPP_MARK, "").strip())
+        opener = strip_our_number(opener.replace(WHATSAPP_MARK, "")).strip()
+        if "фарзона" not in opener.lower():
+            opener = f"{GREETING_TJ if tajik else GREETING_RU} {opener}"
+        await send_private_reply(comment_id, opener)
 
 
 def iter_comments(payload: dict[str, Any]) -> list[tuple[str, str, str]]:
