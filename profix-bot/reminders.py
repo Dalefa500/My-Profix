@@ -71,10 +71,53 @@ def load_json(path: Path, default):
         return default
 
 
-def next_due(item: dict, today: date) -> date | None:
+def timeweb_due(env: dict[str, str], now: datetime) -> date | None:
+    """Дата, когда кончится баланс Timeweb Cloud, — по их API.
+
+    Нужен токен из кабинета Timeweb (TIMEWEB_TOKEN в .env). Без токена
+    или при ошибке возвращает None, и берётся дата «due» из payments.json.
+    """
+    token = env.get("TIMEWEB_TOKEN", "")
+    if not token:
+        return None
+    req = urllib.request.Request(
+        "https://api.timeweb.cloud/api/v1/account/finances",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as exc:  # noqa: BLE001
+        print(f"Timeweb API не ответил: {exc}", flush=True)
+        return None
+    fin = data.get("finances") or data
+    hours = fin.get("hours_left")
+    if hours is None:
+        balance, hourly = fin.get("balance"), fin.get("hourly_cost") or fin.get("hourly_fee")
+        if balance is None or not hourly:
+            print(f"Timeweb API: не нашёл остаток часов в ответе: {list(fin)}", flush=True)
+            return None
+        hours = float(balance) / float(hourly)
+    return (now + timedelta(hours=float(hours))).date()
+
+
+def next_due(item: dict, today: date, env: dict[str, str] | None = None,
+             now: datetime | None = None) -> date | None:
     """Ближайшая дата оплаты начиная с сегодня."""
+    if item.get("source") == "timeweb" and env is not None and now is not None:
+        auto = timeweb_due(env, now)
+        if auto is not None:
+            return auto
     if item.get("due"):
         return date.fromisoformat(item["due"])
+    if item.get("yearly"):
+        month, day = (int(x) for x in item["yearly"].split("-"))
+        for year in (today.year, today.year + 1):
+            last = calendar.monthrange(year, month)[1]
+            candidate = date(year, month, min(day, last))
+            if candidate >= today:
+                return candidate
+        return None
     day = item.get("monthly_day")
     if not day:
         return None
@@ -152,8 +195,9 @@ def main(argv: list[str]) -> int:
 
     if "--list" in argv:
         for item in payments:
-            due = next_due(item, today)
-            print(f"{due} | {item['title']} | {pay_text(item.get('pay', ''), cards)}")
+            due = next_due(item, today, env, now)
+            auto = " (по данным Timeweb)" if item.get("source") == "timeweb" and env.get("TIMEWEB_TOKEN") else ""
+            print(f"{due}{auto} | {item['title']} | {pay_text(item.get('pay', ''), cards)}")
         return 0
 
     if now.hour < SEND_FROM_HOUR:
@@ -161,7 +205,7 @@ def main(argv: list[str]) -> int:
 
     sent_log = load_json(SENT_LOG, {})
     for item in payments:
-        due = next_due(item, today)
+        due = next_due(item, today, env, now)
         if due is None:
             continue
         days = (due - today).days
