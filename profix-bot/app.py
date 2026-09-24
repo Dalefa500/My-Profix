@@ -140,10 +140,10 @@ Direct. Отвечаешь клиентам, которые пришли из п
   а не в первом же сообщении.{
   " Если клиенту удобнее написать самому — сначала всё же предложи"
   " оставить номер: так менеджер перезвонит сам. Если он всё равно"
-  " хочет написать сам, дай кнопку WhatsApp: допиши в самом конце"
-  " сообщения метку [WHATSAPP]. Бот сам превратит её в кнопку"
-  " «Написать в WhatsApp». Сам номер WhatsApp и ссылку на него"
-  " НИКОГДА не пиши — только метку."
+  " хочет написать сам, дай кнопку WhatsApp: ответь ОДНОЙ меткой"
+  " [WHATSAPP], без всякого текста. Бот сам пришлёт карточку с"
+  " логотипом и кнопкой — комментировать её («нажмите кнопку ниже»)"
+  " не нужно. Сам номер WhatsApp и ссылку на него НИКОГДА не пиши."
   if MANAGER_WHATSAPP else ""
   }
 - Получил номер — поблагодари и скажи, что менеджер свяжется.
@@ -419,10 +419,11 @@ def whatsapp_url() -> str:
 
 
 # Картинка карточки лежит на GitHub Pages: Instagram берёт её только по
-# публичной ссылке. Квадратный холст с круглым значком на прозрачном
-# фоне — Instagram обрезает картинку до квадрата, а GIF не показывает.
+# публичной ссылке. Instagram показывает её квадратом, прозрачность
+# заливает белым, а GIF не проигрывает — поэтому красный круг PROFIX
+# стоит на фоне цвета самой карточки (тёмная тема), и видно только круг.
 WA_CARD_BASE = os.getenv("WA_CARD_BASE", "https://dalefa500.github.io/My-Profix/img").rstrip("/")
-WA_CARD_IMAGE = os.getenv("WA_CARD_IMAGE", "wa-badge.png").strip()
+WA_CARD_IMAGE = os.getenv("WA_CARD_IMAGE", "wa-profix.png").strip()
 
 
 async def _post_message(recipient: dict[str, str], message: dict[str, Any]) -> httpx.Response:
@@ -436,14 +437,14 @@ async def _post_message(recipient: dict[str, str], message: dict[str, Any]) -> h
 
 
 async def send_whatsapp_card(recipient: dict[str, str], tajik: bool) -> bool:
-    """Круглый значок PROFIX с WhatsApp и кнопка под ним.
+    """Круглый логотип PROFIX и кнопка «WhatsApp» под ним.
 
     Номер клиент не видит. Лишнего текста в карточке нет: у Instagram
     заголовок обязателен, поэтому сначала пробуем невидимый, потом
     «PROFIX», потом простую кнопку без картинки. True — если дошло.
     """
     wa = whatsapp_url()
-    button = {"type": "web_url", "url": wa, "title": "Навиштан" if tajik else "Написать"}
+    button = {"type": "web_url", "url": wa, "title": "WhatsApp"}
 
     def card(title: str) -> dict[str, Any]:
         return {"attachment": {"type": "template", "payload": {
@@ -628,12 +629,12 @@ async def handle_message(sender: str, text: str) -> None:
     stripped = strip_our_number(reply)
     if stripped != reply:
         reply, wants_button = stripped, bool(MANAGER_WHATSAPP)
-    remember(sender, "assistant", reply + (" (отправлена кнопка WhatsApp)" if wants_button else ""))
-    if reply:
-        await send_message(sender, reply)
+    remember(sender, "assistant", "(отправлена карточка с кнопкой WhatsApp)" if wants_button else reply)
     if wants_button:
-        # Кнопка — отдельным сообщением, под текстом ответа.
+        # Только карточка с логотипом и кнопкой — без подписи над ней.
         await send_whatsapp_button(sender, tajik)
+    elif reply:
+        await send_message(sender, reply)
 
     # Появился телефон — заявка созрела. Один лид на диалог, чтобы
     # менеджер не получал одно и то же по три раза.
