@@ -8,7 +8,7 @@
   {
     "title": "Anthropic — баланс бота (автопополнение)",
     "monthly_day": 1,
-    "pay": "card:visa",
+    "pay": "card:visa1814",
     "note": "Проверьте, что на карте есть деньги, иначе автопополнение не пройдёт и бот начнёт отвечать заготовками. Баланс: https://console.anthropic.com/settings/billing"
   }
 ]
