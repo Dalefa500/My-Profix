@@ -432,9 +432,10 @@ def whatsapp_url() -> str:
 # Картинка карточки лежит на GitHub Pages: Instagram берёт её только по
 # публичной ссылке. Instagram показывает её квадратом во всю ширину
 # карточки (уменьшить нельзя), прозрачность заливает белым, а GIF не
-# проигрывает — поэтому это просто квадратный логотип PROFIX.
+# проигрывает — поэтому это квадратный логотип PROFIX с короткой
+# подсказкой под ним на языке клиента: wa-profix-ru.png / wa-profix-tj.png.
 WA_CARD_BASE = os.getenv("WA_CARD_BASE", "https://dalefa500.github.io/My-Profix/img").rstrip("/")
-WA_CARD_IMAGE = os.getenv("WA_CARD_IMAGE", "wa-profix-sq.png").strip()
+WA_CARD_IMAGE = os.getenv("WA_CARD_IMAGE", "wa-profix-{lang}.png").strip()
 
 
 async def _post_message(recipient: dict[str, str], message: dict[str, Any]) -> httpx.Response:
@@ -462,7 +463,7 @@ async def send_whatsapp_card(recipient: dict[str, str], tajik: bool) -> bool:
             "template_type": "generic",
             "elements": [{
                 "title": title,
-                "image_url": f"{WA_CARD_BASE}/{WA_CARD_IMAGE}",
+                "image_url": f"{WA_CARD_BASE}/" + WA_CARD_IMAGE.format(lang="tj" if tajik else "ru"),
                 "default_action": {"type": "web_url", "url": wa},
                 "buttons": [button],
             }],
