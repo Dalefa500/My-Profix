@@ -108,7 +108,6 @@ Direct. Отвечаешь клиентам, которые пришли из п
 {"ЦЕНЫ (можешь называть): " + PRICES if PRICES else
  "ЦЕНЫ: тебе они неизвестны. Никогда не называй и не прикидывай цифры — скажи, что цену назовёт менеджер, и предложи оставить номер."}
 
-{"WhatsApp компании: " + MANAGER_WHATSAPP if MANAGER_WHATSAPP else ""}
 
 КАК ТЫ РАБОТАЕШЬ
 
@@ -139,10 +138,12 @@ Direct. Отвечаешь клиентам, которые пришли из п
   грунтовку PROFIX, под штукатурку — работы нашей бригадой.
 - Номер телефона проси естественно, когда разговор к этому подошёл,
   а не в первом же сообщении.{
-  " Если клиенту удобнее связаться самому — дай наш WhatsApp: "
-  + MANAGER_WHATSAPP
-  + ". Но сначала всё же предложи оставить номер: так менеджер"
-    " перезвонит сам, и клиенту не придётся ничего делать."
+  " Если клиенту удобнее написать самому — сначала всё же предложи"
+  " оставить номер: так менеджер перезвонит сам. Если он всё равно"
+  " хочет написать сам, дай кнопку WhatsApp: допиши в самом конце"
+  " сообщения метку [WHATSAPP]. Бот сам превратит её в кнопку"
+  " «Написать в WhatsApp». Сам номер WhatsApp и ссылку на него"
+  " НИКОГДА не пиши — только метку."
   if MANAGER_WHATSAPP else ""
   }
 - Получил номер — поблагодари и скажи, что менеджер свяжется.
@@ -287,14 +288,24 @@ async def ask_claude(messages: list[dict[str, str]], system: str = "") -> str | 
     return "\n".join(p.strip() for p in parts if p.strip()) or None
 
 
+_TAJIK_WORDS = ("салом", "рахмат", "раҳмат", "чанд", "нарх", "мехоҳам", "мехохам", "лозим")
+
+
+def looks_tajik(text: str) -> bool:
+    lowered = text.lower()
+    return any(ch in lowered for ch in "қғӣӯҳҷ") or any(w in lowered for w in _TAJIK_WORDS)
+
+
+GREETING_RU = "Здравствуйте! Меня зовут Фарзона, я представитель компании PROFIX."
+GREETING_TJ = "Салом! Номи ман Фарзона, ман намояндаи ширкати PROFIX ҳастам."
+
+
 def fallback_reply(text: str) -> str:
     """Ответ без Claude — чтобы бот не молчал, если ключа нет."""
     if find_phone(text):
         return ("Спасибо! Номер получили, менеджер свяжется с вами. "
                 "Напишите, что именно нужно и какой объём.")
-    lowered = text.lower()
-    tajik_words = ("салом", "рахмат", "раҳмат", "чанд", "нарх", "мехоҳам", "мехохам", "лозим")
-    if any(ch in lowered for ch in "қғӣӯҳҷ") or any(w in lowered for w in tajik_words):
+    if looks_tajik(text):
         return ("Салом! 👋 PROFIX — омехтаҳои хушк ва андоваи механикии деворҳо. "
                 "Лутфан нависед, ки чӣ лозим аст ва рақами телефонатонро монед.")
     return ("Здравствуйте! 👋 PROFIX — сухие смеси, краски, грунтовки и "
@@ -370,6 +381,41 @@ async def send_message(recipient_id: str, text: str) -> None:
         print(f"Instagram отказал: {resp.status_code} {resp.text[:400]}", flush=True)
 
 
+WHATSAPP_MARK = "[WHATSAPP]"
+
+
+def whatsapp_url() -> str:
+    return "https://wa.me/" + re.sub(r"\D", "", MANAGER_WHATSAPP)
+
+
+async def send_whatsapp_button(recipient_id: str, tajik: bool) -> None:
+    """Отдельное сообщение с кнопкой «Написать в WhatsApp».
+
+    Номер клиент не видит — только кнопку. Если Instagram шаблон не
+    принял, шлём ссылку обычным сообщением: номер в ней виден, зато
+    клиент всё равно сможет написать.
+    """
+    title = "Навиштан ба WhatsApp" if tajik else "Написать в WhatsApp"
+    caption = "WhatsApp-и PROFIX 👇" if tajik else "WhatsApp PROFIX 👇"
+    url = f"https://graph.instagram.com/{GRAPH_API_VERSION}/me/messages"
+    payload = {
+        "template_type": "button",
+        "text": caption,
+        "buttons": [{"type": "web_url", "url": whatsapp_url(), "title": title}],
+    }
+    async with httpx.AsyncClient(timeout=20) as http:
+        resp = await http.post(
+            url,
+            params={"access_token": IG_ACCESS_TOKEN},
+            json={"recipient": {"id": recipient_id},
+                  "message": {"attachment": {"type": "template", "payload": payload}}},
+        )
+    if resp.status_code < 400:
+        return
+    print(f"кнопка WhatsApp не ушла: {resp.status_code} {resp.text[:300]}", flush=True)
+    await send_message(recipient_id, whatsapp_url())
+
+
 async def reply_to_comment(comment_id: str, text: str) -> None:
     """Публичный ответ веткой под комментарием."""
     url = f"https://graph.instagram.com/{GRAPH_API_VERSION}/{comment_id}/replies"
@@ -399,6 +445,8 @@ async def send_private_reply(comment_id: str, text: str) -> None:
 
 async def handle_comment(comment_id: str, author: str, text: str) -> None:
     public = await ask_claude([{"role": "user", "content": text}], system=COMMENT_SYSTEM)
+    if public:
+        public = public.replace(WHATSAPP_MARK, "").strip()
     # Комментарий видят все: имя и номер там запрещены. Промпт об этом
     # просит, а здесь страховка — если модель всё же их вставила,
     # публикуем нейтральную фразу, а подробности уйдут в директ.
@@ -414,7 +462,7 @@ async def handle_comment(comment_id: str, author: str, text: str) -> None:
         f"Напиши ему первое сообщение в директ: поздоровайся, ответь по делу "
         f"и мягко выясни задачу."}])
     if opener:
-        await send_private_reply(comment_id, opener)
+        await send_private_reply(comment_id, opener.replace(WHATSAPP_MARK, "").strip())
 
 
 def iter_comments(payload: dict[str, Any]) -> list[tuple[str, str, str]]:
@@ -489,9 +537,24 @@ async def handle_message(sender: str, text: str) -> None:
     remember(sender, "user", text)
     history = history_for(sender)
 
+    first_reply = not any(m["role"] == "assistant" for m in history)
+
     reply = await ask_claude(history) or fallback_reply(text)
-    remember(sender, "assistant", reply)
-    await send_message(sender, reply)
+
+    # В первом ответе Фарзона обязательно представляется. Промпт это
+    # требует, а здесь страховка на случай, если модель забыла.
+    tajik = looks_tajik(text)
+    if first_reply and "фарзона" not in reply.lower():
+        reply = f"{GREETING_TJ if tajik else GREETING_RU} {reply}"
+
+    wants_button = WHATSAPP_MARK in reply and bool(MANAGER_WHATSAPP)
+    reply = reply.replace(WHATSAPP_MARK, "").strip()
+    remember(sender, "assistant", reply + (" (отправлена кнопка WhatsApp)" if wants_button else ""))
+    if reply:
+        await send_message(sender, reply)
+    if wants_button:
+        # Кнопка — отдельным сообщением, под текстом ответа.
+        await send_whatsapp_button(sender, tajik)
 
     # Появился телефон — заявка созрела. Один лид на диалог, чтобы
     # менеджер не получал одно и то же по три раза.
