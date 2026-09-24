@@ -64,7 +64,7 @@ WA_TO = os.getenv("WA_TO", "").strip()
 
 # WhatsApp Business компании. Бот может дать его клиенту, который
 # хочет написать сам, — но сначала всё равно просит номер клиента.
-MANAGER_WHATSAPP = os.getenv("MANAGER_WHATSAPP", "+992035228585").strip()
+MANAGER_WHATSAPP = os.getenv("MANAGER_WHATSAPP", "+992999518999").strip()
 PRICES = os.getenv("PRICES", "").strip()
 STATE_FILE = Path(os.getenv("STATE_FILE", "/app/data/dialogs.json"))
 HISTORY_LIMIT = 20          # сколько реплик помним в одном диалоге
