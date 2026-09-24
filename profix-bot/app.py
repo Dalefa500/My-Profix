@@ -406,7 +406,7 @@ def whatsapp_url() -> str:
 
 # Анимированные карточки лежат на GitHub Pages: Instagram берёт
 # картинку только по публичной ссылке.
-WA_CARD_BASE = os.getenv("WA_CARD_BASE", "https://dalefa500.github.io/powermix-site/img").rstrip("/")
+WA_CARD_BASE = os.getenv("WA_CARD_BASE", "https://dalefa500.github.io/My-Profix/img").rstrip("/")
 # png по умолчанию: GIF в карточке Instagram не показывает вовсе —
 # проверено вживую, карточка пришла без картинки.
 WA_CARD_EXT = os.getenv("WA_CARD_EXT", "png").strip().lstrip(".") or "png"
