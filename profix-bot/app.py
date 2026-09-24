@@ -430,11 +430,11 @@ def whatsapp_url() -> str:
 
 
 # Картинка карточки лежит на GitHub Pages: Instagram берёт её только по
-# публичной ссылке. Instagram показывает её квадратом, прозрачность
-# заливает белым, а GIF не проигрывает — поэтому красный круг PROFIX
-# стоит на фоне цвета самой карточки (тёмная тема), и видно только круг.
+# публичной ссылке. Instagram показывает её квадратом во всю ширину
+# карточки (уменьшить нельзя), прозрачность заливает белым, а GIF не
+# проигрывает — поэтому это просто квадратный логотип PROFIX.
 WA_CARD_BASE = os.getenv("WA_CARD_BASE", "https://dalefa500.github.io/My-Profix/img").rstrip("/")
-WA_CARD_IMAGE = os.getenv("WA_CARD_IMAGE", "wa-profix.png").strip()
+WA_CARD_IMAGE = os.getenv("WA_CARD_IMAGE", "wa-profix-sq.png").strip()
 
 
 async def _post_message(recipient: dict[str, str], message: dict[str, Any]) -> httpx.Response:
