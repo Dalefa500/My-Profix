@@ -9,8 +9,9 @@
 # Что можно сменить:
 #   MOYSKLAD_TOKEN — API-токен МойСклада
 #   BOT_TOKEN      — токен телеграм-бота
-#   WEB_PIN        — код входа в приложение
 #   WEB_SECRET     — подпись сессий (генерируется сама)
+#
+# Коды входа в приложение меняются отдельно: ./access-codes.sh
 #
 # Любой пункт можно пропустить — просто нажмите Enter, старое значение
 # останется. Если на сервере нет интернета и проверка не проходит,
@@ -44,7 +45,6 @@ no_network() {
 
 new_moysklad=""
 new_bot=""
-new_pin=""
 new_secret=""
 changed=""
 
@@ -101,24 +101,8 @@ if [ -n "$REPLY_VALUE" ]; then
 fi
 echo
 
-# ── 3. Код входа в приложение ─────────────────────────────────────────
-echo "3) Код входа в приложение (минимум 6 цифр)"
-ask "   Новый код (Enter — пропустить): "
-if [ -n "$REPLY_VALUE" ]; then
-    case "$REPLY_VALUE" in
-        *[!0-9]*) echo "   В коде должны быть только цифры. Ничего не меняю."; exit 1 ;;
-    esac
-    if [ "${#REPLY_VALUE}" -lt 6 ]; then
-        echo "   Слишком короткий код. Ничего не меняю."
-        exit 1
-    fi
-    new_pin="$REPLY_VALUE"
-    changed="$changed код-входа"
-fi
-echo
-
-# ── 4. Подпись сессий ─────────────────────────────────────────────────
-printf '4) Сменить подпись сессий? Все, кто вошёл, введут код заново. (д/н): '
+# ── 3. Подпись сессий ─────────────────────────────────────────────────
+printf '3) Сменить подпись сессий? Все, кто вошёл, введут код заново. (д/н): '
 read -r answer || answer=""
 # Варианты перечислены целиком: в списке вида [дД] кириллица сравнивается
 # побайтово, и «н» совпала бы с «д» — скрипт делал бы обратное сказанному.
@@ -166,9 +150,8 @@ put() {
 
 put MOYSKLAD_TOKEN "$new_moysklad"
 put BOT_TOKEN      "$new_bot"
-put WEB_PIN        "$new_pin"
 put WEB_SECRET     "$new_secret"
-new_moysklad=""; new_bot=""; new_pin=""; new_secret=""
+new_moysklad=""; new_bot=""; new_secret=""
 chmod 600 "$ENV_FILE"
 
 echo "Изменил:$changed"
@@ -178,5 +161,6 @@ cd ..
 
 echo
 echo "Готово. Проверьте: откройте app.profix.tj и напишите боту /start."
+echo "Коды входа в приложение: ./access-codes.sh"
 echo "Если что-то сломалось, вернуть старое:"
 echo "  cp moysklad-bot/$backup moysklad-bot/.env && ./deploy.sh"

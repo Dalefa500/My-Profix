@@ -7,6 +7,8 @@ instead of chat messages. Runs as a second service off the same image.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
 import time
@@ -53,11 +55,53 @@ def _env(name: str) -> str:
     return value
 
 
+def _pin_fingerprint(secret: str, pin: str) -> str:
+    """Отпечаток кода для сессии. Кука читается кем угодно (она подписана,
+    но не зашифрована), поэтому код в ней хранить нельзя, а простой хеш
+    шестизначного кода перебирается за секунду. HMAC с серверным секретом
+    без этого секрета не обратить."""
+    return hmac.new(secret.encode(), pin.encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def _load_pins(secret: str) -> dict[str, tuple[str, str]]:
+    """Коды входа: WEB_PINS="Имя:код,Имя:код" — у каждого человека свой.
+
+    Возвращает {код: (имя, отпечаток)}. Старый одиночный WEB_PIN читается,
+    только пока WEB_PINS не задан: как только заведены именные коды,
+    общий код перестаёт работать.
+    """
+    raw = os.environ.get("WEB_PINS", "").strip()
+    entries: list[tuple[str, str]] = []
+    if raw:
+        for part in raw.split(","):
+            name, sep, pin = part.strip().rpartition(":")
+            if not sep or not name.strip() or not pin.strip():
+                raise RuntimeError(f"WEB_PINS: не понял запись «{part.strip()}», нужно Имя:код")
+            entries.append((name.strip(), pin.strip()))
+    else:
+        single = os.environ.get("WEB_PIN", "").strip()
+        if single:
+            entries.append(("владелец", single))
+    if not entries:
+        raise RuntimeError("Не задан ни WEB_PINS, ни WEB_PIN — веб-приложение не запустится без кода входа")
+
+    pins: dict[str, tuple[str, str]] = {}
+    for name, pin in entries:
+        if pin in pins:
+            raise RuntimeError(f"WEB_PINS: у «{pins[pin][0]}» и «{name}» одинаковый код")
+        if len(pin) < 6:
+            logger.warning("Код входа у «%s» короче 6 цифр — его проще подобрать", name)
+        pins[pin] = (name, _pin_fingerprint(secret, pin))
+    logger.info("Коды входа: %s", ", ".join(name for name, _ in pins.values()))
+    return pins
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.moysklad = MoySkladClient(_env("MOYSKLAD_TOKEN"))
-    app.state.pin = _env("WEB_PIN")
-    app.state.serializer = URLSafeTimedSerializer(_env("WEB_SECRET"), salt="pmx-session")
+    secret = _env("WEB_SECRET")
+    app.state.pins = _load_pins(secret)
+    app.state.serializer = URLSafeTimedSerializer(secret, salt="pmx-session")
     app.state.tracked_hrefs: dict[str, str] = {}
     logger.info("Web app started")
     try:
@@ -90,15 +134,28 @@ def _locked_out(ip: str) -> bool:
     return len(attempts) >= MAX_LOGIN_ATTEMPTS
 
 
-def _has_valid_session(request: Request) -> bool:
+def _session_user(request: Request) -> str | None:
+    """Имя вошедшего или None. Сессия живёт, только пока жив код, по
+    которому вошли: убрали человека из WEB_PINS — его кука перестаёт
+    работать сразу, не дожидаясь конца месяца."""
     token = request.cookies.get(COOKIE_NAME)
     if not token:
-        return False
+        return None
     try:
-        request.app.state.serializer.loads(token, max_age=SESSION_MAX_AGE)
+        data = request.app.state.serializer.loads(token, max_age=SESSION_MAX_AGE)
     except (BadSignature, SignatureExpired):
-        return False
-    return True
+        return None
+    if not isinstance(data, dict):
+        return None  # кука старого образца, без отпечатка кода
+    fingerprint = data.get("f")
+    for name, active in request.app.state.pins.values():
+        if isinstance(fingerprint, str) and hmac.compare_digest(fingerprint, active):
+            return name
+    return None
+
+
+def _has_valid_session(request: Request) -> bool:
+    return _session_user(request) is not None
 
 
 def require_session(request: Request) -> None:
@@ -117,14 +174,23 @@ async def login(payload: LoginRequest, request: Request, response: Response) -> 
             status_code=429, detail="Слишком много попыток. Попробуйте через 15 минут."
         )
 
-    if payload.pin != request.app.state.pin:
+    candidate = payload.pin.strip()
+    match: tuple[str, str] | None = None
+    # Сравниваем со всеми кодами и за одинаковое время, чтобы по скорости
+    # ответа нельзя было угадывать код по цифре.
+    for pin, entry in request.app.state.pins.items():
+        if hmac.compare_digest(pin.encode(), candidate.encode()):
+            match = entry
+    if match is None:
         _failed_logins[ip].append(time.time())
         raise HTTPException(status_code=401, detail="Неверный код")
 
+    name, fingerprint = match
     _failed_logins.pop(ip, None)
+    logger.info("Вход в приложение: %s", name)
     response.set_cookie(
         COOKIE_NAME,
-        request.app.state.serializer.dumps("ok"),
+        request.app.state.serializer.dumps({"u": name, "f": fingerprint}),
         max_age=SESSION_MAX_AGE,
         httponly=True,
         secure=True,
