@@ -21,6 +21,7 @@ import finance from './views/finance.js';
 import reports from './views/reports.js';
 import clients from './views/clients.js';
 import clientDetail from './views/client.js';
+import barters from './views/barters.js';
 import payments from './views/payments.js';
 import settings from './views/settings.js';
 import founders, { founderDetail } from './views/founders.js';
@@ -33,7 +34,7 @@ const TABS = [
   { href: '#/', label: 'Главная', icon: 'home', match: ['/'], view: () => dashboard },
   { href: '#/projects', label: 'Проекты', icon: 'folder', match: ['/projects', '/projects/:id'], view: () => projects },
   { href: '#/employees', label: 'Сотрудники', icon: 'people', match: ['/employees', '/employees/:id'], view: () => employees },
-  { href: '#/clients', label: 'Клиенты', icon: 'client', match: ['/clients', '/clients/:id'], view: () => clients },
+  { href: '#/clients', label: 'Клиенты', icon: 'client', match: ['/clients', '/clients/:id', '/barters'], view: () => clients },
   { href: '#/finance', label: 'Финансы', icon: 'wallet', match: ['/finance', '/finance/:tab'], view: () => finance },
   { href: '#/reports', label: 'Отчёты', icon: 'chart', match: ['/reports', '/reports/:period'], view: () => reports },
 ];
@@ -335,6 +336,7 @@ const VIEWS = {
   '/reports/:period': reports,
   '/clients': clients,
   '/clients/:id': clientDetail,
+  '/barters': barters,
   '/payments': payments,
   '/payments/:tab': payments,
   '/founders': founders,
@@ -444,6 +446,7 @@ function openMoreMenu() {
     title: 'Ещё',
     body: html`<div class="list">
       <a class="row" href="#/payments" data-close="1"><div class="row__main"><span class="row__title">Платежи</span><span class="row__subtitle">Что получить и что выплатить</span></div><span class="row__meta">›</span></a>
+      <a class="row" href="#/barters" data-close="1"><div class="row__main"><span class="row__title">Взаиморасчёты</span><span class="row__subtitle">Квартиры и машины в счёт работ</span></div><span class="row__meta">›</span></a>
       <a class="row" href="#/founders" data-close="1"><div class="row__main"><span class="row__title">Коллеги</span><span class="row__subtitle">Сколько взяли из кассы</span></div><span class="row__meta">›</span></a>
       <a class="row" href="#/settings" data-close="1"><div class="row__main"><span class="row__title">Настройки</span><span class="row__subtitle">Курс, категории, пароль</span></div><span class="row__meta">›</span></a>
       <div class="row"><div class="row__main"><span class="row__title">${user?.name || ''}</span>

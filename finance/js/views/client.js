@@ -2,7 +2,7 @@
 
 import {
   html, raw, money, emptyState, sectionTitle, badge, confirmDialog, toast,
-  openSheet, closeSheet, progressBar,
+  progressBar,
 } from '../ui.js';
 import { getState, byId } from '../store.js';
 import { clientFinance, projectFinance, clientBarters } from '../calc.js';
@@ -14,6 +14,7 @@ import { refresh } from '../refresh.js';
 import { go } from '../router.js';
 import { openReport } from '../report.js';
 import { openOperation } from '../operation.js';
+import { openBarterSheet } from '../barter.js';
 
 export default function clientDetail(params) {
   const state = getState();
@@ -76,8 +77,8 @@ export default function clientDetail(params) {
             <div class="row__main">
               <span class="row__title">${row.barter.title}</span>
               <span class="row__subtitle">${labelOf(BARTER_KINDS, row.barter.kind, 'Имущество')}
-                · оценка ${money(row.totalBase)} · зачтено ${money(row.usedBase)}</span>
-              ${raw(progressBar(row.totalBase ? (row.usedBase / row.totalBase) * 100 : 0))}
+                · оценка ${money(row.totalBase)} · отработано ${money(row.usedBase)}</span>
+              ${raw(progressBar(row.percent, row.done ? 'good' : 'warn'))}
             </div>
             <div class="row__side">
               <span class="row__amount ${raw(row.done ? 'good' : 'warn')}">${money(row.leftBase)}</span>
@@ -126,66 +127,4 @@ export default function clientDetail(params) {
       };
     },
   };
-}
-
-// Карточка взаимозачёта: что передано, на сколько зачтено, что осталось.
-function openBarterSheet(id) {
-  const state = getState();
-  const barter = byId('barters', id);
-  if (!barter) return;
-  const row = clientBarters(state, barter.clientId).find((item) => item.barter.id === id);
-
-  openSheet({
-    title: barter.title,
-    body: html`
-      <p class="hero__value" style="color:var(--ink)">${money(row.leftBase)}</p>
-      <p class="muted">${row.done ? 'Имущество полностью отработано' : 'осталось отработать'}</p>
-      <div class="list">
-        <div class="row"><div class="row__main"><span class="row__subtitle">Оценка</span>
-          <span class="row__title">${money(row.totalBase)}</span></div></div>
-        <div class="row"><div class="row__main"><span class="row__subtitle">Зачтено работами</span>
-          <span class="row__title">${money(row.usedBase)}</span></div></div>
-        ${row.overBase > 0 ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Сверх оценки</span>
-          <span class="row__title">${money(row.overBase)} — клиент должен деньгами</span></div></div>`) : ''}
-        <div class="row"><div class="row__main"><span class="row__subtitle">Вид</span>
-          <span class="row__title">${labelOf(BARTER_KINDS, barter.kind, 'Имущество')}</span></div></div>
-        <div class="row"><div class="row__main"><span class="row__subtitle">Дата договорённости</span>
-          <span class="row__title">${formatDate(barter.date)}</span></div></div>
-        ${barter.note ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Заметка</span>
-          <span class="row__title">${barter.note}</span></div></div>`) : ''}
-      </div>
-      ${row.incomes.length ? raw(html`
-        <p class="muted" style="margin-top:14px">Что уже зачтено</p>
-        <div class="list">${raw(row.incomes.map((item) => html`
-          <div class="row"><div class="row__main">
-            <span class="row__title">${item.comment || byId('projects', item.projectId)?.name || 'Работы'}</span>
-            <span class="row__subtitle">${formatDate(item.date, { short: true })}</span>
-          </div><span class="row__amount">${money(item.base)}</span></div>`).join(''))}</div>`) : ''}`,
-    footer: html`
-      <button class="btn" data-act="edit">Изменить</button>
-      <button class="btn btn--primary" data-act="use">Зачесть работы</button>
-      <button class="btn btn--danger" data-act="delete">Удалить</button>`,
-    onMount: (panel) => {
-      panel.querySelector('[data-act="edit"]').onclick = () => {
-        closeSheet();
-        forms.openBarterForm(id, {}, refresh);
-      };
-      panel.querySelector('[data-act="use"]').onclick = () => {
-        closeSheet();
-        // Зачёт работ — это обычный приход, только оплаченный имуществом.
-        forms.openIncomeForm({
-          clientId: barter.clientId, method: 'barter', barterId: id,
-          amount: row.leftBase, type: 'final',
-        }, refresh);
-      };
-      panel.querySelector('[data-act="delete"]').onclick = async () => {
-        closeSheet();
-        const ok = await confirmDialog('Удалить взаимозачёт? Уже зачтённые работы останутся доходом.');
-        if (!ok) return;
-        actions.deleteBarter(id);
-        toast('Взаимозачёт удалён');
-        refresh();
-      };
-    },
-  });
 }

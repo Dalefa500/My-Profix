@@ -95,9 +95,10 @@ export default function founders() {
     ${summary.rows.length ? raw(html`
       <button class="btn btn--primary btn--block" data-act="add-draw">Записать операцию</button>`) : ''}
 
-    <p class="muted">Деньги, которые коллега берёт для себя, — это его доля прибыли:
-      в расходы студии они не попадают, и прибыль от них не уменьшается.
-      А если коллега оплатил расход студии своими деньгами — это настоящий расход,
+    <p class="muted">Деньги, которые коллега берёт для себя, вычитаются из общей суммы:
+      на Главной, в Финансах и в Отчётах главная цифра — «Осталось в студии».
+      В расходы студии они не записываются — это доля прибыли, а не траты на работу.
+      Если коллега оплатил расход студии своими деньгами — это настоящий расход,
       и студия остаётся ему должна.</p>`;
 
   return {
@@ -196,7 +197,7 @@ export function founderDetail(params) {
   };
 }
 
-function openDrawSheet(id) {
+export function openDrawSheet(id) {
   const draw = byId('draws', id);
   if (!draw) return;
   const founder = byId('founders', draw.founderId);

@@ -4,6 +4,8 @@ import { html, raw, money, sectionTitle, emptyState, openForm, toast } from '../
 import { formatPlain } from '../money.js';
 import { getState } from '../store.js';
 import { periodTotals, monthlySeries, yearSummary, foundersSummary, barterTotals } from '../calc.js';
+import { heroBlock } from './hero.js';
+import { openBarterSheet } from '../barter.js';
 import { monthlyChart, breakdownBars } from '../charts.js';
 import {
   today, monthKey, monthLabel, lastMonthKeys, monthKeysBetween, rangeFor, formatDate, parse,
@@ -167,14 +169,14 @@ function barterBlock(state) {
   if (!totals.rows.length) return '';
   return html`
     <div class="card">
-      ${raw(sectionTitle('Взаиморасчёты'))}
+      ${raw(sectionTitle('Взаиморасчёты', '<a href="#/barters">Все</a>'))}
       <div class="list">
         ${raw(totals.rows.map((row) => html`
-          <a class="row" href="#/clients/${row.barter.clientId}">
+          <button class="row" data-open-barter="${row.barter.id}" style="width:100%;text-align:left">
             <div class="row__main"><span class="row__title">${row.barter.title}</span>
-              <span class="row__subtitle">оценка ${money(row.totalBase)} · зачтено ${money(row.usedBase)}</span></div>
+              <span class="row__subtitle">оценка ${money(row.totalBase)} · отработано ${money(row.usedBase)}</span></div>
             <span class="row__amount ${raw(row.done ? 'good' : 'warn')}">${money(row.leftBase)}</span>
-          </a>`).join(''))}
+          </button>`).join(''))}
       </div>
       <p class="muted">Осталось отработать по имуществу, полученному от клиентов.</p>
     </div>`;
@@ -199,14 +201,7 @@ export default function reports() {
 
     <button class="btn btn--block btn--ghost" data-report>Скачать отчёт за период в PDF</button>
 
-    <div class="hero">
-      <span class="hero__label">Прибыль · ${range.label}</span>
-      <div class="hero__value">${money(totals.profitBase)}</div>
-      <div class="hero__row">
-        <span class="hero__cell">Доход<b>${money(totals.incomeBase)}</b></span>
-        <span class="hero__cell">Расход<b>${money(totals.expenseBase)}</b></span>
-      </div>
-    </div>
+    ${raw(heroBlock(totals, range.label))}
 
     ${series.length > 1 ? raw(html`
       <div class="card">
@@ -248,6 +243,9 @@ export default function reports() {
         }
         reportState.preset = button.dataset.value;
         refresh();
+      });
+      root.querySelectorAll('[data-open-barter]').forEach((button) => {
+        button.onclick = () => openBarterSheet(button.dataset.openBarter);
       });
       root.querySelector('[data-report]').onclick = () => openReport({
         type: 'period', from: range.from, to: range.to,

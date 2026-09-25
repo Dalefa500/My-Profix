@@ -1,8 +1,8 @@
 // Клиенты: список с суммами договоров и задолженностью.
 
-import { html, raw, money, emptyState, searchBar } from '../ui.js';
+import { html, raw, money, emptyState, searchBar, plural } from '../ui.js';
 import { getState } from '../store.js';
-import { clientFinance } from '../calc.js';
+import { clientFinance, barterTotals } from '../calc.js';
 import * as forms from '../forms.js';
 import { refresh } from '../refresh.js';
 
@@ -21,7 +21,7 @@ export default function clients() {
       <a class="row" href="#/clients/${client.id}">
         <div class="row__main">
           <span class="row__title">${client.name}</span>
-          <span class="row__subtitle">${finance.projects.length} проектов${client.phone ? ` · ${client.phone}` : ''}</span>
+          <span class="row__subtitle">${plural(finance.projects.length, 'проект', 'проекта', 'проектов')}${client.phone ? ` · ${client.phone}` : ''}</span>
         </div>
         <div class="row__side">
           <span class="row__amount">${money(finance.contractBase)}</span>
@@ -31,7 +31,24 @@ export default function clients() {
       </a>`;
   }).join('');
 
+  const barters = barterTotals(state);
+  const openBarters = barters.rows.filter((row) => !row.done).length;
+
   const body = html`
+    <!-- Вход во взаиморасчёты — на виду, а не в глубине карточки клиента. -->
+    <a class="row card card--flat" href="#/barters">
+      <div class="row__main">
+        <span class="row__title">Взаиморасчёты</span>
+        <span class="row__subtitle">${barters.rows.length
+          ? `${openBarters} в работе · квартиры и машины в счёт работ`
+          : 'Клиент рассчитался квартирой или машиной — записывать здесь'}</span>
+      </div>
+      <div class="row__side">
+        ${barters.leftBase > 0 ? raw(html`<span class="row__amount warn">${money(barters.leftBase)}</span>
+          <span class="row__meta">осталось отработать</span>`) : raw('<span class="row__meta">›</span>')}
+      </div>
+    </a>
+
     ${raw(searchBar({ value: filters.query, placeholder: 'Поиск клиента' }))}
     <div class="card card--flat">
       ${visible.length ? raw(html`<div class="list">${raw(rows)}</div>`)

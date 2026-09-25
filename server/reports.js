@@ -340,7 +340,7 @@ function clientReport(state, client) {
         { title: 'Что передано', width: 180 },
         { title: 'Вид', width: 90 },
         { title: 'Оценка', width: 80, align: 'right' },
-        { title: 'Зачтено', width: 80, align: 'right' },
+        { title: 'Отработано', width: 80, align: 'right' },
         { title: 'Осталось', width: 80, align: 'right' },
       ],
       barters.map((row) => [
@@ -353,6 +353,27 @@ function clientReport(state, client) {
     );
     sheet.note('Клиент рассчитывается имуществом: стоимость выполненных работ'
       + ' списывается с его оценки.');
+
+    // Этапы по каждому имуществу: что списано и сколько после этого осталось.
+    for (const row of barters.filter((item) => item.stages.length)) {
+      sheet.heading(`Этапы — ${row.barter.title}`);
+      sheet.table(
+        [
+          { title: 'Дата', width: 70 },
+          { title: 'Работы', width: 250 },
+          { title: 'Списано', width: 90, align: 'right' },
+          { title: 'Осталось', width: 90, align: 'right' },
+        ],
+        row.stages.map((stage) => [
+          formatDate(stage.income.date, { short: true }),
+          stage.income.comment
+            || state.projects.find((item) => item.id === stage.income.projectId)?.name
+            || 'Выполненные работы',
+          { text: money(stage.income.base), color: GOOD },
+          { text: money(Math.max(0, stage.leftAfterBase)), font: 'bold' },
+        ]),
+      );
+    }
   }
 
   const incomes = state.incomes
@@ -544,6 +565,11 @@ function periodReport(state, from, to) {
     { label: 'Доход', value: totals.incomeBase, color: GOOD },
     { label: 'Расход', value: totals.expenseBase, color: BURGUNDY },
     { label: 'Прибыль', value: totals.profitBase },
+    // Изъятия коллег — не расход, но из общей суммы они уходят.
+    ...(totals.drawBase > 0 ? [
+      { label: 'Коллеги взяли', value: totals.drawBase, color: BURGUNDY },
+      { label: 'Осталось в студии', value: totals.leftBase },
+    ] : []),
   ]);
 
   if (totals.incomeBarterBase > 0) {
@@ -592,7 +618,7 @@ function periodReport(state, from, to) {
         { text: money(row.owedBase), color: row.owedBase > 0 ? BURGUNDY : MUTED },
       ]),
     );
-    sheet.note('Доля прибыли, а не расход студии: в расходы выше эти суммы не входят.');
+    sheet.note('Доля прибыли, а не расход студии: в расходы выше не входят, но из общей суммы вычтены — см. «Осталось в студии».');
   }
 
   const barters = barterTotals(state);
@@ -618,6 +644,18 @@ function periodReport(state, from, to) {
   const moves = [
     ...state.incomes.filter((item) => inRange(item.date, from, to)).map((item) => ({ ...item, kind: 'income' })),
     ...state.expenses.filter((item) => inRange(item.date, from, to)).map((item) => ({ ...item, kind: 'expense' })),
+    // Коллега взял себе или студия вернула ему долг — деньги ушли из кассы.
+    ...(state.draws || [])
+      .filter((item) => (item.kind || 'draw') !== 'spend' && inRange(item.date, from, to))
+      .map((item) => {
+        const name = state.founders.find((f) => f.id === item.founderId)?.name || 'Коллега';
+        return {
+          ...item,
+          kind: 'expense',
+          comment: (item.kind || 'draw') === 'repay' ? `Вернули долг: ${name}` : `${name} взял себе`,
+          projectId: null,
+        };
+      }),
   ].sort((a, b) => (a.date < b.date ? 1 : -1));
   sheet.table(
     [

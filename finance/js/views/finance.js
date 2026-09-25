@@ -1,7 +1,7 @@
 // Финансы: приходы и расходы с поиском и фильтрами.
 
 import {
-  html, raw, money, emptyState, searchBar, chips, sectionTitle,
+  html, raw, money, emptyState, searchBar, chips, sectionTitle, plural,
 } from '../ui.js';
 import { getState, byId } from '../store.js';
 import { periodTotals } from '../calc.js';
@@ -10,6 +10,7 @@ import {
   INCOME_TYPES, PAYMENT_METHODS, EXPENSE_GROUPS, categoryLabel, labelOf,
 } from '../model.js';
 import { openOperation } from '../operation.js';
+import { openDrawSheet } from './founders.js';
 import { formatAmount } from '../money.js';
 import * as forms from '../forms.js';
 import { refresh } from '../refresh.js';
@@ -78,6 +79,7 @@ export default function finance(params) {
   const range = activeRange();
   const totals = periodTotals(state, range.from, range.to);
   const rows = tab === 'income' ? incomeRows(state, range) : expenseRows(state, range);
+  const drawRows = [...totals.draws].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const listTotal = rows.reduce((acc, item) => acc + (Number(item.base) || 0), 0);
 
   const projectChips = [
@@ -122,6 +124,12 @@ export default function finance(params) {
       <div class="stat stat--good"><span class="stat__label">Доход за период</span><strong class="stat__value">${money(totals.incomeBase)}</strong></div>
       <div class="stat stat--danger"><span class="stat__label">Расход за период</span><strong class="stat__value">${money(totals.expenseBase)}</strong></div>
     </div>
+    ${totals.drawBase > 0 ? raw(html`
+      <a class="stat stat--warn" href="#/founders">
+        <span class="stat__label">Коллеги взяли себе за период</span>
+        <strong class="stat__value">−${money(totals.drawBase)}</strong>
+        <span class="stat__hint">Осталось в студии ${money(totals.leftBase)}</span>
+      </a>`) : ''}
 
     ${raw(chips(PERIODS, filters.period, 'period'))}
     ${raw(searchBar({ value: filters.query, placeholder: tab === 'income' ? 'Поиск по проекту, клиенту' : 'Поиск по категории, комментарию' }))}
@@ -129,9 +137,25 @@ export default function finance(params) {
     ${state.projects.length ? raw(chips(projectChips, filters.projectId, 'projectId')) : ''}
 
     <div class="card card--flat">
-      ${raw(sectionTitle(`${rows.length} операций`, `<span class="muted">${money(listTotal)}</span>`))}
+      ${raw(sectionTitle(plural(rows.length, 'операция', 'операции', 'операций'), `<span class="muted">${money(listTotal)}</span>`))}
       ${rows.length ? raw(html`<div class="list">${raw(list)}</div>`) : raw(emptyState('Операций за этот период нет'))}
     </div>
+
+    ${tab === 'expense' && drawRows.length ? raw(html`
+      <div class="card card--flat">
+        ${raw(sectionTitle('Коллеги взяли себе', `<span class="muted">${money(totals.drawBase)}</span>`))}
+        <div class="list">${raw(drawRows.map((item) => html`
+          <button class="row" data-open-draw="${item.id}" style="width:100%;text-align:left">
+            <div class="row__main">
+              <span class="row__title">${byId('founders', item.founderId)?.name || 'Коллега'}</span>
+              <span class="row__subtitle">${item.comment || 'Доля прибыли'}</span>
+            </div>
+            <div class="row__side">
+              <span class="row__amount danger">−${money(item.base)}</span>
+              <span class="row__meta">${formatDate(item.date, { short: true, withYear: false })}</span>
+            </div>
+          </button>`).join(''))}</div>
+      </div>`) : ''}
 
     <button class="btn btn--primary btn--block" data-act="add">
       ${tab === 'income' ? 'Добавить приход' : 'Добавить расход'}
@@ -157,6 +181,9 @@ export default function finance(params) {
       root.querySelector('[data-act="add"]').onclick = () => (tab === 'income'
         ? forms.openIncomeForm({}, refresh)
         : forms.openExpenseForm({}, refresh));
+      root.querySelectorAll('[data-open-draw]').forEach((button) => {
+        button.onclick = () => openDrawSheet(button.dataset.openDraw);
+      });
       root.querySelectorAll('[data-open]').forEach((button) => {
         button.onclick = () => openOperation(tab, button.dataset.open);
       });

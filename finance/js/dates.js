@@ -10,6 +10,14 @@ export const MONTHS_SHORT = [
   'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек',
 ];
 
+// В датах месяц стоит в родительном падеже: «2 сентября», а не «2 сентябрь».
+const MONTHS_GENITIVE = [
+  'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+  'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+];
+
+const MONTHS_SHORT_DATE = MONTHS_SHORT.map((name, index) => (index === 4 ? 'мая' : name.toLowerCase()));
+
 export function today() {
   return toISO(new Date());
 }
@@ -88,7 +96,7 @@ export function formatDate(iso, opts = {}) {
   if (!iso) return '—';
   const date = parse(iso);
   const day = date.getDate();
-  const month = opts.short ? MONTHS_SHORT[date.getMonth()] : MONTHS[date.getMonth()].toLowerCase();
+  const month = opts.short ? MONTHS_SHORT_DATE[date.getMonth()] : MONTHS_GENITIVE[date.getMonth()];
   return opts.withYear === false
     ? `${day} ${month}`
     : `${day} ${month} ${date.getFullYear()}`;

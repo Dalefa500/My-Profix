@@ -722,4 +722,20 @@ export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
       return true;
     },
   });
+
+  // «На что потрачено» нужно только когда коллега оплатил расход студии.
+  // Подсказка под «Что произошло» меняется вместе с выбором.
+  const panel = document.getElementById('sheet');
+  const kindSelect = panel?.querySelector('select[name="kind"]');
+  const categoryField = panel?.querySelector('[data-field-name="category"]');
+  const kindHint = panel?.querySelector('[data-field-name="kind"] .field__hint');
+  const sync = () => {
+    const current = kindSelect.value;
+    if (categoryField) categoryField.hidden = current !== 'spend';
+    if (kindHint) kindHint.textContent = FOUNDER_MOVES.find((item) => item.id === current)?.hint || '';
+  };
+  if (kindSelect) {
+    kindSelect.addEventListener('change', sync);
+    sync();
+  }
 }

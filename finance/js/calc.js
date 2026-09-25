@@ -218,12 +218,22 @@ export function projectFinance(state, project) {
 // а дальше стоимость выполненных работ списывается с неё.
 export function barterState(state, barter) {
   if (!barter) return null;
-  const incomes = state.incomes.filter((item) => item.barterId === barter.id);
+  const incomes = state.incomes
+    .filter((item) => item.barterId === barter.id)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.id).localeCompare(String(b.id)));
   const usedBase = sum(incomes, (item) => item.base);
   const totalBase = toBase(barter.amount, barter.currency, barter.fx);
+  // Этапы по порядку: сколько списали и сколько после этого осталось.
+  let running = totalBase;
+  const stages = incomes.map((income) => {
+    running = round(running - (Number(income.base) || 0));
+    return { income, leftAfterBase: running };
+  });
   return {
     barter,
     incomes,
+    stages,
+    percent: totalBase > 0 ? Math.min(100, Math.round((usedBase / totalBase) * 100)) : 0,
     totalBase,
     usedBase,
     leftBase: round(Math.max(0, totalBase - usedBase)),
@@ -443,6 +453,14 @@ export function periodTotals(state, from, to) {
     const group = String(category).split('/')[0];
     expenseByGroup.set(group, round((expenseByGroup.get(group) || 0) + value));
   }
+  // Деньги, которые коллеги взяли себе. Прибыль от них не меняется —
+  // это её раздел, а не расход, — но из общей суммы они уходят:
+  // «осталось в студии» = прибыль минус то, что забрали.
+  const draws = (state.draws || [])
+    .filter((item) => (item.kind || 'draw') === 'draw')
+    .filter((item) => inRange(item.date, from, to));
+  const drawBase = sum(draws, (item) => item.base);
+
   const incomeByType = new Map();
   for (const income of incomes) {
     const key = income.type || 'other';
@@ -459,6 +477,9 @@ export function periodTotals(state, from, to) {
     incomeCashBase: round(incomeBase - incomeBarterBase),
     expenseBase,
     profitBase: round(incomeBase - expenseBase),
+    draws,
+    drawBase,
+    leftBase: round(incomeBase - expenseBase - drawBase),
     expenseByCategory,
     expenseByGroup,
     incomeByType,
@@ -473,6 +494,8 @@ export function monthlySeries(state, monthKeys) {
       incomeBase: totals.incomeBase,
       expenseBase: totals.expenseBase,
       profitBase: totals.profitBase,
+      drawBase: totals.drawBase,
+      leftBase: totals.leftBase,
     };
   });
 }

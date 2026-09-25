@@ -3,7 +3,10 @@
 import { html, raw, statCard, sectionTitle, rowItem, emptyState, money, openForm, toast } from '../ui.js';
 import { getState, byId } from '../store.js';
 import * as store from '../store.js';
-import { dashboardTotals, notifications } from '../calc.js';
+import { dashboardTotals, notifications, barterTotals } from '../calc.js';
+import { heroBlock } from './hero.js';
+import { openOperation } from '../operation.js';
+import { openDrawSheet } from './founders.js';
 import { rangeFor, today, formatDate, monthLabel, monthKey } from '../dates.js';
 import { categoryLabel } from '../model.js';
 import * as forms from '../forms.js';
@@ -50,7 +53,22 @@ function recentOperations(state, limit = 8) {
     subtitle: item.comment || byId('projects', item.projectId)?.name || '',
     base: item.base,
   }));
-  return [...incomes, ...expenses]
+  // Коллеги взяли себе или студия вернула им долг — деньги ушли из кассы.
+  // «Оплатил из своих» сюда не попадает: он уже виден как расход студии.
+  const draws = (state.draws || [])
+    .filter((item) => (item.kind || 'draw') !== 'spend')
+    .map((item) => {
+      const name = byId('founders', item.founderId)?.name || 'Коллега';
+      return {
+        kind: 'draw',
+        id: item.id,
+        date: item.date,
+        title: (item.kind || 'draw') === 'repay' ? `Вернули долг: ${name}` : `${name} взял себе`,
+        subtitle: item.comment || '',
+        base: item.base,
+      };
+    });
+  return [...incomes, ...expenses, ...draws]
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)))
     .slice(0, limit);
 }
@@ -84,6 +102,7 @@ export default function dashboard() {
   const totals = dashboardTotals(state, range.from, range.to);
   const alerts = notifications(state).filter((item) => item.tone === 'danger').slice(0, 2);
   const recent = recentOperations(state);
+  const barters = barterTotals(state);
 
   const body = html`
     <div class="chips" data-period>
@@ -93,7 +112,7 @@ export default function dashboard() {
     </div>
 
     <!-- Курс на виду: по нему пересчитываются все суммы, введённые в сомони. -->
-    <div class="rate-bar" data-act="rate">
+    <div class="rate-bar ${raw(store.canEdit() ? '' : 'rate-bar--static')}" data-rate>
       <span class="rate-bar__label">Курс НБТ</span>
       <b class="rate-bar__value">${formatUsdRate(state.settings.usdRate)}</b>
       <span class="rate-bar__note">${state.settings.usdRateDate
@@ -101,17 +120,7 @@ export default function dashboard() {
         : 'введён вручную'}</span>
     </div>
 
-    <div class="hero">
-      <span class="hero__label">Прибыль · ${range.label}</span>
-      <div class="hero__value">${money(totals.profitBase)}</div>
-      <div class="hero__row">
-        <span class="hero__cell">Доход<b>${money(totals.incomeBase)}</b></span>
-        <span class="hero__cell">Расход<b>${money(totals.expenseBase)}</b></span>
-      </div>
-      ${totals.incomeBarterBase > 0 ? raw(html`
-        <p class="hero__note">Из дохода ${money(totals.incomeBarterBase)} — взаимозачётом,
-          деньгами пришло ${money(totals.incomeCashBase)}</p>`) : ''}
-    </div>
+    ${raw(heroBlock(totals, range.label))}
 
     <div class="stats">
       ${raw(statCard({
@@ -129,6 +138,18 @@ export default function dashboard() {
         href: '#/payments/pay',
       }))}
     </div>
+
+    ${barters.leftBase > 0 ? raw(html`
+      <a class="row card card--flat" href="#/barters">
+        <div class="row__main">
+          <span class="row__title">Взаиморасчёты</span>
+          <span class="row__subtitle">квартиры и машины в счёт работ</span>
+        </div>
+        <div class="row__side">
+          <span class="row__amount warn">${money(barters.leftBase)}</span>
+          <span class="row__meta">осталось отработать</span>
+        </div>
+      </a>`) : ''}
 
     ${alerts.length ? raw(html`
       <div class="card card--flat">
@@ -153,13 +174,17 @@ export default function dashboard() {
 
     <div class="card card--flat">
       ${raw(sectionTitle('Последние операции', '<a href="#/finance">Все</a>'))}
-      ${recent.length ? raw(html`<div class="list">${raw(recent.map((item) => rowItem({
-        title: item.title,
-        subtitle: item.subtitle,
-        amount: `${item.kind === 'income' ? '+' : '−'}${money(item.base)}`,
-        amountTone: item.kind === 'income' ? 'good' : 'danger',
-        meta: formatDate(item.date, { short: true, withYear: false }),
-      })).join(''))}</div>`)
+      ${recent.length ? raw(html`<div class="list">${raw(recent.map((item) => html`
+        <button class="row" data-recent="${item.kind}" data-id="${item.id}" style="width:100%;text-align:left">
+          <div class="row__main">
+            <span class="row__title">${item.title}</span>
+            ${item.subtitle ? raw(html`<span class="row__subtitle">${item.subtitle}</span>`) : ''}
+          </div>
+          <div class="row__side">
+            <span class="row__amount ${raw(item.kind === 'income' ? 'good' : 'danger')}">${raw(item.kind === 'income' ? '+' : '−')}${money(item.base)}</span>
+            <span class="row__meta">${formatDate(item.date, { short: true, withYear: false })}</span>
+          </div>
+        </button>`).join(''))}</div>`)
       : raw(emptyState('Операций пока нет. Начните с прихода или расхода.'))}
     </div>`;
 
@@ -179,7 +204,10 @@ export default function dashboard() {
         refresh();
       });
       // Нажатие на строку курса просит сервер сходить на сайт НБТ за свежим.
-      root.querySelector('[data-act="rate"]').onclick = async (event) => {
+      // Курс видят все. Обновить его с сайта НБТ может только тот,
+      // у кого есть право вносить изменения.
+      root.querySelector('[data-rate]').onclick = async (event) => {
+        if (!store.canEdit()) return;
         const bar = event.currentTarget;
         if (bar.dataset.busy) return;
         bar.dataset.busy = '1';
@@ -190,6 +218,14 @@ export default function dashboard() {
         if (!result.ok) toast(result.error || 'Сайт НБТ не ответил', 'danger');
         refresh();
       };
+      // Любую операцию можно открыть прямо отсюда — исправить или удалить.
+      root.querySelectorAll('[data-recent]').forEach((button) => {
+        button.onclick = () => {
+          const { recent: kind, id } = button.dataset;
+          if (kind === 'draw') openDrawSheet(id);
+          else openOperation(kind, id);
+        };
+      });
       root.querySelector('[data-act="income"]').onclick = () => forms.openIncomeForm({}, refresh);
       root.querySelector('[data-act="expense"]').onclick = () => forms.openExpenseForm({}, refresh);
       root.querySelector('[data-act="project"]').onclick = () => forms.openProjectForm(null, (project) => {

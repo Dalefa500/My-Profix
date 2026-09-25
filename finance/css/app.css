@@ -536,6 +536,7 @@ a.row:active, button.row:active {
 .row__amount { font-size: 15px; font-weight: 600; white-space: nowrap; letter-spacing: -0.02em; }
 .row__amount.good { color: var(--good); }
 .row__amount.danger { color: var(--danger); }
+.row__amount.warn { color: var(--warn); }
 .row__meta { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 
 .badge {
@@ -792,6 +793,8 @@ a.row:active, button.row:active {
   border-top: 1px solid var(--line);
 }
 .sheet__foot .btn { flex: 1; }
+.sheet__foot { flex-wrap: wrap; }
+.sheet__foot .sheet__main { flex-basis: 100%; }
 
 /* ---------------------------------------------------------------- уведомление */
 
@@ -1173,6 +1176,7 @@ td.danger, .danger-text { color: var(--danger); }
 }
 .rate-bar:active { transform: scale(0.985); transition-duration: 0.06s; }
 .rate-bar.is-busy { opacity: 0.6; }
+.rate-bar--static:active { transform: none; }
 .rate-bar__label {
   font-size: 10.5px;
   letter-spacing: 0.12em;
