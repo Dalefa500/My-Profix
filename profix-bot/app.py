@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -165,7 +166,13 @@ Direct. Отвечаешь клиентам, которые пришли из п
   не уговаривай, просто возьми номер, поблагодари и скажи, что
   менеджер перезвонит.
 - Спрашивает цену — это тоже повод сказать, что цену назовёт менеджер,
-  и попросить номер.
+  и попросить номер. Одной простой фразой, без «не знаю цифр»:
+  «Цены вам скажет наш менеджер. Оставьте номер телефона — он
+  перезвонит и всё расскажет.»
+  По-таджикски: «Нархҳоро менеҷери мо мегӯяд. Рақами телефонатонро
+  монед — ӯ ба шумо занг зада, ҳамаашро мегӯяд.»
+  Если понятно, какой товар нужен, можно спросить, сколько мешков
+  или вёдер, чтобы менеджер сразу посчитал.
 
 ЧЕГО НЕ ДЕЛАЕШЬ
 
@@ -252,7 +259,14 @@ def remember(sender: str, role: str, text: str) -> None:
     if time.time() - item.get("ts", 0) > DIALOG_TTL:
         item["messages"] = []
         item["lead_sent"] = False
-    item["messages"] = (item["messages"] + [{"role": role, "content": text}])[-HISTORY_LIMIT:]
+    messages = item["messages"]
+    # Клиент часто пишет несколькими сообщениями подряд («Салом», «Ака»,
+    # «Нархо чанд?») — склеиваем их в одну реплику.
+    if messages and messages[-1].get("role") == role == "user":
+        messages[-1]["content"] = f"{messages[-1]['content']}\n{text}"
+    else:
+        messages.append({"role": role, "content": text})
+    item["messages"] = messages[-HISTORY_LIMIT:]
     item["ts"] = time.time()
     _save_state(STATE)
 
@@ -415,7 +429,8 @@ GREETING_TJ = "Салом! Номи ман Фарзона, ман намоянд
 
 
 _OPENER_RE = re.compile(
-    r"^\s*(?:здравствуй\w*|добр\w+\s+\w+|привет\w*|салом\w*|ассалом\w*)[^.!?]*[.!?]\s*",
+    r"^\s*(?:здравствуй\w*|добр\w+\s+\w+|привет\w*|салом\w*|ассалом\w*|ассалам\w*"
+    r"|ва\s*[ао]?л[ае][йи]кум\w*|в[ао]ал[ае][йи]кум\w*)[^.!?]*[.!?]\s*",
     re.IGNORECASE)
 _NAME_SENTENCE_RE = re.compile(r"^[^.!?]*фарзона[^.!?]*[.!?]\s*", re.IGNORECASE)
 
@@ -429,9 +444,14 @@ def with_greeting(reply: str, tajik: bool) -> str:
     greeting = GREETING_TJ if tajik else GREETING_RU
     if reply.startswith(greeting):
         return reply
+    # Срезаем подряд идущие вводные фразы модели: «Ваалейкум ассалом!»,
+    # «Салом!», «Номи ман Фарзона…» — сколько бы их ни было в начале.
     rest = reply
-    for _ in range(2):
-        rest = _NAME_SENTENCE_RE.sub("", _OPENER_RE.sub("", rest, count=1), count=1)
+    for _ in range(4):
+        cut = _NAME_SENTENCE_RE.sub("", _OPENER_RE.sub("", rest, count=1), count=1)
+        if cut == rest:
+            break
+        rest = cut
     return f"{greeting} {rest.strip()}".strip()
 
 
@@ -742,8 +762,43 @@ async def verify_webhook(request: Request) -> Response:
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
-async def handle_message(sender: str, text: str) -> None:
+# Клиенты пишут очередью коротких сообщений. Если отвечать на каждое
+# сразу, Фарзона здоровается дважды и отвечает невпопад, а ответы
+# приходят вперемешку. Поэтому ждём паузу в переписке и отвечаем один
+# раз на всё, что клиент успел написать.
+REPLY_DELAY = float(os.getenv("REPLY_DELAY", "6"))
+_waiting: dict[str, asyncio.Task] = {}
+_inbox: dict[str, list[str]] = {}
+_reply_locks: dict[str, asyncio.Lock] = {}
+
+
+def queue_message(sender: str, text: str) -> None:
     remember(sender, "user", text)
+    _inbox.setdefault(sender, []).append(text)
+    pending = _waiting.get(sender)
+    if pending and not pending.done():
+        pending.cancel()  # ещё ждал паузы — начинаем ждать заново
+    _waiting[sender] = asyncio.create_task(_reply_after_pause(sender))
+
+
+async def _reply_after_pause(sender: str) -> None:
+    await asyncio.sleep(REPLY_DELAY)
+    # Пауза выдержана: дальше этот ответ уже не отменяем.
+    if _waiting.get(sender) is asyncio.current_task():
+        _waiting.pop(sender, None)
+    lock = _reply_locks.setdefault(sender, asyncio.Lock())
+    async with lock:
+        texts = _inbox.pop(sender, [])
+        if not texts:
+            return
+        try:
+            await handle_message(sender, "\n".join(texts))
+        except Exception as exc:
+            print(f"не смог ответить {sender}: {exc!r}", flush=True)
+
+
+async def handle_message(sender: str, text: str) -> None:
+    """Отвечает на всё, что клиент написал; сам текст уже в истории."""
     history = history_for(sender)
 
     first_reply = not any(m["role"] == "assistant" for m in history)
@@ -804,7 +859,7 @@ async def receive_webhook(request: Request) -> dict[str, str]:
             mid = message.get("mid") or ""
             sender = (event.get("sender") or {}).get("id") or ""
             if text and sender and mid and not already_handled(mid):
-                await handle_message(sender, text)
+                queue_message(sender, text)
 
     for cid, author, text in iter_comments(payload):
         if not already_handled(f"comment:{cid}"):
