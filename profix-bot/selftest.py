@@ -4,7 +4,7 @@
     docker exec -i profix-instagram-bot python - < selftest.py
 
 Прогоняет типичные разговоры, печатает переписку и проверяет правила:
-приветствие один раз, без имени, без нашего номера, карточка WhatsApp
+приветствие с именем Фарзона один раз, без нашего номера, карточка WhatsApp
 только по просьбе клиента, язык клиента, без запасного шаблона.
 Клиентам ничего не уходит: отправка в Instagram и Telegram подменена.
 Настоящие диалоги не трогаются. Стоит несколько центов (запросы к Claude).
@@ -86,7 +86,8 @@ def common(got, *, first: bool, tajik: bool, card: bool) -> None:
     t = texts(got)
     low = t.lower()
     check(bool(t.strip()), "есть текст ответа")
-    check("фарзон" not in low, "не называет имя")
+    check(low.count("фарзона") <= (1 if first else 0),
+          "называет имя Фарзона только в приветствии")
     check(not OUR_DIGITS or OUR_DIGITS not in re.sub(r"\D", "", t), "не пишет наш номер")
     greet = app.GREETING_TJ if tajik else app.GREETING_RU
     if first:
