@@ -48,7 +48,12 @@ app.send_whatsapp_button = _send_button
 app.deliver_lead = _deliver_lead
 
 OUR_DIGITS = re.sub(r"\D", "", app.MANAGER_WHATSAPP or "")[-9:]
-BOOKISH = ("масоҳат", "метри мураббаъ", "таъмир", "муроҷиат", "сувоқ", "мутахассис")
+BOOKISH = ("масоҳат", "метри мураббаъ", "таъмир", "муроҷиат", "сувоқ", "мутахассис", "таваҷҷӯҳ")
+
+
+def questions(text: str) -> str:
+    """Только вопросительные предложения ответа."""
+    return " ".join(q for q in re.findall(r"[^.!?]*\?", text.lower()))
 TJ_LETTERS = set("ҳҷқғӣӯ")
 
 failures: list[str] = []
@@ -92,7 +97,9 @@ def common(got, *, first: bool, tajik: bool, card: bool) -> None:
     greet = app.GREETING_TJ if tajik else app.GREETING_RU
     if first:
         check(t.startswith(greet), "первый ответ начинается с приветствия")
-    else:
+    if not tajik:
+        check(not (TJ_LETTERS & set(low)), "ответ на русском")
+    if not first:
         check(not re.match(r"\s*(салом|ассалом|здравствуй|добр\w+ (день|утро|вечер))", low),
               "посреди разговора не здоровается заново")
     check(t.count("PROFIX ҳастам") + t.count("представитель компании PROFIX") <= (1 if first else 0),
@@ -100,7 +107,7 @@ def common(got, *, first: bool, tajik: bool, card: bool) -> None:
     check(any(k == "card" for k, _ in got) == card,
           "карточка WhatsApp пришла" if card else "карточки WhatsApp нет (клиент не просил)")
     if tajik:
-        check(bool(TJ_LETTERS & set(low)) or "ташаккур" in low or "салом" in low, "ответ на таджикском")
+        check(bool(TJ_LETTERS & set(low)) or app.looks_tajik(t), "ответ на таджикском")
         check(not any(w in low for w in BOOKISH), "без книжных слов")
     check(len(t) <= 450, f"коротко ({len(t)} символов)")
 
@@ -118,10 +125,12 @@ async def main() -> None:
     low = texts(got).lower()
     check(any(w in low for w in ("чанд", "мешок", "халта", "рақам", "раками", "телефон")),
           "оптовик: спрашивает количество или номер")
-    check(not any(w in low for w in ("дохил", "берун", "девор")),
+    check(not any(w in questions(texts(got)) for w in ("дохил", "берун", "девор", "ремонт")),
           "оптовику не задаёт вопросов про ремонт")
+    # Клиент перешёл на русский — ответ и карточка тоже по-русски.
     got = await say("t1", "Оставьте номер телефона я позвоню")
-    common(got, first=False, tajik=True, card=True)
+    common(got, first=False, tajik=False, card=True)
+    check(("card", "ru") in got, "карточка на языке последнего сообщения (ru)")
 
     print("\n── 2. Несколько сообщений подряд ──")
     got = await say("t2", "Салом", "Ака", "Барои плитка кадом клей хуб?")
@@ -200,7 +209,8 @@ async def main() -> None:
     got = await say("s4", "Салом, 200 мешок штукатурка оптом лозим, нархаш чанд?")
     common(got, first=True, tajik=True, card=False)
     check(has(got, "рақам", "раками", "телефон"), "количество известно — сразу просит номер")
-    check(not has(got, "дохил", "берун", "девор"), "оптовику не задаёт вопросов про ремонт")
+    check(not any(w in questions(texts(got)) for w in ("дохил", "берун", "девор", "ремонт")),
+          "оптовику не задаёт вопросов про ремонт")
     check(not re.search(r"\d+\s*сомон", texts(got).lower()), "не называет цену мешка")
 
     print("\n── 12. Просит менеджера → сначала предлагает помощь ──")
