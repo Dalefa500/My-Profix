@@ -115,6 +115,11 @@ async def main() -> None:
           "на простое приветствие не просит номер сразу")
     got = await say("t1", "Ака клей кафел чанд сумай оптовиш")
     common(got, first=False, tajik=True, card=False)
+    low = texts(got).lower()
+    check(any(w in low for w in ("чанд", "мешок", "халта", "рақам", "раками", "телефон")),
+          "оптовик: спрашивает количество или номер")
+    check(not any(w in low for w in ("дохил", "берун", "девор")),
+          "оптовику не задаёт вопросов про ремонт")
     got = await say("t1", "Оставьте номер телефона я позвоню")
     common(got, first=False, tajik=True, card=True)
 
@@ -179,7 +184,8 @@ async def main() -> None:
     print("\n── 11. Оптовик на таджикском ──")
     got = await say("s4", "Салом, 200 мешок штукатурка оптом лозим, нархаш чанд?")
     common(got, first=True, tajik=True, card=False)
-    check(has(got, "рақам", "раками", "телефон"), "просит номер для оптовых условий")
+    check(has(got, "рақам", "раками", "телефон"), "количество известно — сразу просит номер")
+    check(not has(got, "дохил", "берун", "девор"), "оптовику не задаёт вопросов про ремонт")
     check(not re.search(r"\d+\s*сомон", texts(got).lower()), "не называет цену мешка")
 
     print("\n── 12. Просит менеджера → сначала предлагает помощь ──")
