@@ -421,7 +421,11 @@ async def ask_claude(messages: list[dict[str, str]], system: str = "") -> str | 
     try:
         resp = await client.messages.create(
             model=MODEL,
-            max_tokens=300,
+            # Opus 5.5 всегда сначала думает, и эти токены тоже входят в
+            # max_tokens. При 300 размышление съедало весь лимит, текста
+            # не оставалось, и клиент получал шаблонный ответ. Длину
+            # самого ответа держит промпт («два предложения»).
+            max_tokens=4000,
             # Системный промпт большой и неизменный — кешируем его,
             # иначе каждый ответ оплачивается по полной.
             system=[{"type": "text", "text": system or SYSTEM, "cache_control": {"type": "ephemeral"}}],
@@ -444,7 +448,10 @@ async def ask_claude(messages: list[dict[str, str]], system: str = "") -> str | 
         print("Claude отказался отвечать", flush=True)
         return None
     parts = [b.text for b in resp.content if b.type == "text"]
-    return "\n".join(p.strip() for p in parts if p.strip()) or None
+    text = "\n".join(p.strip() for p in parts if p.strip())
+    if not text:
+        print(f"Claude вернул пустой ответ (stop_reason={resp.stop_reason})", flush=True)
+    return text or None
 
 
 # Таджикский часто набирают русской раскладкой, без ҳ, ҷ, ӣ — поэтому
@@ -453,6 +460,7 @@ _TAJIK_WORDS_RE = re.compile(
     r"\b(?:салом\w*|ассалом\w*|рахмат|раҳмат|ташаккур|чанд|нарх\w*|мехо[хҳ]\w*|лозим\w*"
     r"|ди[хҳ]ед|фирист\w*|ра[кқ]ам\w*|шумо|шуморо|барои|кадом|лутфан|кунед|намоед"
     r"|[хҳ]аст\w*|нест|чи|чӣ|кай|куҷо|кучо|хуб|бале|не[ -]?не|мебахшед|бисёр|хона\w*"
+    r"|ака|сумай|мекун\w*|мешава\w*|доред|дорем|кадомаш|чандай"
     r"|ман|мо|ба|аз|ва|дар|бо|ин|он|ки)\b",
     re.IGNORECASE)
 
@@ -502,17 +510,23 @@ def with_greeting(reply: str, tajik: bool) -> str:
     return f"{greeting} {rest.strip()}".strip()
 
 
-def fallback_reply(text: str) -> str:
-    """Ответ без Claude — чтобы бот не молчал, если ключа нет."""
+def fallback_reply(text: str, tajik: bool | None = None) -> str:
+    """Ответ без Claude — чтобы бот не молчал, если Claude не ответил.
+
+    Без приветствия: в первом ответе его добавит with_greeting, а
+    посреди разговора здороваться второй раз не нужно.
+    """
+    if tajik is None:
+        tajik = looks_tajik(text)
     if find_phone(text):
-        return ("Спасибо! Номер получили, менеджер свяжется с вами. "
-                "Напишите, что именно нужно и какой объём.")
-    if looks_tajik(text):
-        return ("Салом! 👋 PROFIX — омехтаҳои хушк ва андоваи механикии деворҳо. "
-                "Лутфан нависед, ки чӣ лозим аст ва рақами телефонатонро монед.")
-    return ("Здравствуйте! 👋 PROFIX — сухие смеси, краски, грунтовки и "
-            "механизированная штукатурка стен. Напишите, что вас интересует, "
-            "и оставьте номер — менеджер свяжется и всё рассчитает.")
+        return ("Ташаккур! Рақамро гирифтем, менеджер ба шумо занг мезанад."
+                if tajik else
+                "Спасибо! Номер получили, менеджер с вами свяжется.")
+    if tajik:
+        return ("Ташаккур барои савол! Рақами телефонатонро нависед, "
+                "менеджер занг зада ҳамаашро мегӯяд.")
+    return ("Спасибо за вопрос! Оставьте, пожалуйста, номер телефона — "
+            "менеджер перезвонит и всё подробно расскажет.")
 
 
 # ── лиды ───────────────────────────────────────────────────────────
@@ -876,11 +890,20 @@ async def handle_message(sender: str, text: str) -> None:
 
     first_reply = not any(m["role"] == "assistant" for m in history)
 
-    reply = await ask_claude(history) or fallback_reply(text)
-
-    # Язык клиента: по его сообщению или по ответу Фарзоны — модель
-    # отвечает на языке клиента и в таджикском почти всегда пишет ҳ, ҷ, ӣ.
-    tajik = looks_tajik(text) or looks_tajik(reply.replace(WHATSAPP_MARK, ""))
+    # Язык клиента: по всем его сообщениям в этом разговоре — одно
+    # короткое «Ака клей чанд?» само по себе может не опознаться.
+    client_tajik = any(looks_tajik(m["content"]) for m in history if m["role"] == "user")
+    reply = await ask_claude(history)
+    if reply is None:
+        print("Claude не дал ответа — шлём запасной текст", flush=True)
+        reply = fallback_reply(text, client_tajik)
+    # Если клиент написал хоть одну фразу подлиннее и в ней нет ничего
+    # таджикского — он пишет по-русски, и это решает. Иначе («Ок», «Да»)
+    # подсказкой служит ответ модели: в таджикском она пишет ҳ, ҷ, ӣ.
+    client_wrote_russian = not client_tajik and any(
+        m["role"] == "user" and len(m["content"].split()) >= 3 for m in history)
+    tajik = client_tajik or (
+        not client_wrote_russian and looks_tajik(reply.replace(WHATSAPP_MARK, "")))
     # В первом ответе Фарзона обязательно представляется. Промпт это
     # требует, а здесь страховка на случай, если модель забыла.
     if first_reply:

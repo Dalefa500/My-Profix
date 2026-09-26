@@ -15,7 +15,7 @@ SHA=$(curl -fsS "https://api.github.com/repos/$REPO/commits/$BRANCH" \
 [ -n "$SHA" ] || { echo "Не удалось узнать последнюю версию на GitHub"; exit 1; }
 echo "── Версия $SHA ──"
 
-for f in app.py catalog_data.py update.sh reminders.py payments.json; do
+for f in app.py catalog_data.py update.sh reminders.py payments.json selftest.py; do
     curl -fsS -o "$f.new" "https://raw.githubusercontent.com/$REPO/$SHA/profix-bot/$f"
     mv "$f.new" "$f"
 done
