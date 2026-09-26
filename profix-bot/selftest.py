@@ -109,7 +109,8 @@ def common(got, *, first: bool, tajik: bool, card: bool) -> None:
     if tajik:
         check(bool(TJ_LETTERS & set(low)) or app.looks_tajik(t), "ответ на таджикском")
         check(not any(w in low for w in BOOKISH), "без книжных слов")
-    check(len(t) <= 450, f"коротко ({len(t)} символов)")
+    body = t[len(greet):].strip() if first and t.startswith(greet) else t
+    check(len(body) <= 300, f"коротко ({len(body)} символов без приветствия, норма до 250)")
 
 
 async def main() -> None:
