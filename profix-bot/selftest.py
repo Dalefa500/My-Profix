@@ -111,6 +111,8 @@ async def main() -> None:
     print("── 1. Таджик: приветствие, затем цена клея (как на скриншоте) ──")
     got = await say("t1", "Салому Алейкум")
     common(got, first=True, tajik=True, card=False)
+    check(not any(w in texts(got).lower() for w in ("рақам", "раками", "телефон")),
+          "на простое приветствие не просит номер сразу")
     got = await say("t1", "Ака клей кафел чанд сумай оптовиш")
     common(got, first=False, tajik=True, card=False)
     got = await say("t1", "Оставьте номер телефона я позвоню")
@@ -148,7 +150,60 @@ async def main() -> None:
     common(got, first=True, tajik=False, card=False)
     check(not re.search(r"\d+\s*(сом|smn|с\.)", texts(got).lower()), "не выдумывает цену мешка")
 
-    print("\n── 7. Комментарий под постом с просьбой номера ──")
+    def has(got, *words) -> bool:
+        low = texts(got).lower()
+        return any(w in low for w in words)
+
+    print("\n── 8. Плитка на улице → честно советует 800-й ──")
+    got = await say("s1", "Какой клей нужен для плитки на улице, на фасад?")
+    common(got, first=True, tajik=False, card=False)
+    check(has(got, "800"), "советует Плиточный клей 800")
+
+    print("\n── 9. «Ротбанд» → наша гипсовая штукатурка ──")
+    got = await say("s2", "У вас есть ротбанд?")
+    common(got, first=True, tajik=False, card=False)
+    check(has(got, "fizerberg", "гипсов"), "предлагает штукатурку гипсовую FIZERBERG")
+
+    print("\n── 10. Возражения: «дорого», «я подумаю» ──")
+    got = await say("s3", "Сколько стоит механизированная штукатурка?")
+    common(got, first=True, tajik=False, card=False)
+    got = await say("s3", "Дорого")
+    common(got, first=False, tajik=False, card=False)
+    check(not has(got, "скидк"), "не придумывает скидку")
+    check(has(got, "110", "цемент", "быстр", "ровн", "качеств", "под ключ", "входит"),
+          "отвечает ценностью, а не уступкой")
+    got = await say("s3", "Я подумаю")
+    common(got, first=False, tajik=False, card=False)
+    check(not has(got, "скидк", "только сегодня", "успейте"), "без давления и ложной срочности")
+
+    print("\n── 11. Оптовик на таджикском ──")
+    got = await say("s4", "Салом, 200 мешок штукатурка оптом лозим, нархаш чанд?")
+    common(got, first=True, tajik=True, card=False)
+    check(has(got, "рақам", "раками", "телефон"), "просит номер для оптовых условий")
+    check(not re.search(r"\d+\s*сомон", texts(got).lower()), "не называет цену мешка")
+
+    print("\n── 12. Просит менеджера → сначала предлагает помощь ──")
+    got = await say("s5", "Хочу поговорить с менеджером")
+    common(got, first=True, tajik=False, card=False)
+    check(has(got, "помо", "подобра"), "предлагает свою помощь")
+    check(has(got, "номер"), "предлагает оставить номер для менеджера")
+
+    print("\n── 13. Под покраску → жидкая шпатлевка финишная ──")
+    got = await say("s6", "Что нанести на стены перед покраской?")
+    common(got, first=True, tajik=False, card=False)
+    check(has(got, "шпатл"), "предлагает жидкую шпатлевку финишную")
+
+    print("\n── 14. «Вы бот?» → честно ──")
+    got = await say("s7", "Вы бот или человек?")
+    common(got, first=True, tajik=False, card=False)
+    check(has(got, "виртуальн", "помощни"), "честно говорит, что виртуальный помощник")
+
+    print("\n── 15. Грубость → спокойно и вежливо ──")
+    got = await say("s8", "Вы все обманщики, товар плохой")
+    common(got, first=True, tajik=False, card=False)
+    check(not has(got, " ты ", "сам ты"), "без грубости в ответ")
+
+    print("\n── 16. Комментарий под постом с просьбой номера ──")
     posted: list[str] = []
     private: list[str] = []
 
