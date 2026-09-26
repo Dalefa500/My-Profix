@@ -150,10 +150,25 @@ async def main() -> None:
     got = await say("r2", "Добрый день, дайте ваш ватсап")
     common(got, first=True, tajik=False, card=True)
 
-    print("\n── 6. Спрашивает цену мешка ──")
-    got = await say("r3", "Сколько стоит гипсовая штукатурка?")
+    print("\n── 6. Цена мешка → выбор «свой номер или наш» → клиент выбирает наш ──")
+    got = await say("r3", "Сколько стоит гипсовая штукатурка? Нужно 20 мешков")
     common(got, first=True, tajik=False, card=False)
     check(not re.search(r"\d+\s*(сом|smn|с\.)", texts(got).lower()), "не выдумывает цену мешка")
+    low = texts(got).lower()
+    check("удобн" in low and "наш" in low, "даёт выбор: свой номер или наш")
+    got = await say("r3", "Отправьте ваш")
+    common(got, first=False, tajik=False, card=True)
+
+    print("\n── 6б. То же на таджикском, клиент оставляет свой номер ──")
+    got = await say("r4", "Салом, штукатурка 30 мешок лозим, нархаш чанд?")
+    common(got, first=True, tajik=True, card=False)
+    low = texts(got).lower()
+    check("қулай" in low or "моро" in low, "даёт выбор: свой номер или наш")
+    leads_before = len(leads)
+    got = await say("r4", "Рақами ман 918765432")
+    common(got, first=False, tajik=True, card=False)
+    await asyncio.sleep(0.5)
+    check(len(leads) == leads_before + 1, "заявка ушла менеджеру")
 
     def has(got, *words) -> bool:
         low = texts(got).lower()
@@ -192,7 +207,7 @@ async def main() -> None:
     got = await say("s5", "Хочу поговорить с менеджером")
     common(got, first=True, tajik=False, card=False)
     check(has(got, "помо", "подобра"), "предлагает свою помощь")
-    check(has(got, "номер"), "предлагает оставить номер для менеджера")
+    check(has(got, "менеджер"), "предлагает связать с менеджером")
 
     print("\n── 13. Под покраску → жидкая шпатлевка финишная ──")
     got = await say("s6", "Что нанести на стены перед покраской?")
