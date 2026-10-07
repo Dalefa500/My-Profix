@@ -32,7 +32,7 @@ export function applyTheme(theme = getTheme()) {
   }
   const meta = document.createElement('meta');
   meta.name = 'theme-color';
-  meta.content = dark ? '#1b1f26' : '#ecf4f7';
+  meta.content = backgroundHex() || (dark ? '#1b1f26' : '#ecf4f7');
   document.head.appendChild(meta);
   return theme;
 }
@@ -44,4 +44,23 @@ export function setTheme(theme) {
     /* приватный режим — выбор не сохранится */
   }
   return applyTheme(theme);
+}
+
+// Цвет фона страницы в виде #rrggbb — для полосы статуса телефона, чтобы
+// она была в тонах своей компании (у Amber — тёплая, а не серо-синяя).
+function backgroundHex() {
+  try {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:absolute;width:0;height:0;background:var(--bg)';
+    document.body.appendChild(probe);
+    const value = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    const rgb = value.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    const srgb = value.match(/^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+    const parts = rgb ? rgb.slice(1, 4).map(Number)
+      : srgb ? srgb.slice(1, 4).map((part) => Math.round(Number(part) * 255)) : null;
+    return parts ? `#${parts.map((part) => part.toString(16).padStart(2, '0')).join('')}` : '';
+  } catch {
+    return '';
+  }
 }

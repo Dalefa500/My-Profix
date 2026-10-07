@@ -29,9 +29,18 @@ export const WORDMARK_CLASS = BRAND.wordmarkStyle === 'caps' ? 'is-caps' : (WORD
 
 // Логотип компании вставляем в страницу как SVG (а не картинкой), чтобы
 // работала анимация и цвета подстраивались под светлую и тёмную тему.
+// Последний загруженный логотип: при смене экрана (загрузка → ввод кода)
+// вставляем его сразу, без повторной загрузки и мигания.
+let cachedLogo = '';
+
 export async function mountLogo(root) {
   const host = root?.querySelector('[data-logo]');
   if (!host || !BRAND.logo) return;
+  if (cachedLogo) {
+    host.innerHTML = cachedLogo;
+    host.classList.add('is-kept', 'is-ready');
+    return;
+  }
   try {
     const response = await fetch(BRAND.logo, { credentials: 'same-origin' });
     if (!response.ok) return;
@@ -42,6 +51,7 @@ export async function mountLogo(root) {
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
       host.querySelectorAll('.amber-anim, animate, animateTransform').forEach((node) => node.remove());
     }
+    cachedLogo = host.innerHTML;
     host.classList.add('is-ready');
   } catch {
     /* без логотипа экран входа остаётся с названием */

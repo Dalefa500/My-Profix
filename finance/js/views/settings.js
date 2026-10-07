@@ -1,7 +1,7 @@
 // Настройки: валюта и курс, правила расчёта, категории, учётная запись.
 
 import {
-  html, raw, sectionTitle, openForm, toast, confirmDialog, emptyState,
+  html, raw, sectionTitle, openForm, toast, confirmDialog, emptyState, signOutSafely,
 } from '../ui.js';
 import * as store from '../store.js';
 import * as actions from '../actions.js';
@@ -344,8 +344,7 @@ export default function settings() {
       root.querySelector('[data-act="name"]').onclick = () => openNameForm(user);
       root.querySelector('[data-act="password"]')?.addEventListener('click', () => openPasswordForm());
       root.querySelector('[data-act="logout"]')?.addEventListener('click', async () => {
-        const ok = await confirmDialog('Выйти из приложения?', { confirmLabel: 'Выйти', tone: 'danger' });
-        if (ok) await store.signOut();
+        await signOutSafely();
       });
     },
   };

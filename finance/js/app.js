@@ -2,7 +2,7 @@
 
 import * as store from './store.js';
 import * as router from './router.js';
-import { html, raw, esc, openSheet, closeSheet, money, toast, fastTap } from './ui.js';
+import { html, raw, esc, openSheet, closeSheet, money, toast, fastTap, signOutSafely } from './ui.js';
 import { ensurePayrolls } from './actions.js';
 import { notifications } from './calc.js';
 import * as forms from './forms.js';
@@ -483,7 +483,7 @@ function openMoreMenu() {
     onMount: (panel) => {
       panel.querySelector('[data-act="logout"]')?.addEventListener('click', async () => {
         closeSheet();
-        await store.signOut();
+        await signOutSafely({ ask: false });
       });
     },
   });

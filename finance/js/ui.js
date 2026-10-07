@@ -7,7 +7,7 @@ import {
   BASE_CURRENCY, CURRENCY_LIST, formatAmount, defaultRate, toBase,
   rateToHuman, humanToRate, usdRate, rateForInput,
 } from './money.js';
-import { getState } from './store.js';
+import { getState, pendingCount, flushNow, signOut } from './store.js';
 import { openSheetEntry, closeSheetEntry } from './router.js';
 import { formatDate } from './dates.js';
 
@@ -540,4 +540,23 @@ export function chips(items, activeValue, name = 'filter') {
 
 export function dateLine(iso) {
   return formatDate(iso, { short: true });
+}
+
+// Выход из приложения: сначала пытаемся отправить неотправленное, а если
+// связи нет — честно предупреждаем, что эти изменения пропадут.
+export async function signOutSafely({ ask = true } = {}) {
+  const left = pendingCount() ? await flushNow() : 0;
+  if (left) {
+    const ok = await confirmDialog(
+      `Нет связи с сервером. Не отправлено: ${plural(left, 'изменение', 'изменения', 'изменений')}. `
+        + 'Если выйти сейчас, они пропадут. Лучше дождаться связи. Выйти всё равно?',
+      { confirmLabel: 'Выйти и потерять', tone: 'danger' },
+    );
+    if (!ok) return false;
+  } else if (ask) {
+    const ok = await confirmDialog('Выйти из приложения?', { confirmLabel: 'Выйти', tone: 'danger' });
+    if (!ok) return false;
+  }
+  await signOut();
+  return true;
 }

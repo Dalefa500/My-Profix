@@ -225,6 +225,22 @@ async function startSession(nextUser) {
   return user;
 }
 
+// Сколько изменений ещё не дошло до сервера.
+export function pendingCount() {
+  return queue.length;
+}
+
+// Попробовать отправить всё сейчас (перед выходом). Ждём не дольше 5 секунд.
+export async function flushNow() {
+  const started = Date.now();
+  while (queue.length && user && Date.now() - started < 5000) {
+    if (!flushing) await flush();
+    else await new Promise((resolve) => setTimeout(resolve, 200));
+    if (status === 'offline') break;
+  }
+  return queue.length;
+}
+
 export async function signOut() {
   try {
     await api('/logout', { method: 'POST' });

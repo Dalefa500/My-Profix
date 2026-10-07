@@ -466,7 +466,7 @@ function projectReport(state, project) {
       { title: 'Платёж', width: 160 },
       { title: 'Срок', width: 80 },
       { title: 'Сумма', width: 80, align: 'right' },
-      { title: 'Получено', width: 80, align: 'right' },
+      { title: 'Закрыто', width: 80, align: 'right' },
       { title: 'Осталось', width: 80, align: 'right' },
     ],
     // Тот же план, что в карточке проекта (долг — в валюте договора,
@@ -687,9 +687,11 @@ function periodReport(state, from, to) {
         const name = state.founders.find((f) => f.id === item.founderId)?.name || 'Коллега';
         return {
           ...item,
-          kind: 'expense',
+          // Деньги ушли из кассы, но это не расход студии: в столбец «Расход»
+          // не ставим (его сумма должна совпадать с итогом расходов).
+          kind: 'colleague',
           // Своя подпись коллеги («На отпуск») не теряется — дописывается.
-          comment: `${(item.kind || 'draw') === 'repay' ? `Вернули долг: ${name}` : `${name} взял себе`}${item.comment ? ` · ${item.comment}` : ''}`,
+          comment: `${(item.kind || 'draw') === 'repay' ? `Вернули долг: ${name}` : `${name} взял себе`}${item.comment ? ` · ${item.comment}` : ''} · ${money(item.base)}, не расход`,
           projectId: null,
         };
       }),

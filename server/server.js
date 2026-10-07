@@ -808,6 +808,13 @@ async function sendIndex(res) {
   res.end(page);
 }
 
+// Смешать два цвета #rrggbb (доля первого — share), как color-mix в CSS.
+function mixHex(a, b, share) {
+  const parse = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const [x, y] = [parse(a), parse(b)];
+  return `#${x.map((value, i) => Math.round(value * share + y[i] * (1 - share)).toString(16).padStart(2, '0')).join('')}`;
+}
+
 async function sendManifest(res) {
   const manifest = JSON.parse(await fs.readFile(path.join(APP_DIR, 'manifest.webmanifest'), 'utf8'));
   // У Line Design идентификатор не меняем — установленные значки на телефонах
@@ -816,6 +823,11 @@ async function sendManifest(res) {
   manifest.name = `${config.companyName} — финансы студии`;
   manifest.short_name = config.companyName.length <= 12 ? config.companyName : 'Финансы';
   manifest.description = `Учёт финансов ${config.companyName}: проекты, клиенты, сотрудники, приходы, расходы и отчёты.`;
+  // Цвета заставки и полосы статуса — в тонах компании (у Line Design свои).
+  if (!(config.slug === 'line-design' && config.color === '#910029')) {
+    manifest.background_color = mixHex(config.color, '#f6f3ef', 0.07);
+    manifest.theme_color = mixHex(config.color, '#14110f', 0.09);
+  }
   res.writeHead(200, { 'Content-Type': MIME['.webmanifest'], 'Cache-Control': 'no-cache' });
   res.end(JSON.stringify(manifest, null, 2));
 }
@@ -834,8 +846,12 @@ function sendBrandCss(res) {
   --surface: color-mix(in srgb, ${c} 11%, #1d1916);
   --surface-2: color-mix(in srgb, ${c} 13%, #25201c);
   --line: color-mix(in srgb, ${c} 16%, #302a25);
-  --accent: color-mix(in srgb, ${c} 82%, #fff);
+  /* Кнопки — фирменным цветом (белый текст читается), а цветной текст на
+     тёмном фоне — светлее (--accent-text), иначе он тонет. */
+  --accent: ${c};
+  --accent-text: color-mix(in srgb, ${c} 62%, #fff);
   --accent-soft: color-mix(in srgb, ${c} 28%, #1b1712);
+  --muted: color-mix(in srgb, ${c} 12%, #a0978e);
   --brand-signature: color-mix(in srgb, ${c} 85%, #fff);
   --signature-hi: color-mix(in srgb, ${c} 65%, #fff);
   --signature-lo: color-mix(in srgb, ${c} 50%, #000);`;
@@ -850,12 +866,14 @@ function sendBrandCss(res) {
   --signature-on-dark-lo: color-mix(in srgb, ${c} 55%, #000);
   --accent: ${c};
   --accent-soft: color-mix(in srgb, ${c} 12%, #fff);
-  --hero-from: color-mix(in srgb, ${c} 88%, #fff);
+  --hero-from: ${c};
   --hero-to: color-mix(in srgb, ${c} 45%, #000);
   /* Светлая тема — тёплая нейтральная с оттенком фирменного цвета. */
   --bg: color-mix(in srgb, ${c} 7%, #f6f3ef);
   --surface-2: color-mix(in srgb, ${c} 5%, #faf8f5);
   --line: color-mix(in srgb, ${c} 14%, #e6e0d9);
+  /* Приглушённый текст — тёплый и достаточно тёмный для чтения. */
+  --muted: color-mix(in srgb, ${c} 15%, #5f5750);
 }
 /* Тёмная тема — нейтральная с оттенком фирменного цвета. */
 @media (prefers-color-scheme: dark) {
@@ -866,6 +884,10 @@ ${darkVars}
 :root[data-theme="dark"] {
 ${darkVars}
 }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tabbar__item.is-active { color: var(--accent-text); }
+}
+:root[data-theme="dark"] .tabbar__item.is-active { color: var(--accent-text); }
 /* Экран входа — в тонах компании, а не в серо-синих тонах Line Design. */
 .auth {
   background: linear-gradient(165deg, color-mix(in srgb, ${c} 32%, #1c1612) 0%,
@@ -897,7 +919,9 @@ async function serveStatic(req, res, url) {
   }
   let relative = pathname.slice('/finance'.length) || '/';
   if (relative.endsWith('/')) relative += 'index.html';
-  if (relative.includes('\0') || relative.split('/').some((part) => part.startsWith('.'))) {
+  // Служебные файлы (описания, инструкции по установке) наружу не отдаём.
+  if (relative.includes('\0') || relative.split('/').some((part) => part.startsWith('.'))
+    || /\.(md|txt|sh|log)$/i.test(relative)) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Страница не найдена');
     return;
   }

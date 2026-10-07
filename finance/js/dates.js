@@ -130,6 +130,8 @@ export function rangeFor(preset, anchorIso = today()) {
       return { from: monthStart(addMonths(anchorIso, -5)), to: monthEnd(anchorIso), label: '6 месяцев' };
     case 'year':
       return { from: monthStart(addMonths(anchorIso, -11)), to: monthEnd(anchorIso), label: 'Год' };
+    case 'all':
+      return { from: '0000-01-01', to: '9999-12-31', label: 'Всё время' };
     case 'calendarYear':
       return { from: `${anchor.getFullYear()}-01-01`, to: `${anchor.getFullYear()}-12-31`, label: String(anchor.getFullYear()) };
     default:

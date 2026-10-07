@@ -179,9 +179,10 @@ export function founderDetail(params) {
     back: '#/founders',
     body,
     mount(root) {
-      root.querySelector('[data-report]').onclick = () => openReport({
-        type: 'founder', id: founder.id, from: range.from, to: range.to,
-      });
+      // «Всё время» — отчёт без границ периода.
+      root.querySelector('[data-report]').onclick = () => openReport(periodState.preset === 'all'
+        ? { type: 'founder', id: founder.id }
+        : { type: 'founder', id: founder.id, from: range.from, to: range.to });
       root.querySelector('[data-act="edit"]').onclick = () => forms.openFounderForm(founder.id, refresh);
       root.querySelector('[data-act="add-draw"]').onclick = () => forms.openDrawForm(founder.id, null, refresh);
       root.querySelectorAll('[data-open-draw]').forEach((button) => {

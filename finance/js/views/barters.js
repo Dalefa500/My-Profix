@@ -9,6 +9,7 @@ import { BARTER_KINDS, labelOf } from '../model.js';
 import * as forms from '../forms.js';
 import { refresh } from '../refresh.js';
 import { openBarterSheet } from '../barter.js';
+import { formatAmount, isBase } from '../money.js';
 
 function barterRow(row) {
   const client = byId('clients', row.barter.clientId);
@@ -17,12 +18,13 @@ function barterRow(row) {
       <div class="row__main">
         <span class="row__title">${row.barter.title}</span>
         <span class="row__subtitle">${client?.name || 'Без клиента'} · ${labelOf(BARTER_KINDS, row.barter.kind, 'Имущество')}
-          · оценка ${money(row.totalBase)}</span>
+          · оценка ${isBase(row.barter.currency) ? money(row.totalBase) : formatAmount(row.totalAmount, row.barter.currency)}</span>
         ${raw(progressBar(row.percent, row.done ? 'good' : 'warn'))}
       </div>
       <div class="row__side">
         <span class="row__amount ${raw(row.done ? 'good' : 'warn')}">${money(row.leftBase)}</span>
-        <span class="row__meta">${row.done ? 'отработано' : 'осталось'}</span>
+        <span class="row__meta">${row.done ? 'отработано'
+          : isBase(row.barter.currency) ? 'осталось' : `осталось ${formatAmount(row.leftAmount, row.barter.currency)}`}</span>
       </div>
     </button>`;
 }

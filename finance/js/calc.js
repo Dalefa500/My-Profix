@@ -226,9 +226,21 @@ export function projectPlan(project, receivedBase) {
   const base = isBase(project?.currency);
   const tol = planTolerance(project);
   const items = [...(project?.payments || [])].sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+  // Доллары каждой строки округляются отдельно, и сумма строк могла уйти
+  // от стоимости на цент. Если сами суммы плана равны цене — подгоняем
+  // последнюю строку, чтобы и в долларах всё сходилось.
+  const bases = new Map(items.map((item) => [item, toBase(item.amount, project?.currency, fx)]));
+  const regular = items.filter((item) => item.type !== 'extra');
+  const amountSum = regular.reduce((acc, item) => acc + (Number(item.amount) || 0), 0);
+  if (regular.length && Math.abs(amountSum - (Number(project?.price) || 0)) < 0.005) {
+    const target = toBase(project.price, project.currency, fx);
+    const drift = round(target - regular.reduce((acc, item) => acc + bases.get(item), 0));
+    const last = regular[regular.length - 1];
+    if (drift !== 0 && Math.abs(drift) <= 0.05) bases.set(last, round(bases.get(last) + drift));
+  }
   let left = Number(receivedBase) || 0;
   return items.map((item) => {
-    const itemBase = toBase(item.amount, project.currency, fx);
+    const itemBase = bases.get(item);
     const covered = Math.min(itemBase, Math.max(0, left));
     left = round(left - covered);
     // Недостача меньше одной сомони — это округление при пересчёте
@@ -375,8 +387,11 @@ export function barterState(state, barter) {
     stages,
     percent: totalAmount > 0 ? Math.min(100, Math.round((usedAmount / totalAmount) * 100)) : 0,
     totalBase,
-    // Сколько ушло в доход (в долларах по курсу каждого этапа).
-    usedBase: sum(incomes, (item) => item.base),
+    // Отработано — по курсу оценки, чтобы «оценка − отработано = осталось»
+    // сходилось и в долларах. Сколько этапы дали дохода по своим курсам —
+    // incomeBase.
+    usedBase: round(usedAmount * fx),
+    incomeBase: sum(incomes, (item) => item.base),
     totalAmount,
     usedAmount,
     leftAmount: round(leftAmount),
