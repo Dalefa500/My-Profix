@@ -55,7 +55,7 @@ function nearWhole(value) {
 function assignmentRow(row, info, closed = false) {
   const employee = byId('employees', row.employeeId);
   return html`
-    <div class="row" data-assignment="${row.id}">
+    <div class="row row--stack" data-assignment="${row.id}">
       <div class="row__main">
         <a class="row__title" href="#/employees/${row.employeeId}">${employee?.name || 'Сотрудник'}</a>
         <span class="row__subtitle">${row.role} · ${formatArea(info.area)} × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}</span>

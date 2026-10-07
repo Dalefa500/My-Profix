@@ -544,10 +544,24 @@ a.row:active, button.row:active {
   transform: scale(0.975);
   transition-duration: 0.06s;
 }
-.row__main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* Левая часть строки всегда получает место: правая (сумма и кнопки)
+   не шире ~60% и при нехватке места переносит кнопки на новую строку.
+   Иначе длинная кнопка («Остаток заблокирован») сжимала имя до столбика
+   из отдельных букв. */
+.row__main { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; }
 .row__title { font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
 .row__subtitle { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
-.row__side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
+.row__side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; max-width: 62%; }
+.row__side .btn-row { justify-content: flex-end; }
+/* Строка с несколькими кнопками (работа сотрудника): текст во всю ширину,
+   сумма и кнопки — строкой ниже. */
+.row--stack { flex-wrap: wrap; align-items: flex-start; }
+.row--stack .row__main { flex-basis: 100%; }
+.row--stack .row__side {
+  max-width: none; width: 100%;
+  flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px;
+}
+.row--stack .row__side .row__amount { margin-right: auto; }
 .row__amount { font-size: 15px; font-weight: 600; white-space: nowrap; letter-spacing: -0.02em; }
 .row__amount.good { color: var(--good); }
 .row__amount.danger { color: var(--danger); }

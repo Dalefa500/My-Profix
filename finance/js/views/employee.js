@@ -36,7 +36,7 @@ function payrollCard(payroll) {
 function assignmentCard(row) {
   const { assignment, project, state: info } = row;
   return html`
-    <div class="row">
+    <div class="row row--stack">
       <div class="row__main">
         <a class="row__title" href="#/projects/${assignment.projectId}">${project?.name || 'Проект удалён'}</a>
         <span class="row__subtitle">${assignment.role} · ${formatArea(info.area)} × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}</span>
