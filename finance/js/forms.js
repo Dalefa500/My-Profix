@@ -413,11 +413,20 @@ export function openIncomeForm(prefill = {}, onDone) {
       if (values.method === 'barter' && values.barterId) {
         const barter = byId('barters', values.barterId);
         const info = barter ? barterState(getState(), barter) : null;
-        const own = income?.barterId === values.barterId ? Number(income.base) || 0 : 0;
-        const room = info ? info.leftBase + own : 0;
-        const base = actions.baseOf({ amount: values.amount, currency: values.amountCurrency, fx: values.amountFx });
-        if (info && base > room + 0.01) {
-          return `С этого имущества можно списать не больше ${formatAmount(room)}. Остальное клиент доплачивает деньгами.`;
+        if (info) {
+          const fx = isBase(barter.currency) ? 1 : (Number(barter.fx) || 1);
+          const sameCurrency = values.amountCurrency === barter.currency;
+          // Своя прежняя сумма этого этапа освобождается при правке.
+          const ownBase = income?.barterId === values.barterId ? Number(income.base) || 0 : 0;
+          const ownAmount = income?.barterId === values.barterId
+            ? (isBase(barter.currency) ? ownBase : income.currency === barter.currency ? Number(income.amount) || 0 : ownBase / fx)
+            : 0;
+          const roomAmount = info.leftAmount + ownAmount;
+          const base = actions.baseOf({ amount: values.amount, currency: values.amountCurrency, fx: values.amountFx });
+          const over = sameCurrency ? Number(values.amount) > roomAmount + 0.005 : base > roomAmount * fx + 0.01;
+          if (over) {
+            return `С этого имущества можно списать не больше ${formatAmount(roomAmount, barter.currency)}. Остальное клиент доплачивает деньгами.`;
+          }
         }
       }
       actions.saveIncome({
@@ -727,9 +736,14 @@ export function openBarterForm(id = null, prefill = {}, onDone) {
       // Оценку нельзя сделать меньше уже списанных работ: иначе часть
       // дохода оказалась бы «сверх имущества» и нигде не числилась.
       if (barter) {
-        const used = barterState(getState(), barter)?.usedBase || 0;
+        const info = barterState(getState(), barter);
+        const usedAmount = info?.usedAmount || 0;
+        const fx = isBase(barter.currency) ? 1 : (Number(barter.fx) || 1);
         const base = actions.baseOf({ amount: values.amount, currency: values.amountCurrency, fx: values.amountFx });
-        if (base < used - 0.01) return `С имущества уже списано работ на ${formatAmount(used)} — оценка не может быть меньше`;
+        const below = values.amountCurrency === barter.currency
+          ? Number(values.amount) < usedAmount - 0.005
+          : base < usedAmount * fx - 0.01;
+        if (below) return `С имущества уже списано работ на ${formatAmount(usedAmount, barter.currency)} — оценка не может быть меньше`;
       }
       actions.saveBarter({
         ...values,

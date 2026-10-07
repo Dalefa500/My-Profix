@@ -8,7 +8,9 @@ import { getState, byId } from '../store.js';
 import { openReport } from '../report.js';
 import { openOperation } from '../operation.js';
 import { projectFinance, assignmentState } from '../calc.js';
-import { PROJECT_STATUSES, WORK_STAGES, labelOf, toneOf, categoryLabel } from '../model.js';
+import {
+  PROJECT_STATUSES, WORK_STAGES, CLOSED_PROJECT_STATUSES, labelOf, toneOf, categoryLabel,
+} from '../model.js';
 import { formatAmount, formatWithOriginal, formatArea, isBase, round } from '../money.js';
 import { formatDate } from '../dates.js';
 import * as forms from '../forms.js';
@@ -43,7 +45,14 @@ function planRow(project, item) {
     </div>`;
 }
 
-function assignmentRow(row, info) {
+// Сумма в сомони, отличающаяся от целой на копейки округления, — целая.
+function nearWhole(value) {
+  const whole = Math.round(value);
+  return Math.abs(value - whole) < 0.05 ? whole : round(value);
+}
+
+// У отменённого проекта кнопок выплаты нет — как и строк в «Платежах».
+function assignmentRow(row, info, closed = false) {
   const employee = byId('employees', row.employeeId);
   return html`
     <div class="row" data-assignment="${row.id}">
@@ -60,10 +69,10 @@ function assignmentRow(row, info) {
         <span class="row__amount">${money(info.accruedBase)}</span>
         <span class="row__meta">Выплачено ${money(info.paidBase)}</span>
         <div class="btn-row">
-          ${info.advanceLeft > 0
+          ${!closed && info.advanceLeft > 0
             ? raw(html`<button class="btn btn--sm btn--primary" data-pay-advance="${row.id}">Аванс</button>`)
             : ''}
-          ${!info.remainderPaid && info.remainder > 0
+          ${!closed && !info.remainderPaid && info.remainder > 0
             ? raw(info.remainderAvailable
               ? html`<button class="btn btn--sm btn--good" data-pay-final="${row.id}">Остаток</button>`
               : html`<button class="btn btn--sm" data-locked="${row.id}">Остаток заблокирован</button>`)
@@ -84,7 +93,10 @@ export default function projectDetail(params) {
   const finance = projectFinance(state, project);
   const client = byId('clients', project.clientId);
   const lead = byId('employees', project.leadId);
-  const receivedPercent = finance.contractBase > 0 ? finance.receivedBase / finance.contractBase * 100 : 0;
+  // Процент — по расчёту в валюте договора: оплаченный сомони по другому
+  // курсу договор закрыт на 100%, даже если в долларах вышло чуть меньше.
+  const receivedPercent = finance.contractBase > 0
+    ? (finance.toReceiveBase <= 0 ? 100 : finance.settledBase / finance.contractBase * 100) : 0;
 
   // Долг, не покрытый строками плана (например, строку плана удалили):
   // показываем отдельно, иначе план выглядел бы «полученным».
@@ -153,7 +165,7 @@ export default function projectDetail(params) {
       ${raw(sectionTitle('Сдельные сотрудники', '<button class="btn btn--sm" data-act="add-assignment">Добавить</button>'))}
       ${finance.assignments.length
         ? raw(html`<div class="list">${raw(finance.assignments
-          .map((row, index) => assignmentRow(row, finance.assignmentStates[index])).join(''))}</div>`)
+          .map((row, index) => assignmentRow(row, finance.assignmentStates[index], CLOSED_PROJECT_STATUSES.includes(project.status))).join(''))}</div>`)
         : raw(emptyState('Сотрудники на проект не назначены'))}
       ${finance.assignments.length ? raw(html`
         <p class="muted">Начислено ${money(finance.pieceworkAccruedBase)} · выплачено ${money(finance.pieceworkPaidBase)} · к выплате ${money(finance.pieceworkDueBase)}</p>`) : ''}
@@ -210,7 +222,7 @@ export default function projectDetail(params) {
         projectId: project.id,
         clientId: project.clientId,
         type: 'final',
-        amount: isBase(project.currency) ? outsidePlan : round(outsidePlan / (project.fx || 1)),
+        amount: isBase(project.currency) ? outsidePlan : nearWhole(outsidePlan / (project.fx || 1)),
         currency: project.currency,
         fx: project.fx,
       }, refresh));

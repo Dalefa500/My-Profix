@@ -12,7 +12,7 @@ import { getState, byId, canEdit } from './store.js';
 import { barterState } from './calc.js';
 import { BARTER_KINDS, labelOf } from './model.js';
 import { formatDate, today } from './dates.js';
-import { formatAmount } from './money.js';
+import { formatAmount, formatWithOriginal, isBase } from './money.js';
 import * as forms from './forms.js';
 import * as actions from './actions.js';
 import { refresh } from './refresh.js';
@@ -38,7 +38,7 @@ export function openBarterSheet(id) {
 
       <div class="list">
         <div class="row"><div class="row__main"><span class="row__subtitle">Оценка имущества</span>
-          <span class="row__title">${money(row.totalBase)}</span></div></div>
+          <span class="row__title">${formatWithOriginal({ base: row.totalBase, amount: barter.amount, currency: barter.currency, fx: barter.fx })}</span></div></div>
         <div class="row"><div class="row__main"><span class="row__subtitle">Отработано работами</span>
           <span class="row__title">${money(row.usedBase)} · ${row.percent}%</span></div></div>
         ${row.overBase > 0 ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Сверх оценки</span>
@@ -106,7 +106,8 @@ export function openBarterUseForm(id, onDone = refresh) {
   openForm({
     title: 'Списать выполненные работы',
     intro: `${barter.title}${byId('clients', barter.clientId) ? ` · ${byId('clients', barter.clientId).name}` : ''}. `
-      + `Осталось отработать ${formatAmount(row.leftBase)} из ${formatAmount(row.totalBase)}.`,
+      + `Осталось отработать ${isBase(barter.currency) ? formatAmount(row.leftBase)
+        : `${formatAmount(row.leftAmount, barter.currency)} (${formatAmount(row.leftBase)})`} из ${formatAmount(row.totalAmount, barter.currency)}.`,
     fields: [
       {
         name: 'amount', label: 'На сколько выполнено работ', type: 'money', required: true,
@@ -135,9 +136,13 @@ export function openBarterUseForm(id, onDone = refresh) {
       // виден в «Платежах», пока клиент его не погасит.
       const base = actions.baseOf({ amount, currency: values.amountCurrency, fx: values.amountFx });
       // Остаток берём на момент сохранения: пока форма была открыта,
-      // данные могли обновиться с другого телефона.
+      // данные могли обновиться с другого телефона. В валюте оценки
+      // сравниваем сами суммы — курс списания может отличаться.
       const fresh = barterState(getState(), byId('barters', id)) || row;
-      if (base > fresh.leftBase + 0.01) {
+      const over = values.amountCurrency === barter.currency
+        ? amount > fresh.leftAmount + 0.005
+        : base > fresh.leftBase + 0.01;
+      if (over) {
         return `С имущества можно списать не больше ${formatAmount(fresh.leftBase)}. Остальное клиент доплачивает деньгами — запишите обычный приход.`;
       }
       const record = {

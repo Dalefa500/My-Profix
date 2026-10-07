@@ -8,7 +8,7 @@ import { toBase, defaultRate, round, formatAmount, isBase } from './money.js';
 import { today, monthKey, monthLabel, addMonths, daysInMonth } from './dates.js';
 import {
   assignmentState, assignmentHasPayments, payrollMonthsFor, payrollState, clampPercent, projectPlan,
-  projectSettledBase,
+  projectSettledBase, founderDebt,
 } from './calc.js';
 import { categoryLabel } from './model.js';
 
@@ -825,11 +825,11 @@ export function saveDraw(values, id = null) {
   // Вернуть можно только то, что студия должна: иначе деньги уходят
   // из кассы и не попадают ни в одну сумму.
   if (kind === 'repay') {
+    // Долг считаем в его валюте: 2000 сомони возвращаются 2000 сомони
+    // по любому курсу.
     const others = (state.draws || []).filter((item) => item.founderId === values.founderId && item.id !== id);
-    const total = (type) => others.filter((item) => (item.kind || 'draw') === type)
-      .reduce((acc, item) => acc + (Number(item.base) || 0), 0);
-    const owed = round(Math.max(0, total('spend') - total('repay')));
-    if (payment.base > owed + 0.01) {
+    const owed = founderDebt(others).owedBase;
+    if (founderDebt([...others, { kind: 'repay', ...payment }]).overBase > 0.01) {
       return {
         ok: false,
         error: owed > 0
@@ -841,7 +841,8 @@ export function saveDraw(values, id = null) {
   // Уменьшили или убрали расход, по которому студия уже вернула деньги, —
   // возвращённое оказалось бы больше долга, и разница нигде бы не числилась.
   if (existing && (existing.kind || 'draw') === 'spend') {
-    const overflow = repayOverflow(state, existing.founderId, id, kind === 'spend' && values.founderId === existing.founderId ? payment.base : 0);
+    const overflow = repayOverflow(state, existing.founderId, id,
+      kind === 'spend' && values.founderId === existing.founderId ? { kind: 'spend', ...payment } : null);
     if (overflow > 0.01) {
       return { ok: false, error: `Студия уже вернула по этому долгу больше — сумма не может быть меньше на ${formatAmount(overflow)}` };
     }
@@ -897,11 +898,11 @@ export function saveDraw(values, id = null) {
 
 // Насколько возвращённое коллеге превысит его расходы за студию, если
 // запись ignoreId убрать (и при желании добавить расход extraSpend).
-function repayOverflow(state, founderId, ignoreId, extraSpend = 0) {
+// Насколько возвращённое коллеге превысит его расходы за студию, если
+// запись ignoreId убрать, а вместо неё учесть extra (новую или исправленную).
+function repayOverflow(state, founderId, ignoreId, extra = null) {
   const others = (state.draws || []).filter((item) => item.founderId === founderId && item.id !== ignoreId);
-  const total = (type) => others.filter((item) => (item.kind || 'draw') === type)
-    .reduce((acc, item) => acc + (Number(item.base) || 0), 0);
-  return round(total('repay') - total('spend') - extraSpend);
+  return founderDebt(extra ? [...others, extra] : others).overBase;
 }
 
 function spendDeleteProblem(state, draw) {

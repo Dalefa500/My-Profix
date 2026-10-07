@@ -187,7 +187,12 @@ export function assignmentState(assignment, project) {
 export function advanceDueDate(assignment, project) {
   const assigned = String(assignment?.createdAt || '').slice(0, 10);
   const start = project?.startDate || '';
-  return assigned > start ? assigned : start;
+  // Доплата аванса (площадь увеличили после выплаты) — не раньше
+  // последней выплаты аванса, иначе она сразу «просрочена» на месяц.
+  const lastAdvance = (assignment?.payments || [])
+    .filter((item) => item.part === 'advance')
+    .reduce((latest, item) => (String(item.date || '') > latest ? String(item.date) : latest), '');
+  return [assigned, start, lastAdvance].reduce((a, b) => (b > a ? b : a), '');
 }
 
 export function projectAssignments(state, projectId) {
@@ -283,12 +288,16 @@ export function projectFinance(state, project) {
     (project.payments || []).filter((item) => item.type === 'extra'),
     (item) => toBase(item.amount, project.currency, fx),
   );
-  const contractBase = round(priceBase + extraPlanBase);
+  const cancelledEarly = CLOSED_PROJECT_STATUSES.includes(project.status);
+  // У отменённого проекта «договор» — то, что клиент успел заплатить.
+  const contractBase = cancelledEarly ? round(receivedBase) : round(priceBase + extraPlanBase);
   const cancelled = CLOSED_PROJECT_STATUSES.includes(project.status);
   // У отменённого проекта неполученные платежи уже не ждём.
-  const plan = projectPlan(project, settledBase).map((item) => (cancelled && item.status !== 'received'
-    ? { ...item, status: 'cancelled', leftBase: 0, leftAmount: 0, overdue: false }
-    : item));
+  const plan = projectPlan(project, settledBase).map((item) => {
+    if (!cancelled || item.status === 'received') return item;
+    // Частично полученный платёж так и показываем; неполученный — «не ожидается».
+    return { ...item, status: item.status === 'partial' ? 'partial' : 'cancelled', leftBase: 0, leftAmount: 0, overdue: false };
+  });
   const owed = round(contractBase - settledBase);
   const toReceiveBase = cancelled || owed <= planTolerance(project) ? 0 : owed;
 
@@ -312,6 +321,7 @@ export function projectFinance(state, project) {
     priceBase,
     contractBase,
     receivedBase,
+    settledBase,
     toReceiveBase,
     plan,
     assignments,
@@ -340,26 +350,41 @@ export function barterState(state, barter) {
   const incomes = state.incomes
     .filter((item) => item.barterId === barter.id)
     .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.id).localeCompare(String(b.id)));
-  const usedBase = sum(incomes, (item) => item.base);
+  const fx = isBase(barter.currency) ? 1 : (Number(barter.fx) > 0 ? Number(barter.fx) : 1);
   const totalBase = toBase(barter.amount, barter.currency, barter.fx);
+  // Списания считаем в валюте оценки: квартира за 300 000 сомони, на которую
+  // списали работ на 300 000 сомони (по любому курсу), отработана целиком.
+  const inCurrency = (income) => {
+    if (isBase(barter.currency)) return Number(income.base) || 0;
+    if (income.currency === barter.currency) return Number(income.amount) || 0;
+    return (Number(income.base) || 0) / fx;
+  };
+  const totalAmount = Number(barter.amount) || 0;
+  const usedAmount = round(sum(incomes, inCurrency));
+  let leftAmount = Math.max(0, totalAmount - usedAmount);
+  if (leftAmount <= 0.005) leftAmount = 0;
   // Этапы по порядку: сколько списали и сколько после этого осталось.
-  let running = totalBase;
+  let running = totalAmount;
   const stages = incomes.map((income) => {
-    running = round(running - (Number(income.base) || 0));
-    return { income, leftAfterBase: running };
+    running = round(running - inCurrency(income));
+    return { income, leftAfterBase: round(running * fx), leftAfterAmount: running };
   });
   return {
     barter,
     incomes,
     stages,
-    percent: totalBase > 0 ? Math.min(100, Math.round((usedBase / totalBase) * 100)) : 0,
+    percent: totalAmount > 0 ? Math.min(100, Math.round((usedAmount / totalAmount) * 100)) : 0,
     totalBase,
-    usedBase,
-    leftBase: round(Math.max(0, totalBase - usedBase)),
+    // Сколько ушло в доход (в долларах по курсу каждого этапа).
+    usedBase: sum(incomes, (item) => item.base),
+    totalAmount,
+    usedAmount,
+    leftAmount: round(leftAmount),
+    leftBase: round(leftAmount * fx),
     // Списать больше оценки форма не даёт; в старых записях такое могло
     // остаться — это видно в карточке имущества.
-    overBase: round(Math.max(0, usedBase - totalBase)),
-    done: usedBase >= totalBase - 0.01,
+    overBase: round(Math.max(0, usedAmount - totalAmount) * fx),
+    done: leftAmount === 0,
   };
 }
 
@@ -399,6 +424,50 @@ export function founderDraws(state, founderId, from, to) {
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
+// Долг студии перед коллегой по валютам: 2000 сомони, которые он заплатил
+// за студию, гасятся возвратом 2000 сомони по любому курсу. Возврат в другой
+// валюте засчитывается по курсу самих расходов. overBase — вернули больше,
+// чем были должны.
+export function founderDebt(draws) {
+  const balances = new Map(); // валюта -> { amount, base }
+  for (const item of draws) {
+    if ((item.kind || 'draw') !== 'spend') continue;
+    const key = item.currency || 'USD';
+    const entry = balances.get(key) || { amount: 0, base: 0 };
+    entry.amount += Number(item.amount) || 0;
+    entry.base += Number(item.base) || 0;
+    balances.set(key, entry);
+  }
+  let extraBase = 0;
+  for (const item of draws) {
+    if ((item.kind || 'draw') !== 'repay') continue;
+    const amount = Number(item.amount) || 0;
+    const base = Number(item.base) || 0;
+    const entry = balances.get(item.currency || 'USD');
+    if (entry && entry.amount > 0.005 && amount > 0) {
+      const take = Math.min(amount, entry.amount);
+      entry.base -= entry.base * (take / entry.amount);
+      entry.amount -= take;
+      if (amount - take > 0.005) extraBase += base * ((amount - take) / amount);
+    } else {
+      extraBase += base;
+    }
+  }
+  // Возврат сверх долга в своей валюте гасит долг в других валютах.
+  for (const entry of balances.values()) {
+    if (extraBase <= 0.004 || entry.base <= 0) continue;
+    const cut = Math.min(entry.base, extraBase);
+    entry.amount -= entry.amount * (cut / entry.base);
+    entry.base -= cut;
+    extraBase -= cut;
+  }
+  let owedBase = 0;
+  for (const entry of balances.values()) {
+    if (entry.amount > 0.005) owedBase += entry.base;
+  }
+  return { owedBase: round(owedBase), overBase: round(Math.max(0, extraBase)) };
+}
+
 export function founderState(state, founder, from, to) {
   if (!founder) return null;
   const all = founderDraws(state, founder.id);
@@ -420,7 +489,7 @@ export function founderState(state, founder, from, to) {
     takenBase,
     spentBase,
     repaidBase,
-    owedBase: round(Math.max(0, spentBase - repaidBase)),
+    owedBase: founderDebt(all).owedBase,
     periodTakenBase: sum(of(period, 'draw'), (item) => item.base),
     periodSpentBase: sum(of(period, 'spend'), (item) => item.base),
     periodRepaidBase: sum(of(period, 'repay'), (item) => item.base),
@@ -674,6 +743,13 @@ export function receivables(state) {
     }
     // Часть долга, не покрытая планом платежей, показывается отдельной строкой.
     const uncovered = round(budget);
+    // Копейки округления не выносим отдельной строкой, а добавляем к
+    // последней — так сумма строк совпадает с долгом в карточке проекта.
+    const projectRows = rows.filter((row) => row.projectId === project.id);
+    if (uncovered > 0 && uncovered <= planTolerance(project) && projectRows.length) {
+      const last = projectRows[projectRows.length - 1];
+      last.amountBase = round(last.amountBase + uncovered);
+    }
     if (uncovered > planTolerance(project)) {
       rows.push({
         amount: isBase(project.currency) ? uncovered

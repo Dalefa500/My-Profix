@@ -12,7 +12,8 @@ export const BASE_CURRENCY = 'USD';
 
 export const CURRENCIES = {
   USD: { code: 'USD', name: 'Доллар', symbol: '$', decimals: 2 },
-  TJS: { code: 'TJS', name: 'Сомони', symbol: 'TJS', decimals: 0 },
+  // Дирамы показываем, только когда они есть: 1 026,75 TJS, а не «1 027».
+  TJS: { code: 'TJS', name: 'Сомони', symbol: 'TJS', decimals: 2 },
 };
 
 // Порядок важен: доллар первым, потому что он основной.
