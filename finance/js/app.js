@@ -374,6 +374,9 @@ function renderView() {
   subtitle.textContent = result.subtitle || '';
   const back = document.querySelector('[data-back]');
   back.hidden = !result.back;
+  // На внутренних экранах знак студии уступает место заголовку:
+  // иначе от «Квартира на Рудаки» оставалось «КВАРТИ…».
+  document.body.classList.toggle('is-inner', Boolean(result.back));
   // Куда возвращаться, помним здесь: обработчик кнопки навешен один раз
   // при запуске. Раньше поверх него ставился второй, и нажатие уводило
   // на шаг дальше, чем нужно.

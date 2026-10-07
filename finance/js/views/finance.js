@@ -98,7 +98,9 @@ export default function finance(params) {
       : categoryLabel(item.category, state.settings);
     const subtitle = tab === 'income'
       ? `${labelOf(INCOME_TYPES, item.type)} · ${labelOf(PAYMENT_METHODS, item.method, 'Наличные')}${item.comment ? ` · ${item.comment}` : ''}`
-      : `${project ? `${project.name} · ` : ''}${item.comment || labelOf(PAYMENT_METHODS, item.method, 'Наличные')}`;
+      // Автоматический комментарий выплаты уже содержит имя проекта —
+      // второй раз его не повторяем.
+      : `${project && !String(item.comment || '').includes(project.name) ? `${project.name} · ` : ''}${item.comment || labelOf(PAYMENT_METHODS, item.method, 'Наличные')}`;
     return html`
       <button class="row" data-open="${item.id}" style="width:100%;text-align:left">
         <div class="row__main">

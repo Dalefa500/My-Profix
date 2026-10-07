@@ -31,6 +31,8 @@
   --line: #d9e3e9;
   --accent: #910029;
   --accent-soft: #f8e5ea;
+  /* Акцент для текста: в тёмной теме светлее, чтобы читался на тёмном фоне. */
+  --accent-text: var(--accent);
   --good: #14795a;
   --good-soft: #e0f2ec;
   --warn: #8a5a00;
@@ -76,6 +78,7 @@
     --signature-hi: #d9304c;
     --signature-lo: #56031a;
     --accent-soft: #3a141f;
+    --accent-text: color-mix(in srgb, var(--accent) 62%, #fff);
     --good: #44be97;
     --good-soft: #12302a;
     --warn: #e0a54a;
@@ -106,6 +109,7 @@
   --signature-hi: #d9304c;
   --signature-lo: #56031a;
   --accent-soft: #3a141f;
+  --accent-text: color-mix(in srgb, var(--accent) 62%, #fff);
   --good: #44be97;
   --good-soft: #12302a;
   --warn: #e0a54a;
@@ -263,6 +267,13 @@ h1, h2, h3 { line-height: 1.2; }
   max-width: calc(50% - 84px);
 }
 .topbar__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+/* Внутренний экран: заголовок занимает всю ширину до кнопок, знак студии
+   плавно уходит (он остаётся на главных разделах). */
+@media (max-width: 719px) {
+  .is-inner .topbar__side { max-width: none; }
+  .brand { transition: opacity 0.2s ease; }
+  .is-inner .brand { opacity: 0; }
+}
 
 .topbar__title { min-width: 0; }
 .topbar__title h1 {
@@ -472,7 +483,7 @@ h1, h2, h3 { line-height: 1.2; }
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
 }
 .section-title h2 { font-size: 15.5px; font-weight: 600; letter-spacing: -0.015em; }
-.section-title a, .section-title button { font-size: 13px; color: var(--accent); font-weight: 600; }
+.section-title a, .section-title button { font-size: 13px; color: var(--accent-text); font-weight: 600; }
 
 .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .stats--wide { grid-template-columns: 1fr; }
@@ -620,7 +631,7 @@ a.row:active, button.row:active {
   width: 34px; height: 34px; flex-shrink: 0;
   border-radius: 11px;
   display: grid; place-items: center;
-  background: var(--accent-soft); color: var(--accent);
+  background: var(--accent-soft); color: var(--accent-text);
   transition: transform 0.32s cubic-bezier(0.34, 1.5, 0.64, 1), background 0.2s;
 }
 .quick__icon svg { width: 20px; height: 20px; }
@@ -711,7 +722,7 @@ a.row:active, button.row:active {
 .form-intro { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
 .form__advanced { margin-top: 12px; }
 .form__advanced summary {
-  font-size: 13px; font-weight: 650; color: var(--accent);
+  font-size: 13px; font-weight: 650; color: var(--accent-text);
   cursor: pointer; padding: 6px 0;
 }
 .form__advanced[open] summary { margin-bottom: 8px; }
