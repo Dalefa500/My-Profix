@@ -5,7 +5,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { promises as fs, createReadStream } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 
 import { applyOps, normalizeData, emptyData, SCHEMA_VERSION } from '../finance/js/ops.js';
 import {
@@ -327,6 +327,40 @@ function readBody(req) {
   });
 }
 
+// Метка «свой телефон»: после успешного входа браузер получает долгую куку,
+// подписанную секретом сервера. Она ничего не открывает сама по себе —
+// только освобождает от общего предела неудачных входов.
+const DEVICE_COOKIE = `${COOKIE}_dev`;
+let deviceSecret = null;
+
+async function getDeviceSecret() {
+  if (deviceSecret) return deviceSecret;
+  const stored = await readJSON('device-secret.json', null);
+  if (stored?.secret) {
+    deviceSecret = stored.secret;
+  } else {
+    deviceSecret = randomBytes(32).toString('hex');
+    await writeJSON('device-secret.json', { secret: deviceSecret });
+  }
+  return deviceSecret;
+}
+
+async function deviceCookie(req, userId) {
+  const sign = createHmac('sha256', await getDeviceSecret()).update(userId).digest('hex');
+  const parts = [`${DEVICE_COOKIE}=${userId}.${sign}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${400 * 24 * 3600}`];
+  if (isSecure(req)) parts.push('Secure');
+  return parts.join('; ');
+}
+
+async function isTrustedDevice(req) {
+  const value = readCookie(req, DEVICE_COOKIE) || '';
+  const dot = value.lastIndexOf('.');
+  if (dot <= 0) return false;
+  const expected = createHmac('sha256', await getDeviceSecret()).update(value.slice(0, dot)).digest();
+  const given = Buffer.from(value.slice(dot + 1), 'hex');
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
 async function currentUser(req) {
   return userForToken(readCookie(req, COOKIE));
 }
@@ -347,7 +381,7 @@ async function handleApi(req, res, url) {
 
   if (route === '/login' && req.method === 'POST') {
     const ip = clientIp(req);
-    if (loginBlocked(ip)) {
+    if (loginBlocked(ip, { trusted: await isTrustedDevice(req) })) {
       return send(res, 429, { error: 'Слишком много попыток. Попробуйте через 15 минут.' });
     }
     const body = await readBody(req);
@@ -359,7 +393,9 @@ async function handleApi(req, res, url) {
       return send(res, 401, { error: body.code ? 'Неверный код' : 'Неверный логин или пароль' });
     }
     const { token, maxAge } = await createSession(user.id);
-    return send(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(req, token, maxAge) });
+    return send(res, 200, { user: publicUser(user) }, {
+      'Set-Cookie': [sessionCookie(req, token, maxAge), await deviceCookie(req, user.id)],
+    });
   }
 
   // Запрос на вход по Face ID — доступен без входа в приложение.
@@ -665,13 +701,14 @@ async function sendIndex(res) {
   let page = await fs.readFile(path.join(APP_DIR, 'index.html'), 'utf8');
   const name = escapeHtml(config.companyName);
   const brand = JSON.stringify(publicConfig()).replace(/</g, '\\u003c');
+  // Замены — функциями: в строке-замене символы «$&», «$1» в названии
+  // компании были бы поняты как служебные и испортили бы страницу.
   page = page
-    .replace(/<title>[^<]*<\/title>/, `<title>${name} — финансы</title>`)
-    .replace(/(<meta name="description" content=")[^"]*/, `$1${name} — учёт финансов студии: проекты, клиенты, сотрудники, приходы, расходы и отчёты.`)
-    .replace(/(<meta name="apple-mobile-web-app-title" content=")[^"]*/, `$1${name}`)
-    .replace(/<link rel="icon"[^>]*>/, `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(faviconSvg())}">`)
-    .replace('<link rel="stylesheet" href="css/app.css">',
-      '<link rel="stylesheet" href="css/app.css">\n<link rel="stylesheet" href="brand.css">\n'
+    .replace(/<title>[^<]*<\/title>/, () => `<title>${name} — финансы</title>`)
+    .replace(/(<meta name="description" content=")[^"]*/, (_, start) => `${start}${name} — учёт финансов студии: проекты, клиенты, сотрудники, приходы, расходы и отчёты.`)
+    .replace(/(<meta name="apple-mobile-web-app-title" content=")[^"]*/, (_, start) => `${start}${name}`)
+    .replace(/<link rel="icon"[^>]*>/, () => `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(faviconSvg())}">`)
+    .replace('<link rel="stylesheet" href="css/app.css">', () => '<link rel="stylesheet" href="css/app.css">\n<link rel="stylesheet" href="brand.css">\n'
       + `<script>window.__BRAND__ = ${brand};</script>`);
   res.writeHead(200, {
     'Content-Type': MIME['.html'],
@@ -683,7 +720,9 @@ async function sendIndex(res) {
 
 async function sendManifest(res) {
   const manifest = JSON.parse(await fs.readFile(path.join(APP_DIR, 'manifest.webmanifest'), 'utf8'));
-  manifest.id = `./?app=${config.slug}`;
+  // У Line Design идентификатор не меняем — установленные значки на телефонах
+  // остаются теми же. У остальных копий — свой, чтобы не путались.
+  if (config.slug !== 'line-design') manifest.id = `./?app=${config.slug}`;
   manifest.name = `${config.companyName} — финансы студии`;
   manifest.short_name = config.companyName.length <= 12 ? config.companyName : 'Финансы';
   manifest.description = `Учёт финансов ${config.companyName}: проекты, клиенты, сотрудники, приходы, расходы и отчёты.`;
@@ -701,7 +740,7 @@ function sendBrandCss(res) {
     res.end('/* Line Design: фирменные цвета заданы в app.css */\n');
     return;
   }
-  const css = `/* Цвет компании ${config.companyName} — собирается сервером. */
+  const css = `/* Фирменный цвет компании — собирается сервером. */
 :root {
   --brand-burgundy: ${c};
   --brand-signature: ${c};
@@ -746,6 +785,11 @@ async function serveStatic(req, res, url) {
   // Код сервера, данные, .git и прочие файлы репозитория недоступны.
   if (!pathname.startsWith('/finance/') && pathname !== '/finance') {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Страница не найдена');
+    return;
+  }
+  if (pathname === '/finance') {
+    // Без косой черты относительные адреса стилей и скриптов «уезжают» в корень.
+    res.writeHead(302, { Location: `/finance/${url.search}` }).end();
     return;
   }
   let relative = pathname.slice('/finance'.length) || '/';

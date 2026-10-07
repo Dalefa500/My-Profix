@@ -35,9 +35,9 @@ function openCompanyForm(settings) {
         name: 'defaultAdvancePercent', label: 'Аванс по умолчанию, %', type: 'number', min: 0, max: 100,
         value: settings.defaultAdvancePercent,
       },
-      { name: 'salaryDay', label: 'День выплаты зарплаты', type: 'number', min: 1, max: 28, value: settings.salaryDay },
+      { name: 'salaryDay', label: 'День выплаты зарплаты', type: 'number', min: 1, max: 31, value: settings.salaryDay },
       {
-        name: 'notifyDaysAhead', label: 'Напоминать за, дней', type: 'number', min: 1, max: 60,
+        name: 'notifyDaysAhead', label: 'Напоминать за, дней', type: 'number', min: 0, max: 60,
         value: settings.notifyDaysAhead,
       },
     ],

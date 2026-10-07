@@ -40,7 +40,9 @@ function assignmentCard(row) {
       <div class="row__main">
         <a class="row__title" href="#/projects/${assignment.projectId}">${project?.name || 'Проект удалён'}</a>
         <span class="row__subtitle">${assignment.role} · ${formatArea(info.area)} × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}</span>
-        <span class="row__subtitle">Аванс ${formatAmount(info.advance, info.currency)} ${info.advancePaid ? '✓' : '— не выплачен'}
+        <span class="row__subtitle">${info.advance > 0 || info.advancePaid
+          ? `Аванс ${formatAmount(info.advance, info.currency)} ${info.advancePaid ? '✓' : '— не выплачен'}`
+          : 'Без аванса'}
           · остаток ${formatAmount(info.remainder, info.currency)} ${info.remainderPaid ? '✓' : ''}</span>
         ${raw(badge(info.label, info.tone))}
       </div>

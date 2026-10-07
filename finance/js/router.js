@@ -34,7 +34,60 @@ export function canGoBack() {
   return depth > 0;
 }
 
+// Открытый лист (форма, карточка) занимает свою запись в истории: тогда
+// жест «назад» на iPhone закрывает лист, а не уводит с экрана вместе
+// с недописанной формой. Закрыли лист кнопкой — запись убираем сами
+// (history.back), а переходы, запрошенные до того, как браузер это
+// сделал, выполняем следом, чтобы они не попали на чужую запись.
+let sheetEntry = null; // { onPop } пока лист открыт
+let backQueue = null; // переходы, ждущие завершения history.back()
+let backTimer = null;
+
+function pushSheetState() {
+  window.history.pushState({ depth, sheet: true }, '', window.location.href);
+}
+
+export function openSheetEntry(onPop) {
+  if (sheetEntry) {
+    sheetEntry.onPop = onPop;
+    return;
+  }
+  sheetEntry = { onPop };
+  // Прежний лист только что закрыли и браузер ещё не убрал его запись —
+  // новую добавим сразу после этого.
+  if (backQueue) backQueue.push(pushSheetState);
+  else pushSheetState();
+}
+
+export function closeSheetEntry() {
+  if (!sheetEntry) return;
+  sheetEntry = null;
+  if (backQueue) {
+    // Лист закрыли раньше, чем появилась его запись: и добавлять не нужно.
+    const at = backQueue.indexOf(pushSheetState);
+    if (at >= 0) backQueue.splice(at, 1);
+    return;
+  }
+  if (!window.history.state?.sheet) return;
+  backQueue = [];
+  window.history.back();
+  // Подстраховка: если браузер так и не сообщил о возврате.
+  clearTimeout(backTimer);
+  backTimer = setTimeout(flushBackQueue, 600);
+}
+
+function flushBackQueue() {
+  clearTimeout(backTimer);
+  const queue = backQueue || [];
+  backQueue = null;
+  queue.forEach((fn) => fn());
+}
+
 export function go(path, { replace = false } = {}) {
+  if (backQueue) {
+    backQueue.push(() => go(path, { replace }));
+    return;
+  }
   const url = `${window.location.pathname}${window.location.search}${path}`;
   if (replace) {
     window.history.replaceState({ depth }, '', url);
@@ -82,6 +135,20 @@ function scheduleResolve() {
 export function start() {
   window.addEventListener('popstate', (event) => {
     depth = Number(event.state?.depth) || 0;
+    // Это мы сами убрали запись закрытого листа: экран тот же.
+    if (backQueue) {
+      flushBackQueue();
+      return;
+    }
+    // Жест «назад» при открытом листе закрывает только лист.
+    if (sheetEntry) {
+      const { onPop } = sheetEntry;
+      sheetEntry = null;
+      onPop?.();
+      if (window.location.hash === current.path) return;
+    }
+    // Запись листа, оставшаяся после «вперёд», — экран не меняется.
+    if (event.state?.sheet && window.location.hash === current.path) return;
     scheduleResolve();
   });
   window.addEventListener('hashchange', scheduleResolve);

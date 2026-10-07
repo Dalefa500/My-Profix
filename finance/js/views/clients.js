@@ -26,7 +26,7 @@ export default function clients() {
         <div class="row__side">
           <span class="row__amount">${money(finance.contractBase)}</span>
           <span class="row__meta ${raw(finance.toReceiveBase > 0 ? 'danger-text' : 'good-text')}">
-            ${finance.toReceiveBase > 0 ? `Долг ${money(finance.toReceiveBase)}` : 'Оплачено'}</span>
+            ${finance.toReceiveBase > 0 ? `Долг ${money(finance.toReceiveBase)}` : (finance.projects.length ? 'Оплачено' : 'Нет проектов')}</span>
         </div>
       </a>`;
   }).join('');

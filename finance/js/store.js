@@ -321,6 +321,15 @@ export function commit(ops) {
     emit('denied');
     return data;
   }
+  // Сначала пробуем на копии: если операция не применяется (данные успели
+  // измениться), не портим текущее состояние и не шлём её на сервер.
+  try {
+    applyOps(structuredClone(data), list);
+  } catch (error) {
+    console.error(error);
+    emit('rejected');
+    return data;
+  }
   applyOps(data, list);
   queue.push(...list);
   cache();

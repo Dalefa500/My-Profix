@@ -48,7 +48,9 @@ function assignmentRow(row, info) {
       <div class="row__main">
         <a class="row__title" href="#/employees/${row.employeeId}">${employee?.name || 'Сотрудник'}</a>
         <span class="row__subtitle">${row.role} · ${formatArea(info.area)} × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}</span>
-        <span class="row__subtitle">Аванс ${info.percent}% · ${formatAmount(info.advance, info.currency)} ${info.advancePaid ? '· выплачен' : '· не выплачен'}</span>
+        <span class="row__subtitle">${info.advance > 0 || info.advancePaid
+          ? `Аванс ${info.percent}% · ${formatAmount(info.advance, info.currency)} ${info.advancePaid ? '· выплачен' : '· не выплачен'}`
+          : 'Без аванса'}</span>
         ${raw(badge(info.label, info.tone))}
       </div>
       <div class="row__side">
@@ -207,7 +209,7 @@ export default function projectDetail(params) {
             projectId: project.id,
             clientId: project.clientId,
             type: item.type === 'extra' ? 'extra' : item.type,
-            amount: item.leftBase / (project.fx || 1),
+            amount: item.leftAmount,
             currency: project.currency,
             fx: project.fx,
           }, refresh);

@@ -5,9 +5,10 @@
 
 import {
   BASE_CURRENCY, CURRENCY_LIST, formatAmount, defaultRate, toBase,
-  rateToHuman, humanToRate, usdRate,
+  rateToHuman, humanToRate, usdRate, rateForInput,
 } from './money.js';
 import { getState } from './store.js';
+import { openSheetEntry, closeSheetEntry } from './router.js';
 import { formatDate } from './dates.js';
 
 // Мгновенное нажатие: действие выполняется по касанию, а не по отпусканию
@@ -130,30 +131,37 @@ function lockScroll(locked) {
   document.body.classList.toggle('is-locked', locked);
 }
 
-export function closeSheet() {
+let onSheetClose = null;
+
+export function closeSheet({ fromHistory = false } = {}) {
   const host = document.getElementById('sheet');
   if (!host) return;
+  if (!fromHistory && host.classList.contains('is-open')) closeSheetEntry();
   host.classList.remove('is-open');
   host.innerHTML = '';
   lockScroll(false);
+  const callback = onSheetClose;
+  onSheetClose = null;
+  callback?.();
 }
 
 // Универсальная нижняя панель (на телефоне выезжает снизу, на компьютере —
 // это диалог по центру).
 // Жест «назад» (свайп от края на iPhone, кнопка на Android) и Escape
-// закрывают открытый лист, а не меняют экран под ним.
+// закрывают открытый лист, а экран под ним остаётся (см. router.js).
 if (typeof window !== 'undefined') {
-  window.addEventListener('popstate', () => {
-    if (document.getElementById('sheet')?.classList.contains('is-open')) closeSheet();
-  });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && document.getElementById('sheet')?.classList.contains('is-open')) closeSheet();
   });
 }
 
-export function openSheet({ title, body, footer = '', onMount, size = '' }) {
+export function openSheet({ title, body, footer = '', onMount, size = '', onClose = null }) {
   const host = document.getElementById('sheet');
   if (!host) return;
+  // Новый лист заменяет прежний: прежнему сообщаем, что его закрыли.
+  const previous = onSheetClose;
+  onSheetClose = null;
+  previous?.();
   host.innerHTML = html`
     <div class="sheet__backdrop" data-close="1"></div>
     <div class="sheet__panel ${raw(size ? `sheet__panel--${size}` : '')}" role="dialog" aria-modal="true">
@@ -165,29 +173,39 @@ export function openSheet({ title, body, footer = '', onMount, size = '' }) {
       ${footer ? raw(html`<div class="sheet__foot">${raw(footer)}</div>`) : ''}
     </div>`;
   host.classList.add('is-open');
+  openSheetEntry(() => closeSheet({ fromHistory: true }));
   lockScroll(true);
   host.querySelectorAll('[data-close]').forEach((node) => {
     node.addEventListener('click', () => closeSheet());
   });
+  onSheetClose = onClose;
   onMount?.(host.querySelector('.sheet__panel'));
 }
 
 export function confirmDialog(message, { confirmLabel = 'Удалить', tone = 'danger' } = {}) {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     openSheet({
       title: 'Подтвердите действие',
+      // Закрыли жестом «назад», крестиком или Escape — это «Отмена».
+      onClose: () => finish(false),
       body: html`<p class="confirm-text">${message}</p>`,
       footer: html`
         <button class="btn btn--ghost" data-act="cancel">Отмена</button>
         <button class="btn btn--${raw(tone)}" data-act="ok">${confirmLabel}</button>`,
       onMount: (panel) => {
         panel.querySelector('[data-act="cancel"]').addEventListener('click', () => {
+          finish(false);
           closeSheet();
-          resolve(false);
         });
         panel.querySelector('[data-act="ok"]').addEventListener('click', () => {
+          finish(true);
           closeSheet();
-          resolve(true);
         });
       },
     });
@@ -215,7 +233,7 @@ function fieldControl(field) {
       // десятичный знак — запятая, и поле type="number" её не понимает
       // («12,5» превращалось в 125). Запятую переводим в точку сами.
       return html`<input id="${id}" name="${field.name}" type="text" inputmode="decimal" data-num
-        value="${value}" placeholder="${field.placeholder || ''}" autocomplete="off" ${raw(required)}>`;
+        value="${numberForInput(value)}" placeholder="${field.placeholder || ''}" autocomplete="off" ${raw(required)}>`;
     case 'checkbox':
       return html`<label class="switch">
         <input id="${id}" name="${field.name}" type="checkbox" ${raw(field.value ? 'checked' : '')}>
@@ -243,6 +261,16 @@ function fieldControl(field) {
 // Приложение считает в долларах. Если сумму вводят в сомони, поле показывает
 // курс (сколько сомони за доллар) и тут же — сколько это в долларах.
 // Курс сохраняется вместе с операцией и задним числом не пересматривается.
+// Число в поле ввода — с запятой и не длиннее копеек: «46162,96»,
+// а не «46162.961625».
+function numberForInput(value, decimals = 4) {
+  if (value === '' || value === null || value === undefined) return '';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(value);
+  const factor = 10 ** decimals;
+  return String(Math.round(number * factor) / factor).replace('.', ',');
+}
+
 function moneyControl(field) {
   const settings = getState().settings;
   const currency = field.currency || settings.baseCurrency;
@@ -251,7 +279,7 @@ function moneyControl(field) {
   const suffix = field.suffix ? html`<span class="money-suffix">${field.suffix}</span>` : '';
   return html`<div class="money-field" data-money="${field.name}">
     <div class="money-field__row">
-      <input name="${field.name}" type="text" inputmode="decimal" data-num value="${field.value ?? ''}"
+      <input name="${field.name}" type="text" inputmode="decimal" data-num value="${numberForInput(field.value, 2)}"
         placeholder="0" autocomplete="off" ${raw(field.required ? 'required' : '')}>
       ${raw(suffix)}
       <div class="segmented segmented--sm" data-field="${field.name}__currency">
@@ -263,7 +291,7 @@ function moneyControl(field) {
     </div>
     <div class="money-field__fx ${raw(currency === settings.baseCurrency ? 'is-hidden' : '')}">
       <label>Курс 1 $ =</label>
-      <input name="${field.name}__rate" type="text" inputmode="decimal" data-num value="${human}" autocomplete="off">
+      <input name="${field.name}__rate" type="text" inputmode="decimal" data-num value="${rateForInput(human)}" autocomplete="off">
       <span>TJS</span>
       <span class="money-field__base" data-fx-base></span>
       <input type="hidden" name="${field.name}__fx" value="${fx}">
@@ -319,6 +347,8 @@ function numberProblem(form, list) {
   for (const input of form.querySelectorAll('input[data-num]')) {
     const raw = input.value.trim();
     if (!raw) continue;
+    // Скрытые поля (например, ставка у штатного сотрудника) не проверяем.
+    if (input.closest('[hidden], .is-hidden')) continue;
     const number = parseNum(raw);
     if (!Number.isFinite(number)) return { input, message: 'Введите число, например 1250 или 12,5' };
     const isRate = input.name.endsWith('__rate');
@@ -330,9 +360,21 @@ function numberProblem(form, list) {
     const min = field.min ?? (field.type === 'money' ? 0.01 : 0);
     const max = field.max ?? MAX_AMOUNT;
     if (number < min) {
-      return { input, message: field.type === 'money' ? 'Сумма должна быть больше нуля' : `Значение не может быть меньше ${min}` };
+      return {
+        input,
+        message: field.type === 'money'
+          ? 'Сумма должна быть больше нуля'
+          : `${field.label ? `«${field.label}»: ` : ''}не меньше ${min.toLocaleString('ru-RU')}`,
+      };
     }
-    if (number > max) return { input, message: `Слишком большое число — проверьте, нет ли лишних нулей (не больше ${max.toLocaleString('ru-RU')})` };
+    if (number > max) {
+      return {
+        input,
+        message: field.type === 'money' || max >= MAX_AMOUNT
+          ? `Слишком большое число — проверьте, нет ли лишних нулей (не больше ${max.toLocaleString('ru-RU')})`
+          : `${field.label ? `«${field.label}»: ` : ''}не больше ${max.toLocaleString('ru-RU')}`,
+      };
+    }
   }
   return null;
 }
@@ -375,7 +417,7 @@ export function openForm({
       panel.querySelector('[data-act="cancel"]').addEventListener('click', () => closeSheet());
       const submit = panel.querySelector('[data-act="submit"]');
       const run = () => {
-        const errorBox = form.querySelector('.form__error');
+        const errorBox = form.querySelector(':scope > .form__error');
         errorBox.hidden = true;
         const missing = [...form.querySelectorAll('[required]')]
           .find((input) => !String(input.value).trim());
@@ -395,6 +437,14 @@ export function openForm({
           return;
         }
         const result = onSubmit?.(collectValues(form), { panel, form });
+        // Строка — текст ошибки: показываем его в форме, а не всплывающим
+        // сообщением, которое на телефоне закрывает поля.
+        if (typeof result === 'string') {
+          errorBox.textContent = result;
+          errorBox.hidden = false;
+          errorBox.scrollIntoView?.({ block: 'nearest' });
+          return;
+        }
         if (result === false) return;
         if (result instanceof Promise) {
           result.then((ok) => { if (ok !== false) closeSheet(); });
@@ -443,12 +493,15 @@ export function bindMoney(scope) {
     let rateOwner = currencyInput.value;
     rateInput?.addEventListener('input', () => { rateOwner = currencyInput.value; });
 
-    const refresh = () => {
+    // Курс подставляем только при смене валюты (и если поле пустое при
+    // открытии). Пока человек стирает старый курс и набирает новый, поле
+    // не трогаем — иначе вместо «10» получалось «9.2310».
+    const refresh = ({ typing = false } = {}) => {
       const currency = currencyInput.value;
       const isBase = currency === settings.baseCurrency;
       fxWrap.classList.toggle('is-hidden', isBase);
-      if (!isBase && (rateOwner !== currency || !(Number(parseNum(rateInput.value)) > 0))) {
-        rateInput.value = usdRate(settings);
+      if (!isBase && (rateOwner !== currency || (!typing && !(Number(parseNum(rateInput.value)) > 0)))) {
+        rateInput.value = rateForInput(usdRate(settings));
         rateOwner = currency;
       }
       // В операции хранится множитель к доллару, человек видит курс НБТ.
@@ -458,9 +511,9 @@ export function bindMoney(scope) {
         baseOut.textContent = isBase ? '' : `= ${formatAmount(base)}`;
       }
     };
-    currencyInput.addEventListener('change', refresh);
-    amountInput.addEventListener('input', refresh);
-    rateInput?.addEventListener('input', refresh);
+    currencyInput.addEventListener('change', () => refresh());
+    amountInput.addEventListener('input', () => refresh({ typing: true }));
+    rateInput?.addEventListener('input', () => refresh({ typing: true }));
     refresh();
   });
 }

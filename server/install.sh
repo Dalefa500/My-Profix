@@ -50,6 +50,19 @@ BRANCH="${BRANCH:-claude/design-studio-finance-app-cuden1}"
 
 APP_SLUG="$(printf '%s' "${APP_SLUG:-line-design}" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//')"
 [ -n "$APP_SLUG" ] || APP_SLUG="line-design"
+# Имя копии становится именем пользователя, службы и папок — оно не должно
+# совпасть с системными (nginx, root, ssh…) и должно начинаться с буквы.
+case "$APP_SLUG" in
+  [a-z]*) ;;
+  *) printf '\nAPP_SLUG должен начинаться с латинской буквы: %s\n' "$APP_SLUG" >&2; exit 1 ;;
+esac
+if [ "${#APP_SLUG}" -gt 30 ]; then
+  printf '\nAPP_SLUG слишком длинный (больше 30 знаков): %s\n' "$APP_SLUG" >&2; exit 1
+fi
+case "$APP_SLUG" in
+  root|nginx|www-data|ssh|sshd|systemd|systemd-*|cron|ufw|node|nodejs|certbot|letsencrypt|mysql|postgres|redis|docker|ubuntu|daemon|bin|sys|nobody|backup|mail|news|proxy|syslog|default|html)
+    printf '\nAPP_SLUG «%s» совпадает с системным именем — выберите другое.\n' "$APP_SLUG" >&2; exit 1 ;;
+esac
 IS_MAIN=0
 [ "$APP_SLUG" = "line-design" ] && IS_MAIN=1
 
@@ -112,8 +125,13 @@ if [ -z "${APP_PORT:-}" ]; then
   if [ "$IS_MAIN" = "1" ]; then
     APP_PORT=3000
   else
+    # Свободный порт, который не занят сейчас и не записан ни в одной
+    # другой службе (та может быть просто остановлена).
+    taken_ports="$(sed -n 's/^Environment=PORT=//p' /etc/systemd/system/*.service 2>/dev/null | tr '\n' ' ')"
     APP_PORT=3001
-    while port_in_use "$APP_PORT"; do APP_PORT=$((APP_PORT + 1)); done
+    while port_in_use "$APP_PORT" || printf ' %s ' "$taken_ports" | grep -q " ${APP_PORT} "; do
+      APP_PORT=$((APP_PORT + 1))
+    done
   fi
 fi
 if port_in_use "$APP_PORT" && ! systemctl is-active --quiet "$UNIT" 2>/dev/null; then
@@ -284,9 +302,18 @@ else
   # default_server — только если его ещё нет ни у одного сайта: запросы по
   # голому IP должны доставаться одной программе, и это не повод отбирать
   # их у уже работающей.
+  # Вторая и следующие компании его не получают никогда (разве что явно
+  # попросить NGINX_DEFAULT_SERVER=1): голый IP остаётся за основной.
   LISTEN="listen 80;"
-  if ! grep -rqs 'default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null; then
-    LISTEN="listen 80 default_server;"
+  if [ "$IS_MAIN" = "1" ] || [ "${NGINX_DEFAULT_SERVER:-0}" = "1" ]; then
+    # Стандартную заглушку nginx убираем заранее, только если это
+    # действительно она, — иначе её default_server помешал бы проверке.
+    if [ -L /etc/nginx/sites-enabled/default ] && grep -qs 'root /var/www/html' /etc/nginx/sites-available/default; then
+      run rm -f /etc/nginx/sites-enabled/default
+    fi
+    if ! grep -rqs 'default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null; then
+      LISTEN="listen 80 default_server;"
+    fi
   fi
   write "$SITE_FILE" <<NGINX
 server {
@@ -329,7 +356,10 @@ elif [ "$DRY_RUN" = "1" ]; then
 elif grep -qs "managed by Certbot" "$SITE_FILE"; then
   note "Сертификат уже настроен."
 else
-  command -v certbot >/dev/null 2>&1 || apt-get install -y certbot python3-certbot-nginx
+  # Нужен и сам certbot, и его модуль для nginx — бывает, что стоит только первый.
+  if ! command -v certbot >/dev/null 2>&1 || ! dpkg -s python3-certbot-nginx >/dev/null 2>&1; then
+    apt-get install -y certbot python3-certbot-nginx
+  fi
   certbot_ok=1
   if [ -n "$EMAIL" ]; then
     certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" --redirect || certbot_ok=0

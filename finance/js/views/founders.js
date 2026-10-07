@@ -16,6 +16,7 @@ import * as forms from '../forms.js';
 import * as actions from '../actions.js';
 import { refresh } from '../refresh.js';
 import { openReport } from '../report.js';
+import { go } from '../router.js';
 
 const PERIODS = [
   { value: 'month', label: 'Месяц' },
@@ -59,7 +60,7 @@ export default function founders() {
         tone: 'warn',
       }))}
       ${raw(statCard({
-        label: 'Осталось в деле',
+        label: 'Осталось в студии',
         value: money(leftBase),
         hint: leftBase < 0 ? 'взяли больше, чем заработали' : 'прибыль за вычетом изъятий',
         tone: leftBase < 0 ? 'danger' : 'good',
@@ -191,7 +192,7 @@ export function founderDetail(params) {
         if (!ok) return;
         actions.deleteFounder(founder.id);
         toast('Коллега удалён');
-        window.history.back();
+        go('#/founders', { replace: true });
       };
     },
   };

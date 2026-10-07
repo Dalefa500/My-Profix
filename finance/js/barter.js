@@ -42,7 +42,7 @@ export function openBarterSheet(id) {
         <div class="row"><div class="row__main"><span class="row__subtitle">Отработано работами</span>
           <span class="row__title">${money(row.usedBase)} · ${row.percent}%</span></div></div>
         ${row.overBase > 0 ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Сверх оценки</span>
-          <span class="row__title danger-text">${money(row.overBase)} — клиент должен деньгами</span></div></div>`) : ''}
+          <span class="row__title danger-text">${money(row.overBase)} — уменьшите последний этап</span></div></div>`) : ''}
         <div class="row"><div class="row__main"><span class="row__subtitle">Дата договорённости</span>
           <span class="row__title">${formatDate(barter.date)}</span></div></div>
         ${barter.note ? raw(html`<div class="row"><div class="row__main"><span class="row__subtitle">Заметка</span>
@@ -128,8 +128,14 @@ export function openBarterUseForm(id, onDone = refresh) {
     onSubmit: (values) => {
       const amount = Number(values.amount);
       if (!(amount > 0)) {
-        toast('Укажите сумму работ', 'danger');
-        return false;
+        return 'Укажите сумму работ';
+      }
+      // Списать можно только то, что осталось от оценки. Работы сверх неё
+      // клиент оплачивает деньгами — это обычный долг по проекту, и он
+      // виден в «Платежах», пока клиент его не погасит.
+      const base = actions.baseOf({ amount, currency: values.amountCurrency, fx: values.amountFx });
+      if (base > row.leftBase + 0.01) {
+        return `С имущества можно списать не больше ${formatAmount(row.leftBase)}. Остальное клиент доплачивает деньгами — запишите обычный приход.`;
       }
       const record = {
         amount: values.amount,
@@ -145,11 +151,7 @@ export function openBarterUseForm(id, onDone = refresh) {
       };
       actions.saveIncome(record);
       const after = barterState(getState(), byId('barters', id));
-      if (after.overBase > 0) {
-        toast(`Списано. Работ больше оценки на ${formatAmount(after.overBase)} — клиент должен доплатить`, 'danger');
-      } else {
-        toast(after.done ? 'Списано. Имущество полностью отработано' : `Списано. Осталось ${formatAmount(after.leftBase)}`, 'good');
-      }
+      toast(after.done ? 'Списано. Имущество полностью отработано' : `Списано. Осталось ${formatAmount(after.leftBase)}`, 'good');
       onDone?.();
       return true;
     },

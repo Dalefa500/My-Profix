@@ -37,7 +37,7 @@ function receiveTab(state) {
           </div>
           <div class="row__side">
             <span class="row__amount good">${money(row.amountBase)}</span>
-            <button class="btn btn--sm btn--primary" data-receive="${row.projectId || ''}" data-client="${row.client?.id || ''}" data-amount="${row.amountBase}" data-type="${row.type}">Получено</button>
+            <button class="btn btn--sm btn--primary" data-receive="${row.projectId || ''}" data-amount="${row.amount}" data-type="${row.type}">Получено</button>
           </div>
         </div>`).join(''))}</div>`)
         : raw(emptyState('Все клиенты рассчитались'))}
@@ -107,18 +107,12 @@ export default function payments(params) {
       root.querySelectorAll('[data-receive]').forEach((button) => {
         button.onclick = () => {
           const project = byId('projects', button.dataset.receive);
-          if (!project) {
-            // Доплата по взаиморасчёту — обычный приход от клиента.
-            forms.openIncomeForm({
-              clientId: button.dataset.client || '', type: 'other', amount: Number(button.dataset.amount),
-            }, refresh);
-            return;
-          }
+          if (!project) return;
           forms.openIncomeForm({
             projectId: project.id,
             clientId: project.clientId,
             type: button.dataset.type === 'extra' ? 'extra' : button.dataset.type,
-            amount: Number(button.dataset.amount) / (project.fx || 1),
+            amount: Number(button.dataset.amount),
             currency: project.currency,
             fx: project.fx,
           }, refresh);

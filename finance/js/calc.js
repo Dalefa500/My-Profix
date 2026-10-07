@@ -6,7 +6,7 @@
 //   • Остаток сдельного сотрудника доступен только после одобрения клиентом.
 //   • Общие расходы компании не распределяются по проектам автоматически.
 
-import { toBase, round } from './money.js';
+import { toBase, round, isBase } from './money.js';
 import {
   today, monthKey, monthStart, monthEnd, addMonths, addDays, monthKeysBetween, inRange, formatDate, monthLabel,
 } from './dates.js';
@@ -105,13 +105,13 @@ export function assignmentState(assignment, project) {
   }
 
   // К выплате прямо сейчас: невыплаченный аванс + доступный остаток.
-  const paidBase = round(advancePaidBase + remainderPaidBase);
-  // Если после полной выплаты начисление выросло — доплата тоже к выплате.
-  const topUpBase = remainderPaid ? Math.max(0, round(totals.accruedBase - paidBase)) : 0;
+  // У старых записей, оплаченных полностью, «выплачено» = начислено
+  // (без копеечной разницы от округления двух половин).
+  const legacyFull = remainderPaid && !known(assignment.remainderPaidBase) && !known(assignment.advancePaidBase);
+  const paidBase = legacyFull ? base.accruedBase : round(advancePaidBase + remainderPaidBase);
   const dueNowBase = round(
     (advancePaid ? 0 : totals.advanceBase)
-    + (remainderAvailable ? totals.remainderBase : 0)
-    + topUpBase,
+    + (remainderAvailable ? totals.remainderBase : 0),
   );
   // Остаток, который ещё не согласован клиентом, — обязательство будущего периода.
   const lockedBase = !remainderPaid && !approved ? totals.remainderBase : 0;
@@ -168,11 +168,16 @@ export function projectPlan(project, receivedBase) {
     const status = covered >= base - 0.01 && base > 0 ? 'received'
       : covered > 0 ? 'partial' : 'planned';
     const overdue = status !== 'received' && item.dueDate && item.dueDate < today();
+    // Остаток в валюте договора: пока платёж не тронут, это его собственная
+    // сумма (целые сомони так и остаются целыми), иначе — пересчёт остатка.
+    const leftAmount = covered <= 0.004 ? Number(item.amount) || 0
+      : round(Math.max(0, (base - covered) / (isBase(project.currency) ? 1 : fx)));
     return {
       ...item,
       base,
       coveredBase: round(covered),
       leftBase: round(base - covered),
+      leftAmount,
       status,
       overdue,
     };
@@ -259,7 +264,8 @@ export function barterState(state, barter) {
     totalBase,
     usedBase,
     leftBase: round(Math.max(0, totalBase - usedBase)),
-    // Списали больше, чем стоит имущество: клиент остался должен деньгами.
+    // Списать больше оценки форма не даёт; в старых записях такое могло
+    // остаться — это видно в карточке имущества.
     overBase: round(Math.max(0, usedBase - totalBase)),
     done: usedBase >= totalBase - 0.01,
   };
@@ -427,13 +433,23 @@ export function employeeFinance(state, employee) {
   const payrollAccrued = sum(payrolls, (item) => item.accruedBase);
   const payrollPaid = sum(payrolls, (item) => payrollPaidBase(item));
   const payrollOwed = round(Math.max(0, payrollAccrued - payrollPaid));
+  // «К выплате сейчас» — только зарплата, срок которой уже наступил.
+  const nowIso = today();
+  const payrollDue = sum(
+    payrolls.filter((item) => !item.dueDate || item.dueDate <= nowIso),
+    (item) => Math.max(0, item.accruedBase - payrollPaidBase(item)),
+  );
+  // Выплачено — всё, что реально ушло сотруднику, по его расходам.
+  // Так сумма совпадает с «Историей выплат», даже если работу, за которую
+  // платили, потом удалили из проекта.
+  const paidOut = sum(state.expenses.filter((item) => item.employeeId === employee.id), (item) => item.base);
   return {
     type: employee.payType === 'fixed' ? 'fixed' : 'piecework',
     payrolls,
     rows,
     accruedBase: round(payrollAccrued + sum(rows, (row) => row.state.accruedBase)),
-    paidBase: round(payrollPaid + sum(rows, (row) => row.state.paidBase)),
-    dueNowBase: round(payrollOwed + sum(rows, (row) => row.state.dueNowBase)),
+    paidBase: paidOut,
+    dueNowBase: round(payrollDue + sum(rows, (row) => row.state.dueNowBase)),
     lockedBase: sum(rows, (row) => row.state.lockedBase),
     owedBase: round(payrollOwed + sum(rows, (row) => row.state.owedBase)),
   };
@@ -533,7 +549,10 @@ export function receivables(state) {
       if (item.leftBase <= 0.01 || budget <= 0.01) continue;
       const amount = round(Math.min(item.leftBase, budget));
       budget = round(budget - amount);
+      const fx = Number(project.fx) > 0 ? Number(project.fx) : 1;
       rows.push({
+        amount: amount === item.leftBase ? item.leftAmount
+          : (isBase(project.currency) ? amount : round(amount / fx)),
         id: `${project.id}:${item.id}`,
         projectId: project.id,
         project,
@@ -550,6 +569,8 @@ export function receivables(state) {
     const uncovered = round(budget);
     if (uncovered > 0.01) {
       rows.push({
+        amount: isBase(project.currency) ? uncovered
+          : round(uncovered / (Number(project.fx) > 0 ? Number(project.fx) : 1)),
         id: `${project.id}:rest`,
         projectId: project.id,
         project,
@@ -562,28 +583,6 @@ export function receivables(state) {
         status: 'planned',
       });
     }
-  }
-  // Работ по взаиморасчёту сделано больше, чем стоит имущество, —
-  // разницу клиент должен деньгами.
-  for (const barter of state.barters || []) {
-    const info = barterState(state, barter);
-    if (info.overBase <= 0.01) continue;
-    const client = state.clients.find((item) => item.id === barter.clientId) || null;
-    const lastStage = info.stages[info.stages.length - 1];
-    rows.push({
-      id: `barter:${barter.id}`,
-      projectId: lastStage?.income.projectId || null,
-      project: state.projects.find((item) => item.id === lastStage?.income.projectId) || { id: null, name: barter.title },
-      client,
-      title: `Доплата сверх имущества · ${barter.title}`,
-      type: 'final',
-      amountBase: info.overBase,
-      dueDate: lastStage?.income.date || barter.date || '',
-      overdue: false,
-      status: 'planned',
-      barterId: barter.id,
-      href: '#/barters',
-    });
   }
   return rows.sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
 }
@@ -680,7 +679,8 @@ export function dashboardTotals(state, from, to) {
 // ------------------------------------------------------------ уведомления
 
 export function notifications(state, nowIso = today()) {
-  const horizon = Number(state.settings.notifyDaysAhead) || 7;
+  const days = Number(state.settings.notifyDaysAhead);
+  const horizon = Number.isFinite(days) && days >= 0 ? days : 7;
   const limit = addDaysIso(nowIso, horizon);
   const items = [];
 

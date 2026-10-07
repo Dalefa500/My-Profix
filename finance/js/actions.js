@@ -4,9 +4,9 @@
 
 import * as store from './store.js';
 import { op } from './ops.js';
-import { toBase, defaultRate, round } from './money.js';
+import { toBase, defaultRate, round, formatAmount, isBase } from './money.js';
 import { today, monthKey, monthLabel, addMonths, daysInMonth } from './dates.js';
-import { assignmentState, payrollMonthsFor, payrollState, clampPercent } from './calc.js';
+import { assignmentState, payrollMonthsFor, payrollState, clampPercent, projectPlan } from './calc.js';
 import { categoryLabel } from './model.js';
 
 const { uid, getState } = store;
@@ -18,6 +18,11 @@ function money(values, settings) {
     : (Number(values.fx) > 0 ? Number(values.fx) : defaultRate(currency, settings));
   const amount = round(values.amount);
   return { amount, currency, fx, base: toBase(amount, currency, fx) };
+}
+
+// Сумма в долларах по значениям формы — для проверок до сохранения.
+export function baseOf(values) {
+  return money(values, getState().settings).base;
 }
 
 // Имя того, кто внёс операцию (оба коллеги работают с одними данными).
@@ -64,8 +69,63 @@ export function defaultPaymentPlan(price, startDate, dueDate, percent = 50, curr
   const advance = currency === 'TJS' ? Math.round(raw) : round(raw);
   return [
     { id: uid('pay'), type: 'advance', title: 'Аванс', amount: advance, dueDate: startDate || today() },
-    { id: uid('pay'), type: 'final', title: 'Остаток', amount: round(Number(price) - advance), dueDate: dueDate || startDate || today() },
+    // Без срока сдачи остаток ставим через месяц после начала — иначе
+    // новый проект сразу выглядел просроченным.
+    { id: uid('pay'), type: 'final', title: 'Остаток', amount: round(Number(price) - advance), dueDate: dueDate || addMonths(startDate || today(), 1) },
   ];
+}
+
+// Пересчёт плана платежей проекта под новую цену (и валюту).
+function replanOps(existing, record) {
+  const state = getState();
+  const receivedBase = state.incomes
+    .filter((item) => item.projectId === existing.id)
+    .reduce((acc, item) => acc + (Number(item.base) || 0), 0);
+  const plan = projectPlan(existing, receivedBase).filter((item) => item.type !== 'extra');
+  const fx = isBase(record.currency) ? 1 : (Number(record.fx) > 0 ? Number(record.fx) : 1);
+  const whole = record.currency === 'TJS';
+  const fit = (value) => (whole ? Math.round(value) : round(value));
+  const sameCurrency = existing.currency === record.currency;
+  // Суммы и уже полученное — в валюте нового договора.
+  const rows = plan.map((item) => ({
+    item,
+    amount: sameCurrency ? Number(item.amount) || 0 : fit(item.base / fx),
+    floor: Math.min(sameCurrency ? Number(item.amount) || 0 : fit(item.base / fx), item.coveredBase / fx),
+  }));
+  let diff = round(record.price - rows.reduce((acc, row) => acc + row.amount, 0));
+  for (let index = rows.length - 1; index >= 0 && Math.abs(diff) > 0.004; index -= 1) {
+    const row = rows[index];
+    const received = row.amount - row.floor <= 0.004;
+    if (diff > 0) {
+      if (received) continue;
+      row.amount = round(row.amount + diff);
+      diff = 0;
+    } else {
+      const room = round(row.amount - row.floor);
+      if (room <= 0) continue;
+      const cut = Math.min(room, -diff);
+      row.amount = round(row.amount - cut);
+      diff = round(diff + cut);
+    }
+  }
+  const ops = [];
+  for (const row of rows) {
+    const amount = Math.max(0, whole ? row.amount : round(row.amount));
+    if (amount !== Number(row.item.amount)) {
+      ops.push(op.putItem('projects', existing.id, 'payments', { id: row.item.id, amount }));
+    }
+  }
+  // Цену увеличили, а все платежи уже получены — доплата отдельной строкой.
+  if (diff > 0.004) {
+    ops.push(op.putItem('projects', existing.id, 'payments', {
+      id: uid('pay'),
+      type: 'final',
+      title: 'Доплата по новой цене',
+      amount: whole ? Math.round(diff) : round(diff),
+      dueDate: record.dueDate && record.dueDate >= today() ? record.dueDate : today(),
+    }));
+  }
+  return ops;
 }
 
 export function saveProject(values, id = null) {
@@ -89,24 +149,17 @@ export function saveProject(values, id = null) {
   };
   if (id) {
     const existing = store.byId('projects', id);
-    // План платежей не трогаем при редактировании — его правят отдельно
-    // и поштучно, чтобы правки двух человек не затирали друг друга.
+    // План платежей правится поштучно (putItem), чтобы правки двух
+    // человек не затирали друг друга.
     if (!existing) return null;
     const ops = [op.patch('projects', id, record)];
-    // Цену поменяли — план платежей пересчитываем пропорционально
-    // (кроме доп. работ): иначе карточка проекта и «Платежи» расходятся.
+    // Цену поменяли — план платежей подгоняем под новую цену, иначе
+    // карточка проекта и «Платежи» расходятся. Уже полученные деньги
+    // не трогаем: разница ложится на неоплаченные платежи, начиная
+    // с последнего, а если всё уже оплачено — отдельной строкой.
     const oldPrice = Number(existing.price) || 0;
     if (oldPrice > 0 && (oldPrice !== record.price || existing.currency !== record.currency)) {
-      const ratio = record.price / oldPrice;
-      const items = (existing.payments || []).filter((item) => item.type !== 'extra');
-      let left = record.price;
-      items.forEach((item, index) => {
-        const last = index === items.length - 1;
-        const raw = last ? left : Number(item.amount) * ratio;
-        const amount = record.currency === 'TJS' ? Math.round(raw) : round(raw);
-        left = round(left - amount);
-        ops.push(op.putItem('projects', id, 'payments', { ...item, amount }));
-      });
+      ops.push(...replanOps(existing, record));
     } else if (oldPrice <= 0 && record.price > 0 && !(existing.payments || []).length) {
       for (const item of defaultPaymentPlan(record.price, record.startDate, record.dueDate, settings.defaultAdvancePercent, record.currency)) {
         ops.push(op.putItem('projects', id, 'payments', item));
@@ -198,7 +251,9 @@ export function saveEmployee(values, id = null) {
   const existing = id ? store.byId('employees', id) : null;
   const state = getState();
   if (!existing) {
-    record.activeFrom = monthKey(record.startDate) < monthKey(today()) ? today() : record.startDate;
+    // С сегодняшнего дня, если начало уже прошло (месяц всё равно начисляется
+    // целиком — от этой даты зависит только срок первой выплаты).
+    record.activeFrom = record.startDate > today() ? record.startDate : today();
   } else if (existing.active === false && record.active) {
     record.activeFrom = today();
   } else if (!existing.activeFrom) {
@@ -274,7 +329,11 @@ export function saveAssignment(values, id = null) {
   // Этап при правке не трогаем: исправление площади не должно снова
   // закрывать остаток, уже одобренный клиентом.
   if (values.stage) record.stage = values.stage;
-  if (id) return store.patch('assignments', id, record);
+  if (id) {
+    const existing = store.byId('assignments', id);
+    if (existing && (existing.advancePaidAt || existing.remainderPaidAt)) record.employeeId = existing.employeeId;
+    return store.patch('assignments', id, record);
+  }
   return store.insert('assignments', { stage: 'assigned', ...record }, 'asg');
 }
 
@@ -317,6 +376,19 @@ export function payAssignment(assignmentId, part, values = {}) {
     currency: values.currency || assignment.currency,
     fx: values.fx ?? assignment.fx,
   }, state.settings);
+  if (payment.base <= 0) return { ok: false, error: 'Укажите сумму больше нуля' };
+  // Больше, чем начислено за работу, выплатить нельзя: переплата нигде
+  // бы не числилась и просто пропала бы из учёта. Небольшой допуск —
+  // на округление при пересчёте между валютами.
+  const limitBase = part === 'advance' ? info.accruedBase : info.remainderBase;
+  if (payment.base > limitBase * 1.005 + 0.01) {
+    return {
+      ok: false,
+      error: part === 'advance'
+        ? `Аванс не может быть больше всей суммы за работу (${formatAmount(limitBase)})`
+        : `Остаток к выплате — ${formatAmount(limitBase)}. Если сумма за работу изменилась, сначала поправьте площадь или ставку`,
+    };
+  }
 
   const employee = store.byId('employees', assignment.employeeId);
   const expense = {
@@ -421,6 +493,9 @@ export function payPayroll(payrollId, values = {}) {
     fx: values.fx ?? payroll.fx,
   }, state.settings);
   if (payment.base <= 0) return { ok: false, error: 'Укажите сумму больше нуля' };
+  if (payment.base > info.leftBase * 1.005 + 0.01) {
+    return { ok: false, error: `Осталось выплатить ${formatAmount(info.leftBase)} — больше начисленного выплатить нельзя` };
+  }
 
   const employee = store.byId('employees', payroll.employeeId);
   const expense = {
@@ -471,6 +546,7 @@ export function saveIncome(values, id = null) {
     method: values.method || 'cash',
     // Приход по взаимозачёту привязан к имуществу, с которого списывается.
     barterId: values.method === 'barter' ? (values.barterId || null) : null,
+    // Деньги, которыми клиент доплатил сверх стоимости имущества.
     comment: values.comment?.trim() || '',
   };
   if (id) return store.patch('incomes', id, record);
@@ -699,6 +775,23 @@ export function saveDraw(values, id = null) {
   if (!values.founderId) return { ok: false, error: 'Выберите коллегу' };
 
   const existing = id ? store.byId('draws', id) : null;
+  if (!(payment.base > 0)) return { ok: false, error: 'Укажите сумму больше нуля' };
+  // Вернуть можно только то, что студия должна: иначе деньги уходят
+  // из кассы и не попадают ни в одну сумму.
+  if (kind === 'repay') {
+    const others = (state.draws || []).filter((item) => item.founderId === values.founderId && item.id !== id);
+    const total = (type) => others.filter((item) => (item.kind || 'draw') === type)
+      .reduce((acc, item) => acc + (Number(item.base) || 0), 0);
+    const owed = round(Math.max(0, total('spend') - total('repay')));
+    if (payment.base > owed * 1.005 + 0.01) {
+      return {
+        ok: false,
+        error: owed > 0
+          ? `Студия должна ${founder?.name || 'коллеге'} ${formatAmount(owed)} — больше вернуть нельзя`
+          : `Студия ничего не должна ${founder?.name || 'коллеге'}. Если деньги взяли себе, выберите «Взял для себя»`,
+      };
+    }
+  }
   const drawId = id || uid('drw');
   const record = {
     founderId: values.founderId,
@@ -767,8 +860,12 @@ export function saveSettings(values) {
       ? { usdRateSource: 'manual', usdRateDate: today() }
       : {}),
     defaultAdvancePercent: clampPercent(values.defaultAdvancePercent ?? settings.defaultAdvancePercent),
-    salaryDay: Math.min(28, Math.max(1, Number(values.salaryDay) || settings.salaryDay)),
-    notifyDaysAhead: Math.min(60, Math.max(1, Number(values.notifyDaysAhead) || settings.notifyDaysAhead)),
+    // День выплаты до 31: в коротких месяцах он сам сдвигается на последний день.
+    salaryDay: Math.min(31, Math.max(1, Math.round(Number(values.salaryDay)) || settings.salaryDay)),
+    // 0 — «напоминать в тот же день», это допустимое значение.
+    notifyDaysAhead: values.notifyDaysAhead === '' || !Number.isFinite(Number(values.notifyDaysAhead))
+      ? settings.notifyDaysAhead
+      : Math.min(60, Math.max(0, Math.round(Number(values.notifyDaysAhead)))),
   });
 }
 
@@ -792,8 +889,14 @@ export function addCategory(groupId, label) {
 }
 
 export function removeCategory(categoryId) {
-  const settings = getState().settings;
+  const state = getState();
+  const settings = state.settings;
+  // Если по категории уже есть записи, оставляем её название для истории.
+  const used = [...state.expenses, ...(state.planned || []), ...(state.draws || [])]
+    .some((item) => item.category === categoryId);
   store.setSettings({
-    customCategories: (settings.customCategories || []).filter((item) => item.id !== categoryId),
+    customCategories: (settings.customCategories || [])
+      .map((item) => (item.id === categoryId && used ? { ...item, removed: true } : item))
+      .filter((item) => item.id !== categoryId || used),
   });
 }

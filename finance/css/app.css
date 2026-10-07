@@ -1237,3 +1237,5 @@ td.danger, .danger-text { color: var(--danger); }
 /* Элементы только для того, кто смотрит без права правки. */
 .viewer-only { display: none; }
 .is-viewer .viewer-only { display: inline-flex; }
+
+.form__preview { margin-top: 12px; padding: 10px 12px; border-radius: 12px; font-size: 13px; }

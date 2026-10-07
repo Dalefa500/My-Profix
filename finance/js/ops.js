@@ -124,6 +124,11 @@ export function applyOp(data, op) {
       if (!op.record?.id) throw new Error('Запись без идентификатора');
       // Повторная доставка той же операции не должна создавать дубль.
       if (items.some((item) => item.id === op.record.id)) return data;
+      // Зарплату за один месяц одному сотруднику начисляем один раз,
+      // даже если два телефона начислили её независимо.
+      if (op.collection === 'payrolls' && items.some(
+        (item) => item.employeeId === op.record.employeeId && item.month === op.record.month,
+      )) return data;
       items.unshift(op.record);
       return data;
     }

@@ -185,8 +185,11 @@ function globalBlocked() {
   return globalFailures.length >= GLOBAL_MAX_FAILURES;
 }
 
-export function loginBlocked(ip) {
-  if (globalBlocked()) return true;
+// trusted — запрос с телефона, где уже был успешный вход (см. server.js).
+// На него общий предел не действует: иначе посторонний мог бы, набрав сотню
+// неверных попыток с разных адресов, закрыть вход владельцам на час.
+export function loginBlocked(ip, { trusted = false } = {}) {
+  if (!trusted && globalBlocked()) return true;
   const record = failures.get(ip);
   if (!record) return false;
   if (record.until < Date.now()) {

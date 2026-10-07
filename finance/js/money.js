@@ -91,7 +91,9 @@ function formatterFor(min, max = min) {
 
 export function formatAmount(amount, currency = BASE_CURRENCY, opts = {}) {
   const meta = CURRENCIES[currency] || CURRENCIES[BASE_CURRENCY];
-  const value = Number(amount) || 0;
+  const raw = Number(amount) || 0;
+  // Сначала округляем до копеек: 2,9999999 — это ровно 3, а не «3,00».
+  const value = Math.round(raw * 100) / 100;
   // Центы показываем только там, где они действительно есть.
   // Если центы есть — всегда обе цифры: «$12,50», а не «$12,5».
   const hasCents = Math.abs(value % 1) > 0.004;
@@ -117,7 +119,7 @@ export function formatCompact(amount, currency = BASE_CURRENCY) {
   const isUsd = (currency || BASE_CURRENCY) === 'USD';
   const suffix = isUsd ? '' : ' TJS';
   const prefix = isUsd ? '$' : '';
-  if (abs >= 1_000_000) return `${sign}${prefix}${round(abs / 1_000_000, 1)} млн${suffix}`;
+  if (abs >= 1_000_000) return `${sign}${prefix}${formatterFor(0, 1).format(round(abs / 1_000_000, 1))} млн${suffix}`;
   if (abs >= 10_000) return `${sign}${prefix}${Math.round(abs / 1000)} тыс.${suffix}`;
   return formatAmount(value, currency);
 }
@@ -133,14 +135,21 @@ export function formatRate(amount, currency) {
   return `${formatAmount(amount, currency, { decimals: 2 })} / м²`;
 }
 
-// Курс в привычном виде: «1 $ = 10,95 TJS».
-export function formatUsdRate(rate, decimals = 2) {
-  return `1 $ = ${formatterFor(0, decimals).format(Number(rate) || 0)} TJS`;
+// Курс в привычном виде: «1 $ = 9,2325 TJS». НБТ публикует курс
+// с четырьмя знаками, и считаем мы по нему же — так и показываем,
+// иначе «92 325 TJS по курсу 9,23» не сходится с $10 000.
+export function formatUsdRate(rate, decimals = 4) {
+  return `1 $ = ${formatterFor(0, decimals).format(round(Number(rate) || 0, decimals))} TJS`;
+}
+
+// Курс для поля ввода: с запятой, как все числа в программе.
+export function rateForInput(rate) {
+  return String(round(Number(rate) || 0, 4)).replace('.', ',');
 }
 
 // Подпись с исходной валютой, если операция была введена не в долларах.
 export function formatWithOriginal(entry) {
   if (!entry || isBase(entry.currency)) return formatAmount(entry?.base ?? 0);
   return `${formatAmount(entry.base)} · введено ${formatAmount(entry.amount, entry.currency)}`
-    + ` по курсу ${formatterFor(0, 2).format(rateToHuman(entry.fx))}`;
+    + ` по курсу ${formatterFor(0, 4).format(round(rateToHuman(entry.fx), 4))}`;
 }

@@ -140,6 +140,7 @@ export class Pdf {
     const words = slot.clean(value).slice(0, 4000).split(' ').filter(Boolean);
     const lines = [];
     let current = '';
+    let truncated = false;
     for (const word of words) {
       const candidate = current ? `${current} ${word}` : word;
       if (slot.width(candidate, size) <= maxWidth) {
@@ -148,10 +149,10 @@ export class Pdf {
       }
       if (current) lines.push(current);
       current = slot.width(word, size) <= maxWidth ? word : this.fit(word, size, maxWidth, font);
-      if (lines.length >= maxLines) break;
+      if (lines.length >= maxLines) { truncated = true; break; }
     }
     if (current && lines.length < maxLines) lines.push(current);
-    if (lines.length === maxLines && words.length) {
+    if (truncated) {
       lines[maxLines - 1] = this.fit(`${lines[maxLines - 1]}…`, size, maxWidth, font);
     }
     return lines;

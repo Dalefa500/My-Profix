@@ -1,7 +1,7 @@
 // Формы ввода. Собраны в одном месте, потому что одни и те же действия
 // («добавить приход», «выплатить остаток») вызываются из разных разделов.
 
-import { openForm, toast, html, raw, esc } from './ui.js';
+import { openForm, toast, html, raw, esc, parseNum } from './ui.js';
 import { getState, byId } from './store.js';
 import * as actions from './actions.js';
 import { today, monthLabel } from './dates.js';
@@ -46,9 +46,15 @@ function employeeOptions(state, filter = () => true) {
   return state.employees.filter(filter).map((item) => option(item.id, item.name));
 }
 
-function categoryOptions(state) {
+function categoryOptions(state, current = '') {
   const groups = expenseGroups(state.settings);
   const options = [];
+  // Категорию удалили, а запись по ней осталась — показываем её в списке,
+  // чтобы при правке записи она молча не сменилась на другую.
+  const known = groups.some((group) => group.items.some((item) => item.id === current));
+  if (current && !known && !SYSTEM_CATEGORIES.includes(current)) {
+    options.push(option(current, categoryLabel(current, state.settings)));
+  }
   for (const group of groups) {
     for (const item of group.items) {
       if (SYSTEM_CATEGORIES.includes(item.id)) continue;
@@ -170,7 +176,7 @@ export function openEmployeeForm(employeeId = null, onDone) {
     advanced: [
       { name: 'phone', label: 'Телефон', type: 'text', value: employee?.phone || '' },
       { name: 'startDate', label: 'Работает с', type: 'date', value: employee?.startDate || today() },
-      { name: 'payday', label: 'День выплаты зарплаты', type: 'number', min: 1, max: 28, value: employee?.payday || state.settings.salaryDay },
+      { name: 'payday', label: 'День выплаты зарплаты', type: 'number', min: 1, max: 31, value: employee?.payday || state.settings.salaryDay },
       { name: 'active', label: 'Работает сейчас', type: 'checkbox', value: employee?.active !== false, hint: 'Начисления идут только работающим' },
       { name: 'note', label: 'Заметка', type: 'textarea', value: employee?.note || '', wide: true },
     ],
@@ -218,7 +224,15 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
   const state = getState();
   const project = byId('projects', projectId);
   const assignment = assignmentId ? byId('assignments', assignmentId) : null;
-  const pieceworkers = state.employees.filter((item) => item.payType === 'piecework' && item.active !== false);
+  // В списке — работающие сдельщики и, при правке, тот, на ком работа
+  // уже записана, даже если его перевели на оклад: иначе список молча
+  // подставлял другого человека и работа с авансом уходила к нему.
+  // Если по работе уже платили, сотрудника не меняем: выплата сделана
+  // конкретному человеку и должна остаться у него.
+  const paidOut = Boolean(assignment?.advancePaidAt || assignment?.remainderPaidAt);
+  const pieceworkers = state.employees.filter((item) => (paidOut ? false
+    : item.payType === 'piecework' && item.active !== false)
+    || item.id === assignment?.employeeId);
 
   if (!pieceworkers.length && !assignment) {
     toast('Сначала добавьте сотрудника со сдельной оплатой', 'danger');
@@ -235,6 +249,7 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
         name: 'employeeId', label: 'Сотрудник', type: 'select', required: true,
         options: pieceworkers.map((item) => option(item.id, `${item.name}${item.position ? ` · ${item.position}` : ''}`)),
         value: assignment?.employeeId || first?.id || '',
+        hint: paidOut ? 'По этой работе уже были выплаты — сотрудника поменять нельзя' : '',
       },
       {
         name: 'role', label: 'Роль в проекте', type: 'select',
@@ -258,7 +273,7 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
         hint: 'Остальное — остаток после одобрения клиентом',
       },
     ],
-    extraHtml: '<div class="form__error" data-preview hidden></div>',
+    extraHtml: '<div class="form__preview" data-preview hidden></div>',
     onSubmit: (values) => {
       const saved = actions.saveAssignment({
         ...values,
@@ -301,11 +316,11 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
   const update = () => {
     const data = new FormData(form);
     const totals = assignmentTotals({
-      area: Number(data.get('area')) || 0,
-      rate: Number(data.get('rate')) || 0,
+      area: Number(parseNum(data.get('area'))) || 0,
+      rate: Number(parseNum(data.get('rate'))) || 0,
       currency: data.get('rate__currency'),
       fx: Number(data.get('rate__fx')) || 1,
-      advancePercent: Number(data.get('advancePercent')),
+      advancePercent: Number(parseNum(data.get('advancePercent'))),
     });
     const currency = data.get('rate__currency');
     preview.innerHTML = html`
@@ -313,7 +328,7 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
       · аванс ${raw(esc(formatAmount(totals.advance, currency)))}
       · остаток ${raw(esc(formatAmount(totals.remainder, currency)))}
       ${currency === 'TJS'
-        ? raw(html`<br><span class="muted">= ${formatAmount(totals.accruedBase)} по курсу ${Number(data.get('rate__rate')) || 0} TJS за доллар</span>`)
+        ? raw(html`<br><span class="muted">= ${formatAmount(totals.accruedBase)} по курсу ${Number(parseNum(data.get('rate__rate'))) || 0} TJS за доллар</span>`)
         : ''}`;
   };
   form.addEventListener('input', update);
@@ -364,12 +379,23 @@ export function openIncomeForm(prefill = {}, onDone) {
         value: income?.barterId || prefill.barterId || '',
         hint: 'Заполняется, когда способ оплаты — взаимозачёт.',
       },
-      { name: 'comment', label: 'Комментарий', type: 'textarea', value: income?.comment || '', wide: true },
+      { name: 'comment', label: 'Комментарий', type: 'textarea', value: income?.comment || prefill.comment || '', wide: true },
     ],
     onSubmit: (values) => {
-      if (values.method === 'barter' && !values.barterId) {
-        toast('Выберите, с какого имущества списать', 'danger');
-        return false;
+      // Запись, чьё имущество уже удалили, можно сохранить и без него.
+      const orphan = income?.method === 'barter' && !income.barterId;
+      if (values.method === 'barter' && !values.barterId && !orphan) {
+        return 'Выберите, с какого имущества списать';
+      }
+      if (values.method === 'barter' && values.barterId) {
+        const barter = byId('barters', values.barterId);
+        const info = barter ? barterState(state, barter) : null;
+        const own = income?.barterId === values.barterId ? Number(income.base) || 0 : 0;
+        const room = info ? info.leftBase + own : 0;
+        const base = actions.baseOf({ amount: values.amount, currency: values.amountCurrency, fx: values.amountFx });
+        if (info && base > room + 0.01) {
+          return `С этого имущества можно списать не больше ${formatAmount(room)}. Остальное клиент доплачивает деньгами.`;
+        }
       }
       actions.saveIncome({
         ...values,
@@ -395,7 +421,7 @@ export function openExpenseForm(prefill = {}, onDone) {
     fields: [
       {
         name: 'category', label: 'Категория', type: 'select', required: true,
-        options: categoryOptions(state), value: expense?.category || prefill.category || 'office/rent',
+        options: categoryOptions(state, expense?.category), value: expense?.category || prefill.category || 'office/rent',
       },
       {
         name: 'amount', label: 'Сумма', type: 'money', required: true,
@@ -468,10 +494,7 @@ export function openAssignmentPayment(assignmentId, part, onDone) {
         currency: values.amountCurrency,
         fx: values.amountFx,
       });
-      if (!result.ok) {
-        toast(result.error, 'danger');
-        return false;
-      }
+      if (!result.ok) return result.error;
       toast('Выплата записана в расходы компании', 'good');
       onDone?.();
       return true;
@@ -518,10 +541,7 @@ export function openPayrollPayment(payrollId, onDone) {
         currency: values.amountCurrency,
         fx: values.amountFx,
       });
-      if (!result.ok) {
-        toast(result.error, 'danger');
-        return false;
-      }
+      if (!result.ok) return result.error;
       toast('Зарплата выплачена', 'good');
       onDone?.();
       return true;
@@ -540,7 +560,7 @@ export function openPlannedForm(plannedId = null, onDone) {
       { name: 'title', label: 'Название', type: 'text', required: true, value: planned?.title || '', placeholder: 'Аренда офиса', wide: true },
       {
         name: 'category', label: 'Категория', type: 'select', required: true,
-        options: categoryOptions(state), value: planned?.category || 'office/rent',
+        options: categoryOptions(state, planned?.category), value: planned?.category || 'office/rent',
       },
       {
         name: 'amount', label: 'Сумма', type: 'money', required: true,
@@ -720,7 +740,7 @@ export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
       },
       {
         name: 'category', label: 'На что потрачено', type: 'select',
-        options: categoryOptions(state), value: draw?.category || 'other/misc',
+        options: categoryOptions(state, draw?.category), value: draw?.category || 'other/misc',
         hint: 'Заполняется, когда коллега оплатил расход студии.',
       },
     ],
@@ -743,10 +763,7 @@ export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
         currency: values.amountCurrency,
         fx: values.amountFx,
       }, id);
-      if (result?.ok === false) {
-        toast(result.error, 'danger');
-        return false;
-      }
+      if (result?.ok === false) return result.error;
       toast('Записано', 'good');
       onDone?.();
       return true;
@@ -758,10 +775,13 @@ export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
   const panel = document.getElementById('sheet');
   const kindSelect = panel?.querySelector('select[name="kind"]');
   const categoryField = panel?.querySelector('[data-field-name="category"]');
+  const projectField = panel?.querySelector('[data-field-name="projectId"]');
   const kindHint = panel?.querySelector('[data-field-name="kind"] .field__hint');
   const sync = () => {
     const current = kindSelect.value;
     if (categoryField) categoryField.hidden = current !== 'spend';
+    // Проект сохраняется только у расхода — для остальных полей его нет.
+    if (projectField) projectField.hidden = current !== 'spend';
     if (kindHint) kindHint.textContent = FOUNDER_MOVES.find((item) => item.id === current)?.hint || '';
   };
   if (kindSelect) {

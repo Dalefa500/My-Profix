@@ -139,8 +139,10 @@ export const EXPENSE_GROUPS = [
 // Категории, которые создаются системой при выплатах и не выбираются вручную.
 export const SYSTEM_CATEGORIES = ['staff/salary', 'staff/advance', 'staff/final'];
 
-export function expenseGroups(settings) {
-  const custom = settings?.customCategories || [];
+// Удалённая категория остаётся в настройках с пометкой removed: в списках
+// выбора её нет, но у старых расходов по-прежнему видно её название.
+export function expenseGroups(settings, { withRemoved = false } = {}) {
+  const custom = (settings?.customCategories || []).filter((item) => withRemoved || !item.removed);
   return EXPENSE_GROUPS.map((group) => ({
     ...group,
     items: [
@@ -152,7 +154,7 @@ export function expenseGroups(settings) {
 }
 
 export function categoryLabel(categoryId, settings) {
-  for (const group of expenseGroups(settings)) {
+  for (const group of expenseGroups(settings, { withRemoved: true })) {
     const found = group.items.find((item) => item.id === categoryId);
     if (found) return found.label;
   }
