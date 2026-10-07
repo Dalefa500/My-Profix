@@ -11,7 +11,7 @@ import { setRefresh } from './refresh.js';
 import { applyTheme } from './theme.js';
 import * as passkey from './passkey.js';
 import { ICONS, quickAction } from './icons.js';
-import { BRAND, WORDMARK_IS_SCRIPT } from './brand.js';
+import { BRAND, WORDMARK_CLASS, mountLogo } from './brand.js';
 
 import dashboard from './views/dashboard.js';
 import projects from './views/projects.js';
@@ -68,6 +68,25 @@ const PLAN_ART = `
     <circle cx="208" cy="216" r="26" stroke-dasharray="2 5" />
   </svg>`;
 
+// Знак студии на экране входа: логотип (если он есть у компании) или
+// название с подписью.
+function authBrandHtml() {
+  if (BRAND.logo) {
+    return html`<div class="auth__brand">
+      <div class="auth__logo" data-logo role="img" aria-label="${BRAND.companyName}"></div>
+      ${BRAND.tagline ? raw(html`<p class="auth__tagline">${BRAND.tagline}</p>`) : ''}
+    </div>`;
+  }
+  return html`<div class="auth__brand">
+    <h1 class="auth__word">
+      <span class="auth__script ${raw(WORDMARK_CLASS)}">${BRAND.wordmark}</span>
+      ${BRAND.subtitle ? raw(html`<span class="auth__studio">${BRAND.subtitle}</span>`) : ''}
+    </h1>
+    <span class="auth__rule"></span>
+    <p class="auth__tagline">${BRAND.tagline}</p>
+  </div>`;
+}
+
 function renderAuth(error = '') {
   // Открытая форма не должна остаться поверх экрана входа: то, что в неё
   // ввели бы, ушло бы в никуда.
@@ -78,14 +97,7 @@ function renderAuth(error = '') {
     <div class="auth__scene" aria-hidden="true">${raw(PLAN_ART)}</div>
 
     <div class="auth__inner">
-      <div class="auth__brand">
-        <h1 class="auth__word">
-          <span class="auth__script ${WORDMARK_IS_SCRIPT ? '' : 'is-plain'}">${BRAND.wordmark}</span>
-          ${BRAND.subtitle ? raw(html`<span class="auth__studio">${BRAND.subtitle}</span>`) : ''}
-        </h1>
-        <span class="auth__rule"></span>
-        <p class="auth__tagline">${BRAND.tagline}</p>
-      </div>
+      ${raw(authBrandHtml())}
 
       <form class="auth__form">
         <button type="button" class="btn auth__faceid" data-faceid hidden>
@@ -98,6 +110,7 @@ function renderAuth(error = '') {
         <button class="btn btn--primary btn--block" type="submit">Войти</button>
       </form>
     </div>`;
+  void mountLogo(root);
 
   const form = root.querySelector('form');
   form.addEventListener('submit', async (event) => {
@@ -163,7 +176,7 @@ function shellHtml() {
     </header>
     <!-- Знак студии живёт отдельно от шапки: внутри неё стоит размытие фона,
          и тонкий рукописный шрифт из-за него терял чёткость. -->
-    <div class="brand" aria-hidden="true"><span class="brand__name ${raw(WORDMARK_IS_SCRIPT ? '' : 'is-plain')}">${BRAND.wordmark}</span></div>
+    <div class="brand" aria-hidden="true"><span class="brand__name ${raw(WORDMARK_CLASS)}">${BRAND.wordmark}</span></div>
     <main class="viewport" id="viewport">
       <div class="view" id="view"></div>
       <div class="view view--ghost" id="viewGhost" aria-hidden="true"></div>
@@ -602,16 +615,10 @@ async function boot() {
   root.innerHTML = `
     <div class="auth__scene" aria-hidden="true">${PLAN_ART}</div>
     <div class="auth__inner">
-      <div class="auth__brand">
-        <h1 class="auth__word">
-          <span class="auth__script ${WORDMARK_IS_SCRIPT ? '' : 'is-plain'}">${esc(BRAND.wordmark)}</span>
-          ${BRAND.subtitle ? `<span class="auth__studio">${esc(BRAND.subtitle)}</span>` : ''}
-        </h1>
-        <span class="auth__rule"></span>
-        <p class="auth__tagline">${esc(BRAND.tagline)}</p>
-      </div>
+      ${authBrandHtml()}
       <p class="auth__hint">Загружаем данные…</p>
     </div>`;
+  void mountLogo(root);
   const user = await store.init();
   if (!user) {
     renderAuth();

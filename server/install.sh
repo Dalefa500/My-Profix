@@ -26,6 +26,8 @@
 #   BRAND_TAGLINE     строка под знаком и в шапке PDF
 #   BRAND_INITIALS    буквы значка вкладки браузера
 #   BRAND_COLOR       фирменный цвет, #rrggbb
+#   BRAND_WORDMARK_STYLE  script — рукописная надпись, caps — прописными с разрядкой
+#                     (логотип и иконки берутся из brands/<APP_SLUG>, если там есть)
 #   BOOTSTRAP_USERS   учётные записи первого запуска: логин:Имя:роль,...
 #                     роль admin (всё) или viewer (только просмотр)
 #   AUTH_DISABLED=1   открыть приложение без входа (не рекомендуется)
@@ -268,10 +270,11 @@ env_line() {
   env_line BRAND_TAGLINE "${BRAND_TAGLINE:-}"
   env_line BRAND_INITIALS "${BRAND_INITIALS:-}"
   env_line BRAND_COLOR "${BRAND_COLOR:-}"
+  env_line BRAND_WORDMARK_STYLE "${BRAND_WORDMARK_STYLE:-}"
   env_line BOOTSTRAP_USERS "${BOOTSTRAP_USERS:-}"
   # Строки, дописанные вручную, сохраняем как есть.
   if [ -f "$ENV_FILE" ]; then
-    grep -Ev '^[[:space:]]*(#|$)|^(APP_SLUG|BRAND_DIR|COMPANY_NAME|BRAND_WORDMARK|BRAND_SUBTITLE|BRAND_TAGLINE|BRAND_INITIALS|BRAND_COLOR|BOOTSTRAP_USERS)=' "$ENV_FILE" || true
+    grep -Ev '^[[:space:]]*(#|$)|^(APP_SLUG|BRAND_DIR|COMPANY_NAME|BRAND_WORDMARK|BRAND_SUBTITLE|BRAND_TAGLINE|BRAND_INITIALS|BRAND_COLOR|BRAND_WORDMARK_STYLE|BOOTSTRAP_USERS)=' "$ENV_FILE" || true
   fi
 } | write "$ENV_FILE"
 run chmod 640 "$ENV_FILE"

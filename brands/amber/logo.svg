@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1530 1020" role="img" aria-label="Amber Design Studio">
+  <title>Amber Design Studio</title>
+  <defs>
+    <!-- Золотой кант: тёплое золото с бликом -->
+    <linearGradient id="amber-gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6c45a"/>
+      <stop offset="0.45" stop-color="#e09a2b"/>
+      <stop offset="0.7" stop-color="#ffd27a"/>
+      <stop offset="1" stop-color="#b8701c"/>
+    </linearGradient>
+    <!-- Бегущий блик: полоса света проходит по знаку слева направо -->
+    <linearGradient id="amber-shine" gradientUnits="userSpaceOnUse" x1="-600" y1="0" x2="0" y2="300">
+      <stop offset="0" stop-color="#ffe2a0" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#ffe2a0" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#fff3cf" stop-opacity="0.85"/>
+      <stop offset="0.55" stop-color="#ffe2a0" stop-opacity="0"/>
+      <stop offset="1" stop-color="#ffe2a0" stop-opacity="0"/>
+      <animateTransform class="amber-anim" attributeName="gradientTransform" type="translate"
+        values="-400 0; 2300 0; 2300 0" keyTimes="0; 0.6; 1" dur="4.2s" repeatCount="indefinite"/>
+    </linearGradient>
+    <linearGradient id="amber-edge-shine" gradientUnits="userSpaceOnUse" x1="-600" y1="0" x2="0" y2="300">
+      <stop offset="0" stop-color="#fff6d8" stop-opacity="0"/>
+      <stop offset="0.44" stop-color="#fff6d8" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="0.56" stop-color="#fff6d8" stop-opacity="0"/>
+      <stop offset="1" stop-color="#fff6d8" stop-opacity="0"/>
+      <animateTransform class="amber-anim" attributeName="gradientTransform" type="translate"
+        values="-400 0; 2300 0; 2300 0" keyTimes="0; 0.6; 1" dur="4.2s" repeatCount="indefinite"/>
+    </linearGradient>
+
+    <!-- Силуэты (без заливки — её задаёт слой) -->
+    <g id="amber-mark">
+      <path d="M265 670 L615 20 L958 670 L808 670 L615 305 L418 670 Z"/>
+      <path d="M770 300 L922 20 L1262 670 L1110 670 L922 305 L840 435 Z"/>
+    </g>
+    <g id="amber-word" fill-rule="evenodd">
+      <path d="M100 870 L180 710 L220 710 L300 870 L262 870 L245 834 L155 834 L138 870 Z M170 802 L200 742 L230 802 Z"/>
+      <path d="M392 870 L392 710 L428 710 L492 800 L556 710 L592 710 L592 870 L558 870 L558 770 L492 858 L426 770 L426 870 Z"/>
+      <path d="M690 710 L795 710 A42 38 0 0 1 817 780 A44 44 0 0 1 805 870 L690 870 Z M724 740 L724 780 L790 780 A20 20 0 0 0 790 740 Z M724 808 L724 840 L798 840 A16 16 0 0 0 798 808 Z"/>
+      <path d="M922 710 L1072 710 L1072 740 L956 740 L956 774 L1060 774 L1060 804 L956 804 L956 840 L1074 840 L1074 870 L922 870 Z"/>
+      <path d="M1160 710 L1260 710 A50 48 0 0 1 1282 802 L1332 870 L1292 870 L1246 806 L1194 806 L1194 870 L1160 870 Z M1194 740 L1194 776 L1258 776 A18 18 0 0 0 1258 740 Z"/>
+    </g>
+  </defs>
+
+  <!-- Грани знака: разные оттенки коричневого, как у кожи/бронзы -->
+  <g stroke="none">
+    <path fill="#5b3d22" d="M265 670 L382 455 L418 670 Z"/>
+    <path fill="#4a311b" d="M382 455 L615 20 L615 300 L418 670 Z"/>
+    <path fill="#3e2915" d="M615 20 L700 190 L615 300 Z"/>
+    <path fill="#55391f" d="M700 190 L770 300 L615 300 Z"/>
+    <path fill="#4b321c" d="M615 300 L770 300 L840 435 Z"/>
+    <path fill="#3a2614" d="M615 305 L840 435 L730 510 Z"/>
+    <path fill="#5a3c21" d="M730 510 L840 435 L808 670 Z"/>
+    <path fill="#432c17" d="M840 435 L958 670 L808 670 Z"/>
+    <path fill="#5b3d22" d="M770 300 L922 20 L922 300 Z"/>
+    <path fill="#3d2815" d="M922 20 L1010 190 L922 300 Z"/>
+    <path fill="#4a311b" d="M1010 190 L1068 305 L922 300 Z"/>
+    <path fill="#3b2715" d="M770 300 L922 300 L840 435 Z"/>
+    <path fill="#55391f" d="M922 305 L1068 305 L1145 455 L1110 670 Z"/>
+    <path fill="#432c17" d="M1145 455 L1262 670 L1110 670 Z"/>
+  </g>
+  <use href="#amber-word" fill="#4a311b"/>
+
+  <!-- Тонкие золотые прожилки граней -->
+  <g fill="none" stroke="url(#amber-gold)" stroke-width="3" stroke-linejoin="round">
+    <path d="M382 455 L615 300 M615 20 L615 300 M700 190 L615 300 M615 300 L840 435 M730 510 L840 435 L808 670
+             M922 20 L922 300 M1010 190 L922 300 L1068 305 M922 300 L770 300 M1145 455 L1110 670"/>
+  </g>
+
+  <!-- Бегущий блик по всему логотипу -->
+  <use href="#amber-mark" fill="url(#amber-shine)"/>
+  <use href="#amber-word" fill="url(#amber-shine)"/>
+
+  <!-- Золотой контур и его блик -->
+  <g fill="none" stroke-linejoin="round">
+    <use href="#amber-mark" stroke="url(#amber-gold)" stroke-width="8"/>
+    <use href="#amber-word" stroke="url(#amber-gold)" stroke-width="6"/>
+    <use href="#amber-mark" stroke="url(#amber-edge-shine)" stroke-width="8"/>
+    <use href="#amber-word" stroke="url(#amber-edge-shine)" stroke-width="6"/>
+  </g>
+
+  <text x="765" y="985" text-anchor="middle" fill="#3e2915"
+    font-family="Montserrat, 'Avenir Next', 'Helvetica Neue', Arial, sans-serif" font-size="66" font-weight="500"
+    letter-spacing="26">DESIGN • STUDIO</text>
+</svg>

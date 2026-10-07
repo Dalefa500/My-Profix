@@ -1250,3 +1250,37 @@ td.danger, .danger-text { color: var(--danger); }
 .is-viewer .viewer-only { display: inline-flex; }
 
 .form__preview { margin-top: 12px; padding: 10px 12px; border-radius: 12px; font-size: 13px; }
+
+/* Логотип компании на экране входа (если он есть). SVG вставлен в страницу,
+   поэтому подпись под знаком перекрашиваем в светлый — фон входа тёмный. */
+.auth__logo {
+  width: min(80vw, 360px);
+  aspect-ratio: 1530 / 1020;
+  margin: 0 auto;
+  opacity: 0;
+  transform: translateY(6px) scale(0.98);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.auth__logo.is-ready { opacity: 1; transform: none; }
+.auth__logo svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.auth__logo text { fill: #e8c88a; }
+.auth__logo + .auth__tagline { margin-top: 14px; }
+
+/* Название прописными с разрядкой — как в логотипе Amber. */
+.brand__name.is-caps {
+  display: block;
+  font-family: var(--font);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  margin-right: -0.34em;
+  text-transform: uppercase;
+  -webkit-text-stroke: 0;
+}
+.auth__script.is-caps {
+  font-family: var(--font);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  font-size: 34px;
+}

@@ -6,7 +6,11 @@
 // Если переменная не задана, берётся значение первой студии — Line Design,
 // поэтому уже работающая установка ведёт себя ровно как раньше.
 
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+
 const env = process.env;
+const ROOT = path.resolve(new URL('..', import.meta.url).pathname);
 
 function clean(value, fallback) {
   const text = String(value ?? '').trim();
@@ -75,7 +79,23 @@ export const config = Object.freeze({
   // Папка с логотипом и иконками именно этой компании (icon-180.png,
   // icon-192.png, icon-512.png). Если её нет — берутся иконки из программы.
   brandDir: clean(env.BRAND_DIR, ''),
+  // Где искать логотип и иконки: сначала папка компании на сервере, потом
+  // оформление, которое лежит в самой программе (brands/<slug>).
+  brandDirs: [clean(env.BRAND_DIR, ''), path.join(ROOT, 'brands', APP_SLUG)].filter(Boolean),
+  // Как писать название в шапке: script — рукописным знаком (Line Design),
+  // caps — прописными с разрядкой (как в логотипе Amber).
+  wordmarkStyle: ['script', 'caps'].includes(env.BRAND_WORDMARK_STYLE) ? env.BRAND_WORDMARK_STYLE : 'script',
 });
+
+// Файл оформления компании (logo.svg, icon-192.png…) — первый найденный.
+export function brandFile(name) {
+  if (!/^[a-z0-9-]+\.(svg|png)$/.test(name)) return null;
+  for (const dir of config.brandDirs) {
+    const file = path.join(path.resolve(dir), name);
+    if (existsSync(file)) return file;
+  }
+  return null;
+}
 
 // То, что можно показать браузеру ещё до входа: экран входа, заголовок,
 // иконка. Ничего секретного здесь нет.
@@ -89,5 +109,8 @@ export function publicConfig() {
     initials: config.initials,
     color: config.color,
     storagePrefix: config.storagePrefix,
+    wordmarkStyle: config.wordmarkStyle,
+    // Логотип для экрана входа (если он есть у компании).
+    logo: brandFile('logo.svg') ? 'brand/logo.svg' : '',
   };
 }

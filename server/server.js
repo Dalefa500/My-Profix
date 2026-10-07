@@ -20,7 +20,7 @@ import {
 } from './auth.js';
 import { fetchUsdRate } from './nbt.js';
 import { buildReport } from './reports.js';
-import { config, publicConfig } from './config.js';
+import { config, publicConfig, brandFile } from './config.js';
 
 // Вход можно отключить: тогда приложение открывается сразу, без логина
 // и пароля. Включается обратно снятием этой настройки — данные и учётные
@@ -795,7 +795,9 @@ async function sendIndex(res) {
     .replace(/<title>[^<]*<\/title>/, () => `<title>${name} — финансы</title>`)
     .replace(/(<meta name="description" content=")[^"]*/, (_, start) => `${start}${name} — учёт финансов студии: проекты, клиенты, сотрудники, приходы, расходы и отчёты.`)
     .replace(/(<meta name="apple-mobile-web-app-title" content=")[^"]*/, (_, start) => `${start}${name}`)
-    .replace(/<link rel="icon"[^>]*>/, () => `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(faviconSvg())}">`)
+    .replace(/<link rel="icon"[^>]*>/, () => (brandFile('icon.svg')
+      ? '<link rel="icon" href="brand/icon.svg" type="image/svg+xml">'
+      : `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(faviconSvg())}">`))
     .replace('<link rel="stylesheet" href="css/app.css">', () => '<link rel="stylesheet" href="css/app.css">\n<link rel="stylesheet" href="brand.css">\n'
       + `<script>window.__BRAND__ = ${brand};</script>`);
   res.writeHead(200, {
@@ -828,11 +830,20 @@ function sendBrandCss(res) {
     res.end('/* Line Design: фирменные цвета заданы в app.css */\n');
     return;
   }
+  const darkVars = `  --bg: color-mix(in srgb, ${c} 9%, #14110f);
+  --surface: color-mix(in srgb, ${c} 11%, #1d1916);
+  --surface-2: color-mix(in srgb, ${c} 13%, #25201c);
+  --line: color-mix(in srgb, ${c} 16%, #302a25);
+  --accent: color-mix(in srgb, ${c} 82%, #fff);
+  --accent-soft: color-mix(in srgb, ${c} 28%, #1b1712);
+  --brand-signature: color-mix(in srgb, ${c} 85%, #fff);
+  --signature-hi: color-mix(in srgb, ${c} 65%, #fff);
+  --signature-lo: color-mix(in srgb, ${c} 50%, #000);`;
   const css = `/* Фирменный цвет компании — собирается сервером. */
 :root {
   --brand-burgundy: ${c};
   --brand-signature: ${c};
-  --signature-hi: color-mix(in srgb, ${c} 78%, #ff5577);
+  --signature-hi: color-mix(in srgb, ${c} 70%, #ffd98a);
   --signature-lo: color-mix(in srgb, ${c} 50%, #000);
   --signature-on-dark: color-mix(in srgb, ${c} 85%, #fff);
   --signature-on-dark-hi: color-mix(in srgb, ${c} 65%, #fff);
@@ -841,20 +852,24 @@ function sendBrandCss(res) {
   --accent-soft: color-mix(in srgb, ${c} 12%, #fff);
   --hero-from: color-mix(in srgb, ${c} 88%, #fff);
   --hero-to: color-mix(in srgb, ${c} 45%, #000);
+  /* Светлая тема — тёплая нейтральная с оттенком фирменного цвета. */
+  --bg: color-mix(in srgb, ${c} 7%, #f6f3ef);
+  --surface-2: color-mix(in srgb, ${c} 5%, #faf8f5);
+  --line: color-mix(in srgb, ${c} 14%, #e6e0d9);
 }
-:root[data-theme="dark"], :root:not([data-theme]) {
-  --accent: color-mix(in srgb, ${c} 82%, #fff);
-  --accent-soft: color-mix(in srgb, ${c} 28%, #1b1f26);
-  --brand-signature: color-mix(in srgb, ${c} 85%, #fff);
-  --signature-hi: color-mix(in srgb, ${c} 65%, #fff);
-  --signature-lo: color-mix(in srgb, ${c} 50%, #000);
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) {
-    --accent: ${c};
-    --accent-soft: color-mix(in srgb, ${c} 12%, #fff);
-    --brand-signature: ${c};
+/* Тёмная тема — нейтральная с оттенком фирменного цвета. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+${darkVars}
   }
+}
+:root[data-theme="dark"] {
+${darkVars}
+}
+/* Экран входа — в тонах компании, а не в серо-синих тонах Line Design. */
+.auth {
+  background: linear-gradient(165deg, color-mix(in srgb, ${c} 32%, #1c1612) 0%,
+    color-mix(in srgb, ${c} 14%, #15110d) 45%, #0e0b08 100%);
 }
 `;
   res.writeHead(200, { 'Content-Type': MIME['.css'], 'Cache-Control': 'no-cache' });
@@ -891,13 +906,19 @@ async function serveStatic(req, res, url) {
   if (relative === '/manifest.webmanifest') return sendManifest(res);
   if (relative === '/brand.css') return sendBrandCss(res);
 
-  // Свои иконки компании, если их положили при установке.
+  // Свои иконки и логотип компании: из папки компании на сервере или из
+  // оформления в программе (brands/<slug>). Иначе — стандартные иконки.
   let target = path.join(APP_DIR, relative);
-  if (config.brandDir && /^\/icon-\d+\.png$/.test(relative)) {
-    const own = path.join(path.resolve(config.brandDir), relative);
-    try { await fs.access(own); target = own; } catch { /* берём стандартную */ }
+  let branded = false;
+  const brandMatch = relative.match(/^\/(?:brand\/)?((?:icon-\d+\.png)|(?:logo|icon)\.svg)$/);
+  if (brandMatch) {
+    const own = brandFile(brandMatch[1]);
+    if (own) {
+      target = own;
+      branded = true;
+    }
   }
-  if (!target.startsWith(APP_DIR + path.sep) && !target.startsWith(path.resolve(config.brandDir || APP_DIR) + path.sep)) {
+  if (!branded && !target.startsWith(APP_DIR + path.sep)) {
     res.writeHead(403).end('Доступ запрещён');
     return;
   }
