@@ -93,7 +93,10 @@ async function setPasswordUnlocked(login, password, keepToken = null) {
   // Сменили код — все прежние входы этого человека закрываются
   // (кроме текущего, если код меняют из приложения).
   await dropUserSessions(user.id, keepToken);
-  return publicUser(user);
+  // И привязки Face ID: их могли добавить с чужого телефона, пока код
+  // был известен постороннему. Свой телефон привязывается заново за секунду.
+  const removedPasskeys = await dropUserPasskeys(user.id);
+  return { ...publicUser(user), removedPasskeys };
 }
 
 async function setRoleUnlocked(login, role) {
@@ -117,7 +120,10 @@ async function deleteUserUnlocked(login) {
   }
   await saveUsers(next);
   const removed = users.find((item) => item.login === normalized);
-  if (removed) await dropUserSessions(removed.id);
+  if (removed) {
+    await dropUserSessions(removed.id);
+    await dropUserPasskeys(removed.id);
+  }
   return true;
 }
 
@@ -144,6 +150,13 @@ async function loadSessions() {
   }
   if (changed) await writeJSON(SESSIONS_FILE, sessions);
   return sessions;
+}
+
+async function dropUserPasskeys(userId) {
+  const passkeys = (await readJSON('passkeys.json', [])) || [];
+  const next = passkeys.filter((item) => item.userId !== userId);
+  if (next.length !== passkeys.length) await writeJSON('passkeys.json', next);
+  return passkeys.length - next.length;
 }
 
 async function dropUserSessions(userId, keepToken = null) {

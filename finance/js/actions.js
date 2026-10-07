@@ -927,7 +927,7 @@ export function deleteDraw(id) {
 export function saveSettings(values) {
   const settings = getState().settings;
   return store.setSettings({
-    companyName: values.companyName?.trim() || settings.companyName,
+    companyName: (values.companyName?.trim() || settings.companyName).slice(0, 120),
     usdRate: Number(values.usdRate) > 0 ? Number(values.usdRate) : settings.usdRate,
     // Курс, введённый руками, помечаем — чтобы было видно, что он не с сайта НБТ.
     ...(Number(values.usdRate) > 0 && Number(values.usdRate) !== settings.usdRate
@@ -957,7 +957,7 @@ export function applyNbtRate(rate) {
 export function addCategory(groupId, label) {
   const settings = getState().settings;
   const id = `${groupId}/custom_${uid('c').slice(-6)}`;
-  const customCategories = [...(settings.customCategories || []), { id, group: groupId, label: label.trim() }];
+  const customCategories = [...(settings.customCategories || []), { id, group: groupId, label: label.trim().slice(0, 120) }];
   store.setSettings({ customCategories });
   return id;
 }

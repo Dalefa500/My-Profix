@@ -217,6 +217,7 @@ async function refreshUsdRate({ force = false } = {}) {
 const challenges = new Map();
 
 const MAX_CHALLENGES = 500;
+const MAX_CHALLENGES_PER_IP = 10;
 let challengeSweepAt = 0;
 
 function rememberChallenge(challenge, payload = {}) {
@@ -228,6 +229,12 @@ function rememberChallenge(challenge, payload = {}) {
     for (const [key, item] of challenges) {
       if (item.expiresAt < now) challenges.delete(key);
     }
+  }
+  // С одного адреса — не больше MAX_PER_IP ожидающих запросов: поток
+  // запросов с одного адреса вытесняет только свои же, а не чужие входы.
+  if (payload.ip) {
+    const own = [...challenges].filter(([, item]) => item.ip === payload.ip);
+    while (own.length >= MAX_CHALLENGES_PER_IP) challenges.delete(own.shift()[0]);
   }
   while (challenges.size >= MAX_CHALLENGES) challenges.delete(challenges.keys().next().value);
   challenges.set(challenge, { ...payload, expiresAt: now + 5 * 60 * 1000 });
@@ -456,7 +463,7 @@ async function handleApi(req, res, url) {
     const rp = rpFromRequest(req);
     const passkeys = await loadPasskeys();
     const challenge = createChallenge();
-    rememberChallenge(challenge, { kind: 'login' });
+    rememberChallenge(challenge, { kind: 'login', ip: clientIp(req) });
     return send(res, 200, {
       challenge,
       rpId: rp.id,
@@ -641,7 +648,7 @@ async function handleApi(req, res, url) {
     }
     const passkeys = await loadPasskeys();
     const challenge = createChallenge();
-    rememberChallenge(challenge, { kind: 'register', userId: user.id });
+    rememberChallenge(challenge, { kind: 'register', userId: user.id, ip: clientIp(req) });
     return send(res, 200, {
       challenge,
       rp: { id: rp.id, name: config.companyName },
@@ -736,8 +743,11 @@ async function handleApi(req, res, url) {
     }
     const body = await readBody(req);
     try {
-      await changePassword(user, body.currentPassword, body.newPassword, readCookie(req, COOKIE));
-      return send(res, 200, { ok: true });
+      const result = await changePassword(user, body.currentPassword, body.newPassword, readCookie(req, COOKIE));
+      // Метка «свой телефон» подписана старым кодом — выдаём новую.
+      const fresh = (await loadUsers()).find((item) => item.id === user.id);
+      return send(res, 200, { ok: true, removedPasskeys: result?.removedPasskeys || 0 }, fresh
+        ? { 'Set-Cookie': await deviceCookie(req, fresh) } : {});
     } catch (error) {
       return send(res, 400, { error: error.message });
     }

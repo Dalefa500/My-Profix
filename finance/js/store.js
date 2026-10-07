@@ -177,6 +177,11 @@ export async function checkSession() {
     const payload = await api('/session');
     user = payload.user || null;
     authDisabled = Boolean(payload.authDisabled);
+    // Доступ сменили на «только просмотр» — неотправленное уже не примут.
+    if (user && !canEdit() && queue.length) {
+      queue = [];
+      cache();
+    }
     return user;
   } catch (error) {
     if (error.code === 401) return null;
@@ -204,7 +209,9 @@ export async function completeLogin(nextUser) {
 // неотправленные изменения сохраняем и отправляем. Другой человек —
 // начинаем с чистого листа: чужие черновики ему не принадлежат.
 async function startSession(nextUser) {
-  const keep = queue.length > 0 && queueOwner && nextUser?.id === queueOwner;
+  // Сохраняем очередь только тому же человеку и только если он по-прежнему
+  // может вносить данные (его могли перевести в «только просмотр»).
+  const keep = queue.length > 0 && queueOwner && nextUser?.id === queueOwner && nextUser?.role !== 'viewer';
   if (!keep) {
     clearCache();
     data = emptyData();
@@ -298,7 +305,11 @@ async function flush() {
   flushAgain = false;
   // Частями: очередь, накопленная за долгое время без связи, не должна
   // упираться в предел размера запроса.
-  const sending = queue.slice(0, 50);
+  // Одна операция пользователя (например, удаление сотрудника со всеми
+  // его начислениями) не делится между запросами — режем только по границе.
+  let size = Math.min(queue.length, 50);
+  while (size < queue.length && queue[size].g && queue[size].g === queue[size - 1].g) size += 1;
+  const sending = queue.slice(0, size);
   setStatus('saving');
   try {
     const payload = await api('/ops', { method: 'POST', body: { rev, ops: sending } });
@@ -308,13 +319,13 @@ async function flush() {
     retryDelay = 1000;
     setStatus(queue.length ? 'saving' : 'online');
   } catch (error) {
-    if (error.code === 400 || error.code === 422) {
+    if (error.code === 400 || error.code === 403 || error.code === 422) {
       // Сервер отверг операцию — повторять бессмысленно.
       // Локально изменение уже показано — забираем с сервера настоящие
       // данные, чтобы на экране не осталось того, чего на сервере нет.
       dropSent(sending);
       cache();
-      emit('rejected');
+      emit(error.code === 403 ? 'denied' : 'rejected');
       void pull();
     } else {
       setStatus('offline');
@@ -352,7 +363,9 @@ export function commit(ops) {
     return null;
   }
   applyOps(data, list);
-  queue.push(...list);
+  // Метка группы: операции одного действия отправляются вместе.
+  const group = list.length > 1 ? uid('g') : null;
+  queue.push(...(group ? list.map((item) => ({ ...item, g: group })) : list));
   cache();
   emit('change');
   scheduleFlush();

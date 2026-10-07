@@ -112,8 +112,10 @@ function openPasswordForm() {
     ],
     onSubmit: async (values) => {
       try {
-        await store.changePassword(values.currentPassword, values.newPassword);
-        toast('Код изменён', 'good');
+        const result = await store.changePassword(values.currentPassword, values.newPassword);
+        toast(result?.removedPasskeys
+          ? 'Код изменён. Face ID отвязан — привяжите его заново в настройках'
+          : 'Код изменён', 'good');
         return true;
       } catch (error) {
         toast(error.message || 'Не удалось сменить код', 'danger');

@@ -182,6 +182,14 @@ export function assignmentState(assignment, project) {
   };
 }
 
+// Срок аванса — начало проекта, но не раньше, чем сотрудника назначили:
+// иначе новое назначение сразу «просрочено».
+export function advanceDueDate(assignment, project) {
+  const assigned = String(assignment?.createdAt || '').slice(0, 10);
+  const start = project?.startDate || '';
+  return assigned > start ? assigned : start;
+}
+
 export function projectAssignments(state, projectId) {
   return state.assignments.filter((item) => item.projectId === projectId);
 }
@@ -526,6 +534,7 @@ export function employeeFinance(state, employee) {
     const project = state.projects.find((item) => item.id === assignment.projectId) || null;
     return { assignment, project, state: assignmentState(assignment, project) };
   });
+  const openRows = rows.filter((row) => !(row.project && CLOSED_PROJECT_STATUSES.includes(row.project.status)));
   const payrollAccrued = sum(payrolls, (item) => item.accruedBase);
   const payrollOwed = sum(payrolls, (item) => payrollState(item).leftBase);
   // «К выплате сейчас» — только зарплата, срок которой уже наступил.
@@ -544,9 +553,12 @@ export function employeeFinance(state, employee) {
     rows,
     accruedBase: round(payrollAccrued + sum(rows, (row) => row.state.accruedBase)),
     paidBase: paidOut,
-    dueNowBase: round(payrollDue + sum(rows, (row) => row.state.dueNowBase)),
-    lockedBase: sum(rows, (row) => row.state.lockedBase),
-    owedBase: round(payrollOwed + sum(rows, (row) => row.state.owedBase)),
+    // Как в «Платежах»: работы по отменённым проектам не считаются,
+    // аванс — когда наступил его срок.
+    dueNowBase: round(payrollDue + sum(openRows, (row) => (advanceDueDate(row.assignment, row.project) <= nowIso
+      ? row.state.advanceLeftBase : 0) + (row.state.remainderAvailable ? row.state.remainderBase : 0))),
+    lockedBase: sum(openRows, (row) => row.state.lockedBase),
+    owedBase: round(payrollOwed + sum(openRows, (row) => row.state.owedBase)),
   };
 }
 
@@ -699,17 +711,13 @@ export function payables(state) {
     const employee = state.employees.find((item) => item.id === assignment.employeeId);
     const info = assignmentState(assignment, project);
     if (info.advanceLeftBase > 0.01) {
-      // Срок аванса — начало проекта, но не раньше, чем сотрудника
-      // назначили: иначе новое назначение сразу «просрочено».
-      const assigned = String(assignment.createdAt || '').slice(0, 10);
-      const start = project?.startDate || '';
       rows.push({
         id: `${assignment.id}:advance`,
         kind: 'assignment-advance',
         title: `Аванс — ${employee?.name || 'сотрудник'}`,
         subtitle: project?.name || '',
         amountBase: info.advanceLeftBase,
-        dueDate: assigned > start ? assigned : start,
+        dueDate: advanceDueDate(assignment, project),
         ready: true,
         assignmentId: assignment.id,
         employeeId: assignment.employeeId,
@@ -724,7 +732,8 @@ export function payables(state) {
           ? `${project?.name || ''} · клиент одобрил`
           : `${project?.name || ''} · ждёт одобрения клиента`,
         amountBase: info.remainderBase,
-        dueDate: project?.dueDate || '',
+        // Срока нет: одобренный клиентом остаток можно платить сразу.
+        dueDate: '',
         ready: info.remainderAvailable,
         assignmentId: assignment.id,
         employeeId: assignment.employeeId,

@@ -149,6 +149,13 @@ if [ -z "${APP_PORT:-}" ]; then
     done
   fi
 fi
+# Сайт nginx с таким именем, ведущий на другую программу, — до того, как
+# что-либо установлено, а не после запуска службы.
+SITE_FILE="/etc/nginx/sites-available/${NGINX_SITE}"
+if [ -f "$SITE_FILE" ] && [ "${NGINX_OVERWRITE:-0}" != "1" ] \
+  && ! grep -qs "127.0.0.1:${APP_PORT}" "$SITE_FILE"; then
+  fail "Сайт nginx ${SITE_FILE} уже есть и ведёт на другую программу. Выберите другое имя: APP_SLUG=..."
+fi
 if port_in_use "$APP_PORT" && ! systemctl is-active --quiet "$UNIT" 2>/dev/null; then
   fail "Порт ${APP_PORT} уже занят другой программой. Укажите свободный: APP_PORT=3002 bash install.sh ..."
 fi
@@ -313,13 +320,8 @@ if [ "$DRY_RUN" != "1" ]; then
 fi
 
 say "7/9 nginx"
-SITE_FILE="/etc/nginx/sites-available/${NGINX_SITE}"
 SITE_EXISTED=0
 [ -f "$SITE_FILE" ] && SITE_EXISTED=1
-if [ "$SITE_EXISTED" = "1" ] && [ "${NGINX_OVERWRITE:-0}" != "1" ] \
-  && ! grep -qs "127.0.0.1:${APP_PORT}" "$SITE_FILE"; then
-  fail "Сайт nginx ${SITE_FILE} уже есть и ведёт на другую программу. Выберите другое имя: APP_SLUG=..."
-fi
 if [ "$SITE_EXISTED" = "1" ] && [ "$DRY_RUN" != "1" ]; then
   cp -p "$SITE_FILE" "${SITE_FILE}.before-install"
 fi
@@ -338,6 +340,7 @@ else
     # действительно она, — иначе её default_server помешал бы проверке.
     if [ -L /etc/nginx/sites-enabled/default ] && grep -qs 'root /var/www/html' /etc/nginx/sites-available/default; then
       run rm -f /etc/nginx/sites-enabled/default
+      STOCK_REMOVED=1
     fi
     # -R: в sites-enabled лежат ссылки, а grep -r по ссылкам не ходит.
     if ! grep -Rqs 'default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null; then
@@ -368,6 +371,7 @@ run ln -sf "$SITE_FILE" "/etc/nginx/sites-enabled/${NGINX_SITE}"
 # Стандартную заглушку nginx убираем, только если это действительно она.
 if [ -L /etc/nginx/sites-enabled/default ] && grep -qs 'root /var/www/html' /etc/nginx/sites-available/default; then
   run rm -f /etc/nginx/sites-enabled/default
+  STOCK_REMOVED=1
 fi
 # Настройка не прошла проверку — возвращаем всё как было, чтобы не
 # сломать nginx соседним сайтам (бот и другие студии).
@@ -383,6 +387,7 @@ else
     rm -f "$SITE_FILE"
   fi
   [ "$LINK_EXISTED" = "1" ] || rm -f "/etc/nginx/sites-enabled/${NGINX_SITE}"
+  [ "${STOCK_REMOVED:-0}" = "1" ] && ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
   fail "nginx не принял настройку — изменения отменены, соседние сайты работают как раньше. Подробности: nginx -t"
 fi
 

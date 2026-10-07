@@ -106,8 +106,9 @@ switch (ALIASES[command.toLowerCase()]) {
       process.exit(1);
     }
     try {
-      await setPassword(login, password);
-      console.log(`Код для ${login} изменён`);
+      const result = await setPassword(login, password);
+      console.log(`Код для ${login} изменён. Прежние входы закрыты`
+        + (result?.removedPasskeys ? `, привязки Face ID удалены (${result.removedPasskeys})` : '') + '.');
     } catch (error) {
       console.error(error.message);
       process.exit(1);

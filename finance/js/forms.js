@@ -282,14 +282,20 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
       // Сумма за работу не может стать меньше уже выплаченного: переплата
       // нигде бы не числилась.
       if (assignment) {
-        const paid = assignmentState(assignment, project).paidBase;
-        const accruedBase = actions.baseOf({
-          amount: (Number(values.area) || 0) * (Number(values.rate) || 0),
-          currency: values.rateCurrency,
-          fx: values.rateFx,
-        });
-        if (paid > 0 && accruedBase < paid - 0.01) {
-          return `По этой работе уже выплачено ${formatAmount(paid)} — площадь или ставку нельзя уменьшить ниже этой суммы`;
+        const info = assignmentState(assignment, project);
+        const accrued = (Number(values.area) || 0) * (Number(values.rate) || 0);
+        // В той же валюте сравниваем сами суммы (курс выплат мог отличаться),
+        // при смене валюты — в долларах.
+        if (values.rateCurrency === assignment.currency) {
+          const paidCur = info.advancePaidCur + info.finalPaidCur;
+          if (paidCur > 0 && accrued < paidCur - 0.005) {
+            return `По этой работе уже выплачено ${formatAmount(paidCur, assignment.currency)} — площадь или ставку нельзя уменьшить ниже этой суммы`;
+          }
+        } else {
+          const accruedBase = actions.baseOf({ amount: accrued, currency: values.rateCurrency, fx: values.rateFx });
+          if (info.paidBase > 0 && accruedBase < info.paidBase - 0.01) {
+            return `По этой работе уже выплачено ${formatAmount(info.paidBase)} — площадь или ставку нельзя уменьшить ниже этой суммы`;
+          }
         }
       }
       const saved = actions.saveAssignment({
@@ -431,6 +437,13 @@ export function openIncomeForm(prefill = {}, onDone) {
   projectSelect?.addEventListener('change', () => {
     const chosen = byId('projects', projectSelect.value);
     if (!chosen) return;
+    // Клиент всегда тот же, что у проекта.
+    const clientSelect = panel.querySelector('select[name="clientId"]');
+    if (clientSelect && chosen.clientId) clientSelect.value = chosen.clientId;
+    // Валюту меняем, только пока сумма не введена и это новая запись:
+    // иначе введённые 500 $ молча превратились бы в 500 сомони.
+    const amountInput = panel.querySelector('input[name="amount"]');
+    if (income || String(amountInput?.value || '').trim()) return;
     const target = chosen.currency || 'USD';
     const currencyInput = panel.querySelector('input[name="amount__currency"]');
     if (currencyInput && currencyInput.value !== target) {
@@ -441,8 +454,6 @@ export function openIncomeForm(prefill = {}, onDone) {
       rateInput.value = rateForInput(rateToHuman(chosen.fx));
       rateInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    const clientSelect = panel.querySelector('select[name="clientId"]');
-    if (clientSelect && chosen.clientId && !clientSelect.value) clientSelect.value = chosen.clientId;
   });
 }
 
