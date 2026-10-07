@@ -234,10 +234,15 @@ export async function saveUserName(id, name) {
 
 // --------------------------------------------------------------- синхронизация
 
+// Номер ответа на /ops: чтение, начатое до него, могло увидеть данные
+// без только что сохранённого изменения — такой ответ не применяем.
+let opsEpoch = 0;
+
 export async function pull() {
+  const epoch = opsEpoch;
   try {
     const payload = await api('/state');
-    adopt(payload);
+    if (epoch === opsEpoch) adopt(payload);
     setStatus(queue.length ? 'saving' : 'online');
     return true;
   } catch (error) {
@@ -282,6 +287,7 @@ async function flush() {
   setStatus('saving');
   try {
     const payload = await api('/ops', { method: 'POST', body: { rev, ops: sending } });
+    opsEpoch += 1;
     dropSent(sending);
     adopt(payload);
     retryDelay = 1000;
@@ -327,8 +333,8 @@ export function commit(ops) {
     applyOps(structuredClone(data), list);
   } catch (error) {
     console.error(error);
-    emit('rejected');
-    return data;
+    emit('invalid');
+    return null;
   }
   applyOps(data, list);
   queue.push(...list);

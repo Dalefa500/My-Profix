@@ -16,7 +16,7 @@ import * as forms from '../forms.js';
 import * as actions from '../actions.js';
 import { refresh } from '../refresh.js';
 import { openReport } from '../report.js';
-import { go } from '../router.js';
+import { go, leave } from '../router.js';
 
 const PERIODS = [
   { value: 'month', label: 'Месяц' },
@@ -192,7 +192,7 @@ export function founderDetail(params) {
         if (!ok) return;
         actions.deleteFounder(founder.id);
         toast('Коллега удалён');
-        go('#/founders', { replace: true });
+        leave('#/founders');
       };
     },
   };
@@ -237,7 +237,11 @@ export function openDrawSheet(id) {
           ? 'Удалить запись? Связанный расход студии тоже удалится.'
           : 'Удалить запись?');
         if (!ok) return;
-        actions.deleteDraw(id);
+        const result = actions.deleteDraw(id);
+        if (result?.ok === false) {
+          toast(result.error, 'danger');
+          return;
+        }
         toast('Запись удалена');
         refresh();
       };

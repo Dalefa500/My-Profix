@@ -11,7 +11,9 @@ import {
   EMPLOYEE_PAY_TYPES, BARTER_KINDS, FOUNDER_MOVES,
   expenseGroups, SYSTEM_CATEGORIES, categoryLabel,
 } from './model.js';
-import { assignmentState, assignmentTotals, payrollState, barterState } from './calc.js';
+import {
+  assignmentState, assignmentTotals, assignmentHasPayments, payrollState, barterState,
+} from './calc.js';
 
 const option = (value, label) => ({ value, label });
 
@@ -229,7 +231,7 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
   // подставлял другого человека и работа с авансом уходила к нему.
   // Если по работе уже платили, сотрудника не меняем: выплата сделана
   // конкретному человеку и должна остаться у него.
-  const paidOut = Boolean(assignment?.advancePaidAt || assignment?.remainderPaidAt);
+  const paidOut = assignmentHasPayments(assignment);
   const pieceworkers = state.employees.filter((item) => (paidOut ? false
     : item.payType === 'piecework' && item.active !== false)
     || item.id === assignment?.employeeId);
@@ -389,7 +391,7 @@ export function openIncomeForm(prefill = {}, onDone) {
       }
       if (values.method === 'barter' && values.barterId) {
         const barter = byId('barters', values.barterId);
-        const info = barter ? barterState(state, barter) : null;
+        const info = barter ? barterState(getState(), barter) : null;
         const own = income?.barterId === values.barterId ? Number(income.base) || 0 : 0;
         const room = info ? info.leftBase + own : 0;
         const base = actions.baseOf({ amount: values.amount, currency: values.amountCurrency, fx: values.amountFx });

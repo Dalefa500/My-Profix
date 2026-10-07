@@ -517,6 +517,11 @@ store.subscribe((_, reason) => {
   if (reason === 'rejected') {
     toast('Сервер не принял последнее изменение — данные обновлены', 'danger');
   }
+  if (reason === 'invalid') {
+    // Сообщение показываем следом за «Записано» от формы, чтобы оно не потерялось.
+    setTimeout(() => toast('Не удалось сохранить: данные успели измениться. Проверьте и повторите', 'danger'), 0);
+    return;
+  }
   if (reason === 'auth' && !store.getUser() && !store.isAuthDisabled()) {
     renderAuth();
     return;

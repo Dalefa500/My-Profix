@@ -119,7 +119,8 @@ export function formatCompact(amount, currency = BASE_CURRENCY) {
   const isUsd = (currency || BASE_CURRENCY) === 'USD';
   const suffix = isUsd ? '' : ' TJS';
   const prefix = isUsd ? '$' : '';
-  if (abs >= 1_000_000) return `${sign}${prefix}${formatterFor(0, 1).format(round(abs / 1_000_000, 1))} млн${suffix}`;
+  // 999 600 — это уже «1 млн», а не «1000 тыс.».
+  if (abs >= 999_500) return `${sign}${prefix}${formatterFor(0, 1).format(round(abs / 1_000_000, 1))} млн${suffix}`;
   if (abs >= 10_000) return `${sign}${prefix}${Math.round(abs / 1000)} тыс.${suffix}`;
   return formatAmount(value, currency);
 }

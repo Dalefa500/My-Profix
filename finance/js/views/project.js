@@ -14,7 +14,7 @@ import { formatDate } from '../dates.js';
 import * as forms from '../forms.js';
 import * as actions from '../actions.js';
 import { refresh } from '../refresh.js';
-import { go } from '../router.js';
+import { go, leave } from '../router.js';
 
 function planRow(project, item) {
   const tone = item.status === 'received' ? 'good' : item.overdue ? 'danger' : 'warn';
@@ -197,7 +197,7 @@ export default function projectDetail(params) {
         if (!ok) return;
         actions.deleteProject(project.id);
         toast('Проект удалён');
-        go('#/projects', { replace: true });
+        leave('#/projects');
       };
 
       root.querySelector('[data-act="status"]').onclick = () => openStatusSheet(project);

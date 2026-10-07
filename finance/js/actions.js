@@ -6,7 +6,9 @@ import * as store from './store.js';
 import { op } from './ops.js';
 import { toBase, defaultRate, round, formatAmount, isBase } from './money.js';
 import { today, monthKey, monthLabel, addMonths, daysInMonth } from './dates.js';
-import { assignmentState, payrollMonthsFor, payrollState, clampPercent, projectPlan } from './calc.js';
+import {
+  assignmentState, assignmentHasPayments, payrollMonthsFor, payrollState, clampPercent, projectPlan,
+} from './calc.js';
 import { categoryLabel } from './model.js';
 
 const { uid, getState } = store;
@@ -76,6 +78,8 @@ export function defaultPaymentPlan(price, startDate, dueDate, percent = 50, curr
 }
 
 // Пересчёт плана платежей проекта под новую цену (и валюту).
+// Полученные платежи не меняются; разница ложится на неоплаченные,
+// начиная с последнего, а если всё уже оплачено — отдельной строкой.
 function replanOps(existing, record) {
   const state = getState();
   const receivedBase = state.incomes
@@ -85,19 +89,25 @@ function replanOps(existing, record) {
   const fx = isBase(record.currency) ? 1 : (Number(record.fx) > 0 ? Number(record.fx) : 1);
   const whole = record.currency === 'TJS';
   const fit = (value) => (whole ? Math.round(value) : round(value));
+  // Вниз — чтобы полученное не оказалось меньше суммы платежа из-за
+  // округления (иначе висел бы «долг» в пять центов).
+  const fitDown = (value) => (whole ? Math.floor(value + 1e-6) : Math.floor(value * 100 + 1e-6) / 100);
   const sameCurrency = existing.currency === record.currency;
-  // Суммы и уже полученное — в валюте нового договора.
-  const rows = plan.map((item) => ({
-    item,
-    amount: sameCurrency ? Number(item.amount) || 0 : fit(item.base / fx),
-    floor: Math.min(sameCurrency ? Number(item.amount) || 0 : fit(item.base / fx), item.coveredBase / fx),
-  }));
+  const rows = plan.map((item) => {
+    const received = item.status === 'received';
+    const coveredAmount = item.coveredBase / fx;
+    let amount;
+    if (sameCurrency) amount = Number(item.amount) || 0;
+    else amount = received ? fitDown(coveredAmount) : fit(item.base / fx);
+    const floor = received ? amount : Math.min(amount, fitDown(coveredAmount));
+    return { item, amount, floor, received };
+  });
   let diff = round(record.price - rows.reduce((acc, row) => acc + row.amount, 0));
+  if (whole) diff = Math.round(diff);
   for (let index = rows.length - 1; index >= 0 && Math.abs(diff) > 0.004; index -= 1) {
     const row = rows[index];
-    const received = row.amount - row.floor <= 0.004;
+    if (row.received) continue;
     if (diff > 0) {
-      if (received) continue;
       row.amount = round(row.amount + diff);
       diff = 0;
     } else {
@@ -110,7 +120,13 @@ function replanOps(existing, record) {
   }
   const ops = [];
   for (const row of rows) {
-    const amount = Math.max(0, whole ? row.amount : round(row.amount));
+    const amount = Math.max(0, whole ? Math.round(row.amount) : round(row.amount));
+    // Платёж, сжавшийся до нуля и ничем не оплаченный, убираем совсем —
+    // иначе в плане висела бы строка на $0.
+    if (amount <= 0.004 && row.item.coveredBase <= 0.004) {
+      ops.push(op.dropItem('projects', existing.id, 'payments', row.item.id));
+      continue;
+    }
     if (amount !== Number(row.item.amount)) {
       ops.push(op.putItem('projects', existing.id, 'payments', { id: row.item.id, amount }));
     }
@@ -331,7 +347,7 @@ export function saveAssignment(values, id = null) {
   if (values.stage) record.stage = values.stage;
   if (id) {
     const existing = store.byId('assignments', id);
-    if (existing && (existing.advancePaidAt || existing.remainderPaidAt)) record.employeeId = existing.employeeId;
+    if (existing && assignmentHasPayments(existing)) record.employeeId = existing.employeeId;
     return store.patch('assignments', id, record);
   }
   return store.insert('assignments', { stage: 'assigned', ...record }, 'asg');
@@ -364,7 +380,7 @@ export function payAssignment(assignmentId, part, values = {}) {
 
   if (part === 'advance' && info.advancePaid) return { ok: false, error: 'Аванс уже выплачен' };
   if (part === 'final') {
-    if (info.remainderPaid) return { ok: false, error: 'Остаток уже выплачен' };
+    if (info.remainderBase <= 0.01) return { ok: false, error: 'Остаток уже выплачен' };
     if (!info.remainderAvailable) {
       return { ok: false, error: 'Остаток станет доступен после того, как клиент одобрит работу' };
     }
@@ -381,7 +397,13 @@ export function payAssignment(assignmentId, part, values = {}) {
   // бы не числилась и просто пропала бы из учёта. Небольшой допуск —
   // на округление при пересчёте между валютами.
   const limitBase = part === 'advance' ? info.accruedBase : info.remainderBase;
-  if (payment.base > limitBase * 1.005 + 0.01) {
+  // В валюте ставки сравниваем сами суммы, в другой валюте — доллары
+  // (с допуском в цент на округление пересчёта).
+  const limitAmount = part === 'advance' ? info.accrued : info.remainder;
+  const over = payment.currency === assignment.currency
+    ? payment.amount > limitAmount + 0.005
+    : payment.base > limitBase + 0.01;
+  if (over) {
     return {
       ok: false,
       error: part === 'advance'
@@ -407,13 +429,16 @@ export function payAssignment(assignmentId, part, values = {}) {
     createdAt: today(),
   };
 
-  const changes = part === 'advance'
-    ? { advancePaidAt: expense.date, advanceExpenseId: expense.id, advancePaidBase: payment.base }
-    : { remainderPaidAt: expense.date, remainderExpenseId: expense.id, remainderPaidBase: payment.base, stage: 'approved' };
-  store.commit([
+  // Каждая выплата — отдельной строкой в payments: остаток можно отдать
+  // частями, а удаление одной выплаты убирает только её.
+  const ops = [
     op.insert('expenses', expense),
-    op.patch('assignments', assignmentId, changes),
-  ]);
+    op.putItem('assignments', assignmentId, 'payments', {
+      id: uid('apt'), expenseId: expense.id, part, date: expense.date, base: payment.base,
+    }),
+  ];
+  if (part === 'final') ops.push(op.patch('assignments', assignmentId, { stage: 'approved' }));
+  store.commit(ops);
   return { ok: true, expense };
 }
 
@@ -493,7 +518,16 @@ export function payPayroll(payrollId, values = {}) {
     fx: values.fx ?? payroll.fx,
   }, state.settings);
   if (payment.base <= 0) return { ok: false, error: 'Укажите сумму больше нуля' };
-  if (payment.base > info.leftBase * 1.005 + 0.01) {
+  // В валюте начисления сравниваем сами суммы: 5001 сомони при долге
+  // 5000 — это переплата, хоть в долларах разница и меньше цента-двух.
+  const paidInCurrency = (payroll.payments || []).reduce((total, item) => total + (item.currency === payroll.currency
+    ? Number(item.amount) || 0
+    : (Number(item.base) || 0) / (Number(payroll.fx) || 1)), 0);
+  const leftInCurrency = Math.max(0, (Number(payroll.amount) || 0) - paidInCurrency);
+  const over = payment.currency === payroll.currency
+    ? payment.amount > leftInCurrency + 0.005
+    : payment.base > info.leftBase + 0.01;
+  if (over) {
     return { ok: false, error: `Осталось выплатить ${formatAmount(info.leftBase)} — больше начисленного выплатить нельзя` };
   }
 
@@ -582,11 +616,18 @@ export function deleteIncome(id) {
 export function deleteExpense(id) {
   const state = getState();
   const expense = state.expenses.find((item) => item.id === id);
-  if (!expense) return null;
+  if (!expense) return { ok: false, error: 'Операция не найдена' };
+  if (expense.source === 'founder' && expense.founderMoveId) {
+    const problem = spendDeleteProblem(state, store.byId('draws', expense.founderMoveId));
+    if (problem) return { ok: false, error: problem };
+  }
   const ops = [op.remove('expenses', id)];
 
   if (expense.source === 'assignment' && expense.assignmentId) {
     const assignment = state.assignments.find((item) => item.id === expense.assignmentId);
+    if ((assignment?.payments || []).some((item) => item.expenseId === id)) {
+      ops.push(op.dropItem('assignments', assignment.id, 'payments', id));
+    }
     if (assignment?.advanceExpenseId === id) {
       ops.push(op.patch('assignments', assignment.id, {}, ['advanceExpenseId', 'advancePaidAt', 'advancePaidBase']));
     }
@@ -611,7 +652,8 @@ export function deleteExpense(id) {
   if (expense.source === 'founder' && expense.founderMoveId) {
     ops.push(op.remove('draws', expense.founderMoveId));
   }
-  return store.commit(ops);
+  store.commit(ops);
+  return { ok: true };
 }
 
 // ------------------------------------------------ планируемые платежи
@@ -783,13 +825,21 @@ export function saveDraw(values, id = null) {
     const total = (type) => others.filter((item) => (item.kind || 'draw') === type)
       .reduce((acc, item) => acc + (Number(item.base) || 0), 0);
     const owed = round(Math.max(0, total('spend') - total('repay')));
-    if (payment.base > owed * 1.005 + 0.01) {
+    if (payment.base > owed + 0.01) {
       return {
         ok: false,
         error: owed > 0
           ? `Студия должна ${founder?.name || 'коллеге'} ${formatAmount(owed)} — больше вернуть нельзя`
           : `Студия ничего не должна ${founder?.name || 'коллеге'}. Если деньги взяли себе, выберите «Взял для себя»`,
       };
+    }
+  }
+  // Уменьшили или убрали расход, по которому студия уже вернула деньги, —
+  // возвращённое оказалось бы больше долга, и разница нигде бы не числилась.
+  if (existing && (existing.kind || 'draw') === 'spend') {
+    const overflow = repayOverflow(state, existing.founderId, id, kind === 'spend' && values.founderId === existing.founderId ? payment.base : 0);
+    if (overflow > 0.01) {
+      return { ok: false, error: `Студия уже вернула по этому долгу больше — сумма не может быть меньше на ${formatAmount(overflow)}` };
     }
   }
   const drawId = id || uid('drw');
@@ -841,11 +891,31 @@ export function saveDraw(values, id = null) {
   return { ok: true };
 }
 
+// Насколько возвращённое коллеге превысит его расходы за студию, если
+// запись ignoreId убрать (и при желании добавить расход extraSpend).
+function repayOverflow(state, founderId, ignoreId, extraSpend = 0) {
+  const others = (state.draws || []).filter((item) => item.founderId === founderId && item.id !== ignoreId);
+  const total = (type) => others.filter((item) => (item.kind || 'draw') === type)
+    .reduce((acc, item) => acc + (Number(item.base) || 0), 0);
+  return round(total('repay') - total('spend') - extraSpend);
+}
+
+function spendDeleteProblem(state, draw) {
+  if (!draw || (draw.kind || 'draw') !== 'spend') return null;
+  const overflow = repayOverflow(state, draw.founderId, draw.id);
+  return overflow > 0.01
+    ? 'Студия уже вернула коллеге деньги по этому расходу. Сначала удалите или уменьшите запись «Студия вернула долг».'
+    : null;
+}
+
 export function deleteDraw(id) {
   const draw = store.byId('draws', id);
+  const problem = spendDeleteProblem(getState(), draw);
+  if (problem) return { ok: false, error: problem };
   const ops = [op.remove('draws', id)];
   if (draw?.expenseId) ops.push(op.remove('expenses', draw.expenseId));
-  return store.commit(ops);
+  store.commit(ops);
+  return { ok: true };
 }
 
 // ------------------------------------------------------------ настройки

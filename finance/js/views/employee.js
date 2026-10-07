@@ -10,7 +10,7 @@ import { monthLabel, formatDate } from '../dates.js';
 import * as forms from '../forms.js';
 import * as actions from '../actions.js';
 import { refresh } from '../refresh.js';
-import { go } from '../router.js';
+import { go, leave } from '../router.js';
 import { openReport } from '../report.js';
 import { openOperation } from '../operation.js';
 
@@ -67,9 +67,9 @@ export default function employeeDetail(params) {
   const finance = employeeFinance(state, employee);
   const isFixed = employee.payType === 'fixed';
 
+  // Все выплаты, а не последние десять: «Выплачено» выше считается по ним всем.
   const payments = state.expenses
-    .filter((item) => item.employeeId === employee.id)
-    .slice(0, 10);
+    .filter((item) => item.employeeId === employee.id);
 
   const body = html`
     <div class="card">
@@ -146,7 +146,7 @@ export default function employeeDetail(params) {
         if (!ok) return;
         actions.deleteEmployee(employee.id);
         toast('Сотрудник удалён');
-        go('#/employees', { replace: true });
+        leave('#/employees');
       };
       root.querySelectorAll('[data-pay-salary]').forEach((button) => {
         button.onclick = () => forms.openPayrollPayment(button.dataset.paySalary, refresh);

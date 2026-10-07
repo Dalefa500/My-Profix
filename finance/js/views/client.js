@@ -12,7 +12,7 @@ import { formatDate } from '../dates.js';
 import * as forms from '../forms.js';
 import * as actions from '../actions.js';
 import { refresh } from '../refresh.js';
-import { go } from '../router.js';
+import { go, leave } from '../router.js';
 import { openReport } from '../report.js';
 import { openOperation } from '../operation.js';
 import { openBarterSheet } from '../barter.js';
@@ -124,7 +124,7 @@ export default function clientDetail(params) {
         if (!ok) return;
         actions.deleteClient(client.id);
         toast('Клиент удалён');
-        go('#/clients', { replace: true });
+        leave('#/clients');
       };
     },
   };

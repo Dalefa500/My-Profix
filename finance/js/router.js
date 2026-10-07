@@ -73,8 +73,14 @@ export function closeSheetEntry() {
   window.history.back();
   // Подстраховка: если браузер так и не сообщил о возврате.
   clearTimeout(backTimer);
-  backTimer = setTimeout(flushBackQueue, 600);
+  backTimer = setTimeout(() => {
+    // Сообщение о возврате, пришедшее позже, — эхо этого же шага.
+    staleBack = true;
+    flushBackQueue();
+  }, 1500);
 }
+
+let staleBack = false;
 
 function flushBackQueue() {
   clearTimeout(backTimer);
@@ -88,6 +94,23 @@ export function go(path, { replace = false } = {}) {
     backQueue.push(() => go(path, { replace }));
     return;
   }
+  // Переход прямо из открытого листа (например, после создания проекта):
+  // запись листа занимает новый экран, а не остаётся лишним шагом «назад».
+  if (sheetEntry && window.history.state?.sheet) {
+    sheetEntry = null;
+    if (replace) {
+      // Заменить нужно экран под листом: сначала убираем запись листа.
+      backQueue = [() => go(path, { replace: true })];
+      window.history.back();
+      clearTimeout(backTimer);
+      backTimer = setTimeout(() => { staleBack = true; flushBackQueue(); }, 1500);
+      return;
+    }
+    depth += 1;
+    window.history.replaceState({ depth }, '', `${window.location.pathname}${window.location.search}${path}`);
+    resolve();
+    return;
+  }
   const url = `${window.location.pathname}${window.location.search}${path}`;
   if (replace) {
     window.history.replaceState({ depth }, '', url);
@@ -96,6 +119,18 @@ export function go(path, { replace = false } = {}) {
     window.history.pushState({ depth }, '', url);
   }
   resolve();
+}
+
+// Уйти с экрана удалённой записи: шагом назад, если есть куда (обычно это
+// список, откуда пришли), иначе — заменой на список. Так после удаления
+// не остаётся лишней записи в истории и «назад» не тратится впустую.
+export function leave(fallback) {
+  if (backQueue) {
+    backQueue.push(() => leave(fallback));
+    return;
+  }
+  if (depth > 0) window.history.back();
+  else go(fallback, { replace: true });
 }
 
 export function resolve() {
@@ -133,12 +168,24 @@ function scheduleResolve() {
 }
 
 export function start() {
+  // Перезагрузка, когда сверху была запись листа: листа уже нет — тихо
+  // возвращаемся на запись экрана, иначе «назад» потребовал бы лишнего нажатия.
+  depth = Number(window.history.state?.depth) || 0;
+  if (window.history.state?.sheet) {
+    backQueue = [];
+    window.history.back();
+    backTimer = setTimeout(() => { staleBack = true; flushBackQueue(); }, 1500);
+  }
   window.addEventListener('popstate', (event) => {
     depth = Number(event.state?.depth) || 0;
     // Это мы сами убрали запись закрытого листа: экран тот же.
     if (backQueue) {
       flushBackQueue();
       return;
+    }
+    if (staleBack) {
+      staleBack = false;
+      if (window.location.hash === current.path) return;
     }
     // Жест «назад» при открытом листе закрывает только лист.
     if (sheetEntry) {

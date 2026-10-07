@@ -67,8 +67,11 @@ export function openOperation(tab, id) {
         closeSheet();
         const ok = await confirmDialog('Удалить операцию? Это изменит отчёты за период.');
         if (!ok) return;
-        if (isIncome) actions.deleteIncome(id);
-        else actions.deleteExpense(id);
+        const result = isIncome ? actions.deleteIncome(id) : actions.deleteExpense(id);
+        if (result?.ok === false) {
+          toast(result.error, 'danger');
+          return;
+        }
         toast('Операция удалена');
         refresh();
       };

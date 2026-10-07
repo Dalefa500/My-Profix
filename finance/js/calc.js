@@ -54,30 +54,50 @@ export function isClientApproved(assignment, project) {
 }
 
 // Сводный статус сдельного сотрудника в проекте (пункт 8 ТЗ).
+// Была ли по работе хоть одна выплата (новая или старого формата).
+export function assignmentHasPayments(assignment) {
+  return Boolean(assignment?.advancePaidAt || assignment?.remainderPaidAt
+    || (Array.isArray(assignment?.payments) && assignment.payments.length));
+}
+
 export function assignmentState(assignment, project) {
   const base = assignmentTotals(assignment);
-  const advancePaid = Boolean(assignment?.advancePaidAt);
-  const remainderPaid = Boolean(assignment?.remainderPaidAt);
   const approved = isClientApproved(assignment, project);
   const fx = Number(assignment?.fx) > 0 ? Number(assignment.fx) : 1;
   const known = (value) => value !== undefined && value !== null && Number.isFinite(Number(value));
 
-  // Сколько реально выплачено. Раньше «выплачено» пересчитывалось по
-  // текущей площади и ставке — и если их правили после аванса, история
-  // переписывалась задним числом. Теперь берётся сумма самой выплаты
-  // (у старых записей, где её нет, — как раньше).
-  const advancePaidBase = advancePaid
-    ? (known(assignment.advancePaidBase) ? Number(assignment.advancePaidBase) : base.advanceBase) : 0;
-  const remainderPaidBase = remainderPaid
-    ? (known(assignment.remainderPaidBase) ? Number(assignment.remainderPaidBase) : base.remainderBase) : 0;
-  // После аванса остаток — это всё начисленное минус то, что уже отдали:
-  // увеличили площадь — разница попадёт в остаток, выплатили меньше — тоже.
-  const remainderBase = advancePaid ? round(Math.max(0, base.accruedBase - advancePaidBase)) : base.remainderBase;
+  // Сколько реально выплачено. Новые выплаты лежат списком payments
+  // (их может быть несколько: остаток можно отдать частями или доплатить,
+  // если площадь потом увеличили). У старых записей — одиночные поля
+  // advancePaidAt/remainderPaidAt с суммой или без неё.
+  const payments = Array.isArray(assignment?.payments) ? assignment.payments : [];
+  const partSum = (part) => sum(payments.filter((item) => item.part === part), (item) => item.base);
+  const hasPart = (part) => payments.some((item) => item.part === part);
+  const legacyAdvance = assignment?.advancePaidAt && !hasPart('advance');
+  const legacyFinal = assignment?.remainderPaidAt && !hasPart('final');
+  const advancePaid = Boolean(assignment?.advancePaidAt) || hasPart('advance');
+  const advancePaidBase = round(partSum('advance') + (legacyAdvance
+    ? (known(assignment.advancePaidBase) ? Number(assignment.advancePaidBase) : base.advanceBase) : 0));
+  const finalPaidBase = round(partSum('final') + (legacyFinal
+    ? (known(assignment.remainderPaidBase) ? Number(assignment.remainderPaidBase) : base.remainderBase) : 0));
+  // У старых записей, оплаченных полностью, «выплачено» = начислено
+  // (без копеечной разницы от округления двух половин).
+  const legacyFull = legacyFinal && !payments.length
+    && !known(assignment.remainderPaidBase) && !known(assignment.advancePaidBase);
+  const paidBase = legacyFull ? base.accruedBase : round(advancePaidBase + finalPaidBase);
+
+  // Остаток — всё начисленное минус то, что уже отдали: увеличили площадь —
+  // разница попадёт в остаток, выплатили меньше — тоже.
+  const remainderBase = legacyFull ? 0 : round(Math.max(0,
+    (advancePaid ? base.accruedBase - advancePaidBase : base.remainderBase) - finalPaidBase));
   const totals = {
     ...base,
     remainderBase,
-    remainder: advancePaid ? round(remainderBase / fx) : base.remainder,
+    // Пока ничего не платили — точная сумма в валюте ставки (без пересчёта).
+    remainder: !advancePaid && finalPaidBase === 0 && !legacyFull ? base.remainder : round(remainderBase / fx),
   };
+  const remainderPaid = (finalPaidBase > 0 || legacyFull) && remainderBase <= 0.01;
+  const remainderPartly = finalPaidBase > 0 && !remainderPaid;
   const remainderAvailable = approved && !remainderPaid && totals.remainder > 0;
 
   let label;
@@ -85,6 +105,9 @@ export function assignmentState(assignment, project) {
   if (remainderPaid) {
     label = 'Остаток выплачен';
     tone = 'good';
+  } else if (remainderPartly && remainderAvailable) {
+    label = 'Остаток выплачен частично';
+    tone = 'warn';
   } else if (remainderAvailable) {
     label = 'Остаток доступен к выплате';
     tone = 'good';
@@ -105,10 +128,6 @@ export function assignmentState(assignment, project) {
   }
 
   // К выплате прямо сейчас: невыплаченный аванс + доступный остаток.
-  // У старых записей, оплаченных полностью, «выплачено» = начислено
-  // (без копеечной разницы от округления двух половин).
-  const legacyFull = remainderPaid && !known(assignment.remainderPaidBase) && !known(assignment.advancePaidBase);
-  const paidBase = legacyFull ? base.accruedBase : round(advancePaidBase + remainderPaidBase);
   const dueNowBase = round(
     (advancePaid ? 0 : totals.advanceBase)
     + (remainderAvailable ? totals.remainderBase : 0),
@@ -159,29 +178,43 @@ export function projectDirectExpenses(state, projectId) {
 // в порядке срока — статусы плана всегда синхронны фактическим приходам.
 export function projectPlan(project, receivedBase) {
   const fx = Number(project?.fx) > 0 ? Number(project.fx) : 1;
+  const base = isBase(project?.currency);
+  const tol = planTolerance(project);
   const items = [...(project?.payments || [])].sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
   let left = Number(receivedBase) || 0;
   return items.map((item) => {
-    const base = toBase(item.amount, project.currency, fx);
-    const covered = Math.min(base, Math.max(0, left));
+    const itemBase = toBase(item.amount, project.currency, fx);
+    const covered = Math.min(itemBase, Math.max(0, left));
     left = round(left - covered);
-    const status = covered >= base - 0.01 && base > 0 ? 'received'
-      : covered > 0 ? 'partial' : 'planned';
+    // Недостача меньше одной сомони — это округление при пересчёте
+    // из долларов, а не долг: платёж считается полученным.
+    const status = covered >= itemBase - tol && itemBase > 0 ? 'received'
+      : covered > tol ? 'partial' : 'planned';
     const overdue = status !== 'received' && item.dueDate && item.dueDate < today();
+    const leftBase = status === 'received' ? 0 : round(itemBase - covered);
     // Остаток в валюте договора: пока платёж не тронут, это его собственная
-    // сумма (целые сомони так и остаются целыми), иначе — пересчёт остатка.
-    const leftAmount = covered <= 0.004 ? Number(item.amount) || 0
-      : round(Math.max(0, (base - covered) / (isBase(project.currency) ? 1 : fx)));
+    // сумма (целые сомони так и остаются целыми), иначе — сумма минус
+    // полученное, пересчитанное по курсу договора.
+    const leftAmount = status === 'received' ? 0
+      : covered <= 0.004 ? Number(item.amount) || 0
+        : round(Math.max(0, (Number(item.amount) || 0) - (base ? covered : covered / fx)));
     return {
       ...item,
-      base,
+      base: itemBase,
       coveredBase: round(covered),
-      leftBase: round(base - covered),
+      leftBase,
       leftAmount,
       status,
       overdue,
     };
   });
+}
+
+// Допуск на округление: у договора в сомони — одна сомони, в долларах — цент.
+export function planTolerance(project) {
+  if (isBase(project?.currency)) return 0.01;
+  const fx = Number(project?.fx) > 0 ? Number(project.fx) : 1;
+  return Math.max(0.01, round(fx, 2));
 }
 
 export function projectFinance(state, project) {
@@ -199,7 +232,8 @@ export function projectFinance(state, project) {
   const contractBase = round(priceBase + extraPlanBase);
   const plan = projectPlan(project, receivedBase);
   const cancelled = CLOSED_PROJECT_STATUSES.includes(project.status);
-  const toReceiveBase = cancelled ? 0 : Math.max(0, round(contractBase - receivedBase));
+  const owed = round(contractBase - receivedBase);
+  const toReceiveBase = cancelled || owed <= planTolerance(project) ? 0 : owed;
 
   const assignments = projectAssignments(state, project.id);
   const states = assignments.map((item) => assignmentState(item, project));
@@ -567,7 +601,7 @@ export function receivables(state) {
     }
     // Часть долга, не покрытая планом платежей, показывается отдельной строкой.
     const uncovered = round(budget);
-    if (uncovered > 0.01) {
+    if (uncovered > planTolerance(project)) {
       rows.push({
         amount: isBase(project.currency) ? uncovered
           : round(uncovered / (Number(project.fx) > 0 ? Number(project.fx) : 1)),

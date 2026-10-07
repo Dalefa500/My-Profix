@@ -118,6 +118,15 @@ fi
 # Порт: у основной копии 3000, у остальных — уже записанный в службе
 # или первый свободный.
 EXISTING_UNIT="/etc/systemd/system/${UNIT}.service"
+# Не трогаем чужое: служба, пользователь и сайт nginx с таким же именем
+# могут принадлежать другой программе (например, боту).
+if [ -f "$EXISTING_UNIT" ] && ! grep -qx "WorkingDirectory=${APP_DIR}" "$EXISTING_UNIT"; then
+  fail "Служба ${UNIT} уже есть и относится к другой программе. Выберите другое имя: APP_SLUG=..."
+fi
+if [ ! -f "$EXISTING_UNIT" ] && id "$APP_USER" >/dev/null 2>&1 \
+  && [ "$(getent passwd "$APP_USER" | cut -d: -f6)" != "/opt/${APP_USER}" ]; then
+  fail "Пользователь ${APP_USER} уже есть в системе. Выберите другое имя: APP_SLUG=..."
+fi
 if [ -z "${APP_PORT:-}" ] && [ -f "$EXISTING_UNIT" ]; then
   APP_PORT="$(sed -n 's/^Environment=PORT=//p' "$EXISTING_UNIT" | head -1)"
 fi
@@ -247,6 +256,10 @@ env_line() {
   env_line BRAND_INITIALS "${BRAND_INITIALS:-}"
   env_line BRAND_COLOR "${BRAND_COLOR:-}"
   env_line BOOTSTRAP_USERS "${BOOTSTRAP_USERS:-}"
+  # Строки, дописанные вручную, сохраняем как есть.
+  if [ -f "$ENV_FILE" ]; then
+    grep -Ev '^[[:space:]]*(#|$)|^(APP_SLUG|BRAND_DIR|COMPANY_NAME|BRAND_WORDMARK|BRAND_SUBTITLE|BRAND_TAGLINE|BRAND_INITIALS|BRAND_COLOR|BOOTSTRAP_USERS)=' "$ENV_FILE" || true
+  fi
 } | write "$ENV_FILE"
 run chmod 640 "$ENV_FILE"
 run chown "root:${APP_USER}" "$ENV_FILE"
@@ -295,7 +308,16 @@ fi
 
 say "7/9 nginx"
 SITE_FILE="/etc/nginx/sites-available/${NGINX_SITE}"
-if [ -f "$SITE_FILE" ] && [ "${NGINX_OVERWRITE:-0}" != "1" ]; then
+SITE_EXISTED=0
+[ -f "$SITE_FILE" ] && SITE_EXISTED=1
+if [ "$SITE_EXISTED" = "1" ] && [ "${NGINX_OVERWRITE:-0}" != "1" ] \
+  && ! grep -qs "127.0.0.1:${APP_PORT}" "$SITE_FILE"; then
+  fail "Сайт nginx ${SITE_FILE} уже есть и ведёт на другую программу. Выберите другое имя: APP_SLUG=..."
+fi
+if [ "$SITE_EXISTED" = "1" ] && [ "$DRY_RUN" != "1" ]; then
+  cp -p "$SITE_FILE" "${SITE_FILE}.before-install"
+fi
+if [ "$SITE_EXISTED" = "1" ] && [ "${NGINX_OVERWRITE:-0}" != "1" ]; then
   note "Файл ${SITE_FILE} уже есть — не трогаем (в нём может быть HTTPS от certbot)."
   note "Переписать заново: NGINX_OVERWRITE=1 bash install.sh ..."
 else
@@ -311,7 +333,8 @@ else
     if [ -L /etc/nginx/sites-enabled/default ] && grep -qs 'root /var/www/html' /etc/nginx/sites-available/default; then
       run rm -f /etc/nginx/sites-enabled/default
     fi
-    if ! grep -rqs 'default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null; then
+    # -R: в sites-enabled лежат ссылки, а grep -r по ссылкам не ходит.
+    if ! grep -Rqs 'default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null; then
       LISTEN="listen 80 default_server;"
     fi
   fi
@@ -333,15 +356,35 @@ server {
 }
 NGINX
 fi
+LINK_EXISTED=0
+[ -e "/etc/nginx/sites-enabled/${NGINX_SITE}" ] && LINK_EXISTED=1
 run ln -sf "$SITE_FILE" "/etc/nginx/sites-enabled/${NGINX_SITE}"
 # Стандартную заглушку nginx убираем, только если это действительно она.
 if [ -L /etc/nginx/sites-enabled/default ] && grep -qs 'root /var/www/html' /etc/nginx/sites-available/default; then
   run rm -f /etc/nginx/sites-enabled/default
 fi
-run nginx -t
-run systemctl reload nginx
+# Настройка не прошла проверку — возвращаем всё как было, чтобы не
+# сломать nginx соседним сайтам (бот и другие студии).
+if [ "$DRY_RUN" = "1" ]; then
+  note "+ nginx -t && systemctl reload nginx"
+elif nginx -t; then
+  systemctl reload nginx
+  rm -f "${SITE_FILE}.before-install"
+else
+  if [ "$SITE_EXISTED" = "1" ]; then
+    mv -f "${SITE_FILE}.before-install" "$SITE_FILE"
+  else
+    rm -f "$SITE_FILE"
+  fi
+  [ "$LINK_EXISTED" = "1" ] || rm -f "/etc/nginx/sites-enabled/${NGINX_SITE}"
+  fail "nginx не принял настройку — изменения отменены, соседние сайты работают как раньше. Подробности: nginx -t"
+fi
 
-if command -v ufw >/dev/null 2>&1 && ! ufw status 2>/dev/null | grep -q 'Status: active'; then
+# Файрвол включаем только при первой установке основной копии: на сервере,
+# где уже живут другие программы, включённый ufw мог бы закрыть их порты
+# (или SSH на нестандартном порту).
+if [ "$IS_MAIN" = "1" ] && [ "$LINK_EXISTED" = "0" ] \
+  && command -v ufw >/dev/null 2>&1 && ! ufw status 2>/dev/null | grep -q 'Status: active'; then
   run ufw allow OpenSSH
   run ufw allow 'Nginx Full'
   run ufw --force enable

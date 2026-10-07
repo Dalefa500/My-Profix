@@ -346,9 +346,12 @@ function numberProblem(form, list) {
   const byName = new Map(list.map((field) => [field.name, field]));
   for (const input of form.querySelectorAll('input[data-num]')) {
     const raw = input.value.trim();
-    if (!raw) continue;
     // Скрытые поля (например, ставка у штатного сотрудника) не проверяем.
     if (input.closest('[hidden], .is-hidden')) continue;
+    // Пустой курс у суммы в сомони — не «по умолчанию», а ошибка:
+    // иначе сумма сохранилась бы один к одному как доллары.
+    if (!raw && input.name.endsWith('__rate')) return { input, message: 'Укажите курс: сколько сомони за 1 $' };
+    if (!raw) continue;
     const number = parseNum(raw);
     if (!Number.isFinite(number)) return { input, message: 'Введите число, например 1250 или 12,5' };
     const isRate = input.name.endsWith('__rate');
@@ -505,7 +508,8 @@ export function bindMoney(scope) {
         rateOwner = currency;
       }
       // В операции хранится множитель к доллару, человек видит курс НБТ.
-      fxInput.value = isBase ? 1 : humanToRate(parseNum(rateInput.value));
+      const typed = Number(parseNum(rateInput.value));
+      fxInput.value = isBase ? 1 : humanToRate(typed > 0 ? typed : usdRate(settings));
       if (baseOut) {
         const base = toBase(Number(parseNum(amountInput.value)) || 0, currency, Number(fxInput.value) || 1);
         baseOut.textContent = isBase ? '' : `= ${formatAmount(base)}`;

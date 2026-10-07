@@ -134,8 +134,11 @@ export function openBarterUseForm(id, onDone = refresh) {
       // клиент оплачивает деньгами — это обычный долг по проекту, и он
       // виден в «Платежах», пока клиент его не погасит.
       const base = actions.baseOf({ amount, currency: values.amountCurrency, fx: values.amountFx });
-      if (base > row.leftBase + 0.01) {
-        return `С имущества можно списать не больше ${formatAmount(row.leftBase)}. Остальное клиент доплачивает деньгами — запишите обычный приход.`;
+      // Остаток берём на момент сохранения: пока форма была открыта,
+      // данные могли обновиться с другого телефона.
+      const fresh = barterState(getState(), byId('barters', id)) || row;
+      if (base > fresh.leftBase + 0.01) {
+        return `С имущества можно списать не больше ${formatAmount(fresh.leftBase)}. Остальное клиент доплачивает деньгами — запишите обычный приход.`;
       }
       const record = {
         amount: values.amount,

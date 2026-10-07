@@ -345,9 +345,17 @@ async function getDeviceSecret() {
   return deviceSecret;
 }
 
-async function deviceCookie(req, userId) {
-  const sign = createHmac('sha256', await getDeviceSecret()).update(userId).digest('hex');
-  const parts = [`${DEVICE_COOKIE}=${userId}.${sign}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${400 * 24 * 3600}`];
+// Подпись привязана к текущему коду пользователя (его хэшу): сменили код
+// или удалили пользователя — старые метки перестают действовать.
+async function deviceSignature(user) {
+  return createHmac('sha256', await getDeviceSecret())
+    .update(`${user.id}.${user.hash || ''}`)
+    .digest();
+}
+
+async function deviceCookie(req, user) {
+  const sign = (await deviceSignature(user)).toString('hex');
+  const parts = [`${DEVICE_COOKIE}=${user.id}.${sign}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${400 * 24 * 3600}`];
   if (isSecure(req)) parts.push('Secure');
   return parts.join('; ');
 }
@@ -356,7 +364,9 @@ async function isTrustedDevice(req) {
   const value = readCookie(req, DEVICE_COOKIE) || '';
   const dot = value.lastIndexOf('.');
   if (dot <= 0) return false;
-  const expected = createHmac('sha256', await getDeviceSecret()).update(value.slice(0, dot)).digest();
+  const user = (await loadUsers()).find((item) => item.id === value.slice(0, dot));
+  if (!user) return false;
+  const expected = await deviceSignature(user);
   const given = Buffer.from(value.slice(dot + 1), 'hex');
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
@@ -394,7 +404,7 @@ async function handleApi(req, res, url) {
     }
     const { token, maxAge } = await createSession(user.id);
     return send(res, 200, { user: publicUser(user) }, {
-      'Set-Cookie': [sessionCookie(req, token, maxAge), await deviceCookie(req, user.id)],
+      'Set-Cookie': [sessionCookie(req, token, maxAge), await deviceCookie(req, user)],
     });
   }
 
@@ -442,7 +452,9 @@ async function handleApi(req, res, url) {
     const owner = users.find((item) => item.id === credential.userId);
     if (!owner) return send(res, 401, { error: 'Учётная запись не найдена' });
     const { token, maxAge } = await createSession(owner.id);
-    return send(res, 200, { user: publicUser(owner) }, { 'Set-Cookie': sessionCookie(req, token, maxAge) });
+    return send(res, 200, { user: publicUser(owner) }, {
+      'Set-Cookie': [sessionCookie(req, token, maxAge), await deviceCookie(req, owner)],
+    });
   }
 
   if (route === '/logout' && req.method === 'POST') {
@@ -542,9 +554,15 @@ async function handleApi(req, res, url) {
         // Операции применяются к копии: если хоть одна в пакете отклонена,
         // не должно остаться ни следа от остальных — ни в памяти, ни на диске.
         if (ops.some((item) => item?.type === 'replace')) {
-          throw new Error('Замена всех данных разом через приложение запрещена');
+          throw Object.assign(new Error('Замена всех данных разом через приложение запрещена'), { rejected: true });
         }
-        const state = applyOps(normalizeData(structuredClone(current.state)), ops);
+        let state;
+        try {
+          state = applyOps(normalizeData(structuredClone(current.state)), ops);
+        } catch (error) {
+          error.rejected = true;
+          throw error;
+        }
         const next = { rev: current.rev + 1, state, updatedAt: new Date().toISOString() };
         await saveState(next);
         await appendLine('log.jsonl', {
@@ -554,7 +572,12 @@ async function handleApi(req, res, url) {
       });
       return send(res, 200, result);
     } catch (error) {
-      return send(res, 422, { error: error.message || 'Операция отклонена' });
+      // 422 — только когда сами операции неверны: такие клиент выбрасывает.
+      // Сбой записи (диск заполнен, нет прав) — 503: клиент повторит позже
+      // и ничего из очереди не потеряет.
+      if (error.rejected) return send(res, 422, { error: error.message || 'Операция отклонена' });
+      console.error('Не удалось сохранить данные:', error);
+      return send(res, 503, { error: 'Сервер временно не может сохранить данные — повторим автоматически' });
     }
   }
 
