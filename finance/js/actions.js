@@ -385,7 +385,7 @@ export function payAssignment(assignmentId, part, values = {}) {
     }
   }
 
-  const fallbackAmount = part === 'advance' ? info.advance : info.remainder;
+  const fallbackAmount = part === 'advance' ? info.advanceLeft : info.remainder;
   const payment = money({
     amount: values.amount ?? fallbackAmount,
     currency: values.currency || assignment.currency,
@@ -397,10 +397,12 @@ export function payAssignment(assignmentId, part, values = {}) {
   // на округление при пересчёте между валютами.
   // Аванс — не больше того, что ещё не выплачено остатком (остаток могли
   // отдать раньше аванса).
-  const limitBase = part === 'advance' ? round(Math.max(0, info.accruedBase - info.finalPaidBase)) : info.remainderBase;
+  const limitBase = part === 'advance'
+    ? round(Math.max(0, info.accruedBase - info.finalPaidBase - info.advancePaidBase)) : info.remainderBase;
   // В валюте ставки сравниваем сами суммы, в другой валюте — доллары
   // (с допуском в цент на округление пересчёта).
-  const limitAmount = part === 'advance' ? round(Math.max(0, info.accrued - info.finalPaidCur)) : info.remainder;
+  const limitAmount = part === 'advance'
+    ? round(Math.max(0, info.accrued - info.finalPaidCur - info.advancePaidCur)) : info.remainder;
   const over = payment.currency === assignment.currency
     ? payment.amount > limitAmount + 0.005
     : payment.base > limitBase + 0.01;
@@ -831,8 +833,8 @@ export function saveDraw(values, id = null) {
       return {
         ok: false,
         error: owed > 0
-          ? `Студия должна ${founder?.name || 'коллеге'} ${formatAmount(owed)} — больше вернуть нельзя`
-          : `Студия ничего не должна ${founder?.name || 'коллеге'}. Если деньги взяли себе, выберите «Взял для себя»`,
+          ? `Долг студии перед коллегой (${founder?.name || 'без имени'}) — ${formatAmount(owed)}, больше вернуть нельзя`
+          : `У студии нет долга перед коллегой (${founder?.name || 'без имени'}). Если деньги взяли себе, выберите «Взял для себя»`,
       };
     }
   }

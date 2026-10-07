@@ -81,7 +81,7 @@ export function assignmentState(assignment, project) {
   const hasPart = (part) => payments.some((item) => item.part === part);
   const legacyAdvance = assignment?.advancePaidAt && !hasPart('advance');
   const legacyFinal = assignment?.remainderPaidAt && !hasPart('final');
-  const advancePaid = Boolean(assignment?.advancePaidAt) || hasPart('advance');
+  const advanceStarted = Boolean(assignment?.advancePaidAt) || hasPart('advance');
   const legacyAdvanceBase = legacyAdvance
     ? (known(assignment.advancePaidBase) ? Number(assignment.advancePaidBase) : base.advanceBase) : 0;
   const legacyFinalBase = legacyFinal
@@ -100,17 +100,29 @@ export function assignmentState(assignment, project) {
     && !known(assignment.remainderPaidBase) && !known(assignment.advancePaidBase);
   const paidBase = legacyFull ? base.accruedBase : round(advancePaidBase + finalPaidBase);
 
-  // Остаток — всё начисленное минус то, что уже отдали: увеличили площадь —
-  // разница попадёт в остаток, выплатили меньше — тоже.
-  let remainderCur = legacyFull ? 0 : Math.max(0,
-    (advancePaid ? base.accrued - advancePaidCur : base.remainder) - finalPaidCur);
+  // Аванс считается выплаченным, когда отдали всю его сумму (старые записи
+  // с отметкой — выплаченными целиком). Отдали часть — недоплата аванса
+  // остаётся к выплате сразу, а не переезжает в остаток «после одобрения».
+  const advancePaid = Boolean(legacyAdvance) || legacyFull
+    || (advanceStarted && advancePaidCur >= base.advance - 0.005);
+  let advanceLeftCur = advancePaid ? 0 : Math.max(0, base.advance - advancePaidCur);
+  if (advanceLeftCur <= 0.005) advanceLeftCur = 0;
+  // Остаток — всё начисленное минус уже отданное и минус невыплаченный
+  // аванс: увеличили площадь — разница попадёт в остаток, выплатили
+  // меньше — тоже.
+  let remainderCur = legacyFull ? 0
+    : Math.max(0, base.accrued - advancePaidCur - finalPaidCur - advanceLeftCur);
   if (remainderCur <= 0.005) remainderCur = 0;
-  const untouched = !advancePaid && finalPaidCur === 0 && !legacyFull;
+  const untouched = !advanceStarted && finalPaidCur === 0 && !legacyFull;
   const totals = {
     ...base,
     // Пока ничего не платили — точные суммы из ставки, без пересчёта.
     remainderBase: untouched ? base.remainderBase : round(remainderCur * fx),
     remainder: untouched ? base.remainder : round(remainderCur),
+    advanceLeft: untouched ? base.advance : round(advanceLeftCur),
+    advanceLeftBase: untouched ? base.advanceBase : round(advanceLeftCur * fx),
+    advancePaidCur: round(advancePaidCur),
+    advancePaidBase,
     finalPaidBase,
     finalPaidCur: round(finalPaidCur),
   };
@@ -136,6 +148,9 @@ export function assignmentState(assignment, project) {
   } else if (assignment?.stage === 'done') {
     label = 'Работа завершена';
     tone = 'info';
+  } else if (!advancePaid && advanceStarted && totals.advanceLeft > 0) {
+    label = 'Аванс выплачен частично';
+    tone = 'warn';
   } else if (!advancePaid && totals.advance > 0) {
     label = 'Аванс не выплачен';
     tone = 'warn';
@@ -147,10 +162,7 @@ export function assignmentState(assignment, project) {
   }
 
   // К выплате прямо сейчас: невыплаченный аванс + доступный остаток.
-  const dueNowBase = round(
-    (advancePaid ? 0 : totals.advanceBase)
-    + (remainderAvailable ? totals.remainderBase : 0),
-  );
+  const dueNowBase = round(totals.advanceLeftBase + (remainderAvailable ? totals.remainderBase : 0));
   // Остаток, который ещё не согласован клиентом, — обязательство будущего периода.
   const lockedBase = !remainderPaid && !approved ? totals.remainderBase : 0;
 
@@ -166,7 +178,7 @@ export function assignmentState(assignment, project) {
     paidBase,
     lockedBase,
     // Долг перед сотрудником: невыплаченный аванс и остаток.
-    owedBase: round((advancePaid ? 0 : totals.advanceBase) + totals.remainderBase),
+    owedBase: round(totals.advanceLeftBase + totals.remainderBase),
   };
 }
 
@@ -264,8 +276,11 @@ export function projectFinance(state, project) {
     (item) => toBase(item.amount, project.currency, fx),
   );
   const contractBase = round(priceBase + extraPlanBase);
-  const plan = projectPlan(project, settledBase);
   const cancelled = CLOSED_PROJECT_STATUSES.includes(project.status);
+  // У отменённого проекта неполученные платежи уже не ждём.
+  const plan = projectPlan(project, settledBase).map((item) => (cancelled && item.status !== 'received'
+    ? { ...item, status: 'cancelled', leftBase: 0, leftAmount: 0, overdue: false }
+    : item));
   const owed = round(contractBase - settledBase);
   const toReceiveBase = cancelled || owed <= planTolerance(project) ? 0 : owed;
 
@@ -280,7 +295,8 @@ export function projectFinance(state, project) {
 
   const costPlanBase = round(pieceworkAccruedBase + directBase);
   const costActualBase = round(pieceworkPaidBase + directBase);
-  const profitPlanBase = round(contractBase - costPlanBase);
+  // Прибыль отменённого проекта — по факту: договор уже не будет оплачен.
+  const profitPlanBase = cancelled ? round(receivedBase - costActualBase) : round(contractBase - costPlanBase);
   const profitActualBase = round(receivedBase - costActualBase);
 
   return {
@@ -682,14 +698,18 @@ export function payables(state) {
     if (project && CLOSED_PROJECT_STATUSES.includes(project.status)) continue;
     const employee = state.employees.find((item) => item.id === assignment.employeeId);
     const info = assignmentState(assignment, project);
-    if (!info.advancePaid && info.advanceBase > 0) {
+    if (info.advanceLeftBase > 0.01) {
+      // Срок аванса — начало проекта, но не раньше, чем сотрудника
+      // назначили: иначе новое назначение сразу «просрочено».
+      const assigned = String(assignment.createdAt || '').slice(0, 10);
+      const start = project?.startDate || '';
       rows.push({
         id: `${assignment.id}:advance`,
         kind: 'assignment-advance',
         title: `Аванс — ${employee?.name || 'сотрудник'}`,
         subtitle: project?.name || '',
-        amountBase: info.advanceBase,
-        dueDate: project?.startDate || '',
+        amountBase: info.advanceLeftBase,
+        dueDate: assigned > start ? assigned : start,
         ready: true,
         assignmentId: assignment.id,
         employeeId: assignment.employeeId,
@@ -750,7 +770,11 @@ export function payables(state) {
 export function dashboardTotals(state, from, to) {
   const totals = periodTotals(state, from, to);
   const toReceive = sum(receivables(state), (item) => item.amountBase);
-  const toPay = sum(payables(state).filter((item) => item.ready), (item) => item.amountBase);
+  // «Ожидается выплатить» — то, что уже пора платить; будущие сроки
+  // (зарплата до дня выплаты, плановые платежи) сюда не входят.
+  const nowIso = today();
+  const toPay = sum(payables(state).filter((item) => item.ready && !(item.dueDate && item.dueDate > nowIso)),
+    (item) => item.amountBase);
   const locked = sum(payables(state).filter((item) => !item.ready), (item) => item.amountBase);
   return { ...totals, toReceiveBase: toReceive, toPayBase: toPay, lockedPayBase: locked };
 }

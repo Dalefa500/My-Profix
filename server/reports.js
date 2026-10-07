@@ -469,7 +469,9 @@ function projectReport(state, project) {
       { title: 'Получено', width: 80, align: 'right' },
       { title: 'Осталось', width: 80, align: 'right' },
     ],
-    projectPlan(project, finance.receivedBase).map((item) => [
+    // Тот же план, что в карточке проекта (долг — в валюте договора,
+    // у отменённого проекта ждать нечего).
+    finance.plan.map((item) => [
       item.title || (item.type === 'advance' ? 'Аванс' : 'Остаток'),
       item.dueDate ? formatDate(item.dueDate, { short: true }) : '—',
       money(item.base),
@@ -548,9 +550,10 @@ function founderReport(state, founder, from, to) {
     settings: state.settings,
   });
 
+  // За всё время второй строкой показываем, только когда первая — за период.
   sheet.totals([
-    { label: period ? 'Взял за период' : 'Взял всего', value: period ? info.periodBase : info.takenBase },
-    { label: 'Взял за всё время', value: info.takenBase, color: BURGUNDY },
+    ...(period ? [{ label: 'Взял за период', value: info.periodBase }] : []),
+    { label: period ? 'Взял за всё время' : 'Взял всего', value: info.takenBase, color: BURGUNDY },
     { label: 'Оплатил за студию', value: info.spentBase, color: GOOD },
     { label: 'Студия должна', value: info.owedBase, color: info.owedBase > 0 ? BURGUNDY : MUTED },
   ]);

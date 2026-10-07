@@ -9,7 +9,7 @@ import { openReport } from '../report.js';
 import { openOperation } from '../operation.js';
 import { projectFinance, assignmentState } from '../calc.js';
 import { PROJECT_STATUSES, WORK_STAGES, labelOf, toneOf, categoryLabel } from '../model.js';
-import { formatAmount, formatWithOriginal, formatArea } from '../money.js';
+import { formatAmount, formatWithOriginal, formatArea, isBase, round } from '../money.js';
 import { formatDate } from '../dates.js';
 import * as forms from '../forms.js';
 import * as actions from '../actions.js';
@@ -17,10 +17,12 @@ import { refresh } from '../refresh.js';
 import { go, leave } from '../router.js';
 
 function planRow(project, item) {
-  const tone = item.status === 'received' ? 'good' : item.overdue ? 'danger' : 'warn';
+  const tone = item.status === 'received' ? 'good' : item.status === 'cancelled' ? 'muted'
+    : item.overdue ? 'danger' : 'warn';
   const label = item.status === 'received' ? 'Получен'
-    : item.status === 'partial' ? 'Получен частично'
-      : item.overdue ? 'Просрочен' : 'Ожидается';
+    : item.status === 'cancelled' ? 'Не ожидается'
+      : item.status === 'partial' ? 'Получен частично'
+        : item.overdue ? 'Просрочен' : 'Ожидается';
   return html`
     <div class="row" data-plan="${item.id}">
       <div class="row__main">
@@ -49,7 +51,8 @@ function assignmentRow(row, info) {
         <a class="row__title" href="#/employees/${row.employeeId}">${employee?.name || 'Сотрудник'}</a>
         <span class="row__subtitle">${row.role} · ${formatArea(info.area)} × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}</span>
         <span class="row__subtitle">${info.advance > 0 || info.advancePaid
-          ? `Аванс ${info.percent}% · ${formatAmount(info.advance, info.currency)} ${info.advancePaid ? '· выплачен' : '· не выплачен'}`
+          ? `Аванс ${info.percent}% · ${formatAmount(info.advance, info.currency)} ${info.advancePaid ? '· выплачен'
+            : info.advancePaidCur > 0 ? `· выплачено ${formatAmount(info.advancePaidCur, info.currency)}` : '· не выплачен'}`
           : 'Без аванса'}</span>
         ${raw(badge(info.label, info.tone))}
       </div>
@@ -57,7 +60,7 @@ function assignmentRow(row, info) {
         <span class="row__amount">${money(info.accruedBase)}</span>
         <span class="row__meta">Выплачено ${money(info.paidBase)}</span>
         <div class="btn-row">
-          ${!info.advancePaid && info.advance > 0
+          ${info.advanceLeft > 0
             ? raw(html`<button class="btn btn--sm btn--primary" data-pay-advance="${row.id}">Аванс</button>`)
             : ''}
           ${!info.remainderPaid && info.remainder > 0
@@ -82,6 +85,10 @@ export default function projectDetail(params) {
   const client = byId('clients', project.clientId);
   const lead = byId('employees', project.leadId);
   const receivedPercent = finance.contractBase > 0 ? finance.receivedBase / finance.contractBase * 100 : 0;
+
+  // Долг, не покрытый строками плана (например, строку плана удалили):
+  // показываем отдельно, иначе план выглядел бы «полученным».
+  const outsidePlan = round(finance.toReceiveBase - finance.plan.reduce((acc, item) => acc + item.leftBase, 0));
 
   const body = html`
     <div class="card">
@@ -129,6 +136,17 @@ export default function projectDetail(params) {
       ${finance.plan.length
         ? raw(html`<div class="list">${raw(finance.plan.map((item) => planRow(project, item)).join(''))}</div>`)
         : raw(emptyState('План платежей пуст'))}
+      ${outsidePlan > 0.01 ? raw(html`
+        <div class="row">
+          <div class="row__main">
+            <span class="row__title">Остаток по договору вне плана</span>
+            <span class="row__subtitle">Строки плана меньше долга — добавьте платёж или получите остаток</span>
+          </div>
+          <div class="row__side">
+            <span class="row__amount warn">${money(outsidePlan)}</span>
+            <button class="btn btn--sm btn--primary" data-act="income-rest">Получен</button>
+          </div>
+        </div>`) : ''}
     </div>
 
     <div class="card">
@@ -188,6 +206,14 @@ export default function projectDetail(params) {
         currency: project.currency,
         fx: project.fx,
       }, refresh);
+      root.querySelector('[data-act="income-rest"]')?.addEventListener('click', () => forms.openIncomeForm({
+        projectId: project.id,
+        clientId: project.clientId,
+        type: 'final',
+        amount: isBase(project.currency) ? outsidePlan : round(outsidePlan / (project.fx || 1)),
+        currency: project.currency,
+        fx: project.fx,
+      }, refresh));
       root.querySelector('[data-act="add-plan"]').onclick = () => forms.openPlanItemForm(project.id, null, refresh);
       root.querySelector('[data-act="add-assignment"]').onclick = () => forms.openAssignmentForm(project.id, null, refresh);
       root.querySelector('[data-act="add-expense"]').onclick = () => forms.openExpenseForm({ projectId: project.id }, refresh);

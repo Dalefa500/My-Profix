@@ -46,7 +46,12 @@ function receiveTab(state) {
 
 function payTab(state) {
   const rows = payables(state);
-  const ready = rows.filter((row) => row.ready);
+  const nowIso = today();
+  // Пора платить — срок наступил; скоро — срок впереди (зарплата до дня
+  // выплаты, плановые платежи). Так «Готово к выплате» совпадает
+  // с «К выплате сейчас» в карточках сотрудников.
+  const ready = rows.filter((row) => row.ready && !(row.dueDate && row.dueDate > nowIso));
+  const upcoming = rows.filter((row) => row.ready && row.dueDate && row.dueDate > nowIso);
   const waiting = rows.filter((row) => !row.ready);
   const readyTotal = ready.reduce((acc, row) => acc + row.amountBase, 0);
   const waitingTotal = waiting.reduce((acc, row) => acc + row.amountBase, 0);
@@ -78,6 +83,12 @@ function payTab(state) {
       ${ready.length ? raw(html`<div class="list">${raw(ready.map(renderRow).join(''))}</div>`)
         : raw(emptyState('Нет обязательств к выплате'))}
     </div>
+
+    ${upcoming.length ? raw(html`
+      <div class="card card--flat">
+        ${raw(sectionTitle('Скоро по сроку'))}
+        <div class="list">${raw(upcoming.map(renderRow).join(''))}</div>
+      </div>`) : ''}
 
     ${waiting.length ? raw(html`
       <div class="card card--flat">

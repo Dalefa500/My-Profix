@@ -118,7 +118,7 @@ export default function clientDetail(params) {
       root.querySelector('[data-act="edit"]').onclick = () => forms.openClientForm(client.id, refresh);
       root.querySelector('[data-act="add-project"]').onclick = () => forms.openProjectForm(null, (project) => {
         go(`#/projects/${project.id}`);
-      });
+      }, { clientId: client.id });
       root.querySelector('[data-act="delete"]').onclick = async () => {
         const ok = await confirmDialog(`Удалить клиента «${client.name}»? Проекты и платежи останутся, но потеряют привязку.`);
         if (!ok) return;

@@ -22,9 +22,11 @@ function clientOptions(state, { allowEmpty = true } = {}) {
   return allowEmpty ? [option('', 'Без клиента'), ...options] : options;
 }
 
-function projectOptions(state, { allowEmpty = true } = {}) {
+// Отменённые проекты в списке не предлагаем, но проект, к которому запись
+// уже привязана, оставляем — иначе при правке она молча отвязывалась.
+function projectOptions(state, { allowEmpty = true, current = '' } = {}) {
   const options = state.projects
-    .filter((item) => item.status !== 'cancelled')
+    .filter((item) => item.status !== 'cancelled' || item.id === current)
     .map((item) => option(item.id, item.name));
   return allowEmpty ? [option('', 'Без проекта'), ...options] : options;
 }
@@ -90,14 +92,14 @@ export function openClientForm(clientId = null, onDone) {
 
 // ------------------------------------------------------------------ проекты
 
-export function openProjectForm(projectId = null, onDone) {
+export function openProjectForm(projectId = null, onDone, prefill = {}) {
   const state = getState();
   const project = projectId ? byId('projects', projectId) : null;
   openForm({
     title: project ? 'Проект' : 'Новый проект',
     fields: [
       { name: 'name', label: 'Название проекта', type: 'text', required: true, value: project?.name || '', wide: true },
-      { name: 'clientId', label: 'Клиент', type: 'select', options: clientOptions(state), value: project?.clientId || '' },
+      { name: 'clientId', label: 'Клиент', type: 'select', options: clientOptions(state), value: project?.clientId || prefill.clientId || '' },
       {
         name: 'price', label: 'Стоимость проекта', type: 'money', required: true,
         value: project?.price || '', currency: project?.currency, fx: project?.fx,
@@ -277,6 +279,19 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
     ],
     extraHtml: '<div class="form__preview" data-preview hidden></div>',
     onSubmit: (values) => {
+      // Сумма за работу не может стать меньше уже выплаченного: переплата
+      // нигде бы не числилась.
+      if (assignment) {
+        const paid = assignmentState(assignment, project).paidBase;
+        const accruedBase = actions.baseOf({
+          amount: (Number(values.area) || 0) * (Number(values.rate) || 0),
+          currency: values.rateCurrency,
+          fx: values.rateFx,
+        });
+        if (paid > 0 && accruedBase < paid - 0.01) {
+          return `По этой работе уже выплачено ${formatAmount(paid)} — площадь или ставку нельзя уменьшить ниже этой суммы`;
+        }
+      }
       const saved = actions.saveAssignment({
         ...values,
         projectId,
@@ -330,7 +345,7 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
       · аванс ${raw(esc(formatAmount(totals.advance, currency)))}
       · остаток ${raw(esc(formatAmount(totals.remainder, currency)))}
       ${currency === 'TJS'
-        ? raw(html`<br><span class="muted">= ${formatAmount(totals.accruedBase)} по курсу ${Number(parseNum(data.get('rate__rate'))) || 0} TJS за доллар</span>`)
+        ? raw(html`<br><span class="muted">= ${formatAmount(totals.accruedBase)} по курсу ${rateForInput(Number(parseNum(data.get('rate__rate'))) || 0)} TJS за доллар</span>`)
         : ''}`;
   };
   form.addEventListener('input', update);
@@ -357,7 +372,7 @@ export function openIncomeForm(prefill = {}, onDone) {
       { name: 'date', label: 'Дата', type: 'date', required: true, value: income?.date || today() },
       {
         name: 'projectId', label: 'Проект', type: 'select',
-        options: projectOptions(state), value: income?.projectId || prefill.projectId || '',
+        options: projectOptions(state, { current: income?.projectId || prefill.projectId }), value: income?.projectId || prefill.projectId || '',
       },
       {
         name: 'type', label: 'Тип платежа', type: 'select',
@@ -457,7 +472,7 @@ export function openExpenseForm(prefill = {}, onDone) {
     advanced: [
       {
         name: 'projectId', label: 'Проект', type: 'select',
-        options: projectOptions(state), value: expense?.projectId || prefill.projectId || '',
+        options: projectOptions(state, { current: expense?.projectId || prefill.projectId }), value: expense?.projectId || prefill.projectId || '',
         hint: 'Если указать проект, расход войдёт в его себестоимость',
       },
       {
@@ -492,7 +507,7 @@ export function openAssignmentPayment(assignmentId, part, onDone) {
     return;
   }
 
-  const amount = part === 'advance' ? info.advance : info.remainder;
+  const amount = part === 'advance' ? info.advanceLeft : info.remainder;
   openForm({
     title: part === 'advance' ? 'Выплатить аванс' : 'Выплатить остаток',
     intro: `${employee?.name || ''} · ${project?.name || ''} · ${info.area} м² × ${formatAmount(info.rate, info.currency)}`,
@@ -697,9 +712,13 @@ export function openBarterForm(id = null, prefill = {}, onDone) {
       { name: 'note', label: 'Заметка', type: 'textarea', value: barter?.note || '', wide: true },
     ],
     onSubmit: (values) => {
-      if (!values.clientId) {
-        toast('Выберите клиента', 'danger');
-        return false;
+      if (!values.clientId) return 'Выберите клиента';
+      // Оценку нельзя сделать меньше уже списанных работ: иначе часть
+      // дохода оказалась бы «сверх имущества» и нигде не числилась.
+      if (barter) {
+        const used = barterState(getState(), barter)?.usedBase || 0;
+        const base = actions.baseOf({ amount: values.amount, currency: values.amountCurrency, fx: values.amountFx });
+        if (base < used - 0.01) return `С имущества уже списано работ на ${formatAmount(used)} — оценка не может быть меньше`;
       }
       actions.saveBarter({
         ...values,
@@ -770,7 +789,7 @@ export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
     advanced: [
       {
         name: 'projectId', label: 'Проект', type: 'select',
-        options: projectOptions(state), value: draw?.projectId || '',
+        options: projectOptions(state, { current: draw?.projectId }), value: draw?.projectId || '',
       },
       {
         name: 'method', label: 'Чем', type: 'select',

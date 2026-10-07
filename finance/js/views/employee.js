@@ -41,7 +41,8 @@ function assignmentCard(row) {
         <a class="row__title" href="#/projects/${assignment.projectId}">${project?.name || 'Проект удалён'}</a>
         <span class="row__subtitle">${assignment.role} · ${formatArea(info.area)} × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}</span>
         <span class="row__subtitle">${info.advance > 0 || info.advancePaid
-          ? `Аванс ${formatAmount(info.advance, info.currency)} ${info.advancePaid ? '✓' : '— не выплачен'}`
+          ? `Аванс ${formatAmount(info.advance, info.currency)} ${info.advancePaid ? '✓'
+            : info.advancePaidCur > 0 ? `— выплачено ${formatAmount(info.advancePaidCur, info.currency)}` : '— не выплачен'}`
           : 'Без аванса'}
           · остаток ${formatAmount(info.remainder, info.currency)} ${info.remainderPaid ? '✓' : ''}</span>
         ${raw(badge(info.label, info.tone))}
@@ -49,7 +50,7 @@ function assignmentCard(row) {
       <div class="row__side">
         <span class="row__amount">${money(info.accruedBase)}</span>
         <div class="btn-row">
-          ${!info.advancePaid && info.advance > 0
+          ${info.advanceLeft > 0
             ? raw(html`<button class="btn btn--sm btn--primary" data-pay-advance="${assignment.id}">Аванс</button>`) : ''}
           ${!info.remainderPaid && info.remainderAvailable
             ? raw(html`<button class="btn btn--sm btn--good" data-pay-final="${assignment.id}">Остаток</button>`) : ''}
