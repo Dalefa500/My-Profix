@@ -8,8 +8,8 @@ import { getState, byId } from '../store.js';
 import { openReport } from '../report.js';
 import { openOperation } from '../operation.js';
 import { projectFinance, assignmentState } from '../calc.js';
-import { PROJECT_STATUSES, WORK_STAGES, labelOf, categoryLabel } from '../model.js';
-import { formatAmount, formatWithOriginal } from '../money.js';
+import { PROJECT_STATUSES, WORK_STAGES, labelOf, toneOf, categoryLabel } from '../model.js';
+import { formatAmount, formatWithOriginal, formatArea } from '../money.js';
 import { formatDate } from '../dates.js';
 import * as forms from '../forms.js';
 import * as actions from '../actions.js';
@@ -47,7 +47,7 @@ function assignmentRow(row, info) {
     <div class="row" data-assignment="${row.id}">
       <div class="row__main">
         <a class="row__title" href="#/employees/${row.employeeId}">${employee?.name || 'Сотрудник'}</a>
-        <span class="row__subtitle">${row.role} · ${info.area} м² × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}</span>
+        <span class="row__subtitle">${row.role} · ${formatArea(info.area)} × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}</span>
         <span class="row__subtitle">Аванс ${info.percent}% · ${formatAmount(info.advance, info.currency)} ${info.advancePaid ? '· выплачен' : '· не выплачен'}</span>
         ${raw(badge(info.label, info.tone))}
       </div>
@@ -86,10 +86,12 @@ export default function projectDetail(params) {
       <div class="section-title">
         <h2>${project.name}</h2>
         <button class="btn btn--sm" data-act="status">${labelOf(PROJECT_STATUSES, project.status)}</button>
+        <!-- Тот, кто только смотрит, видит статус без кнопки смены. -->
+        <span class="badge badge--${raw(toneOf(PROJECT_STATUSES, project.status))} viewer-only">${labelOf(PROJECT_STATUSES, project.status)}</span>
       </div>
       <p class="muted">
         ${client ? raw(html`<a href="#/clients/${client.id}">${client.name}</a> · `) : ''}
-        ${project.objectType || 'Объект'}${project.area ? ` · ${project.area} м²` : ''}
+        ${project.objectType || 'Объект'}${project.area ? ` · ${formatArea(project.area)}` : ''}
         ${project.address ? ` · ${project.address}` : ''}
       </p>
       <p class="muted">
@@ -193,7 +195,7 @@ export default function projectDetail(params) {
         if (!ok) return;
         actions.deleteProject(project.id);
         toast('Проект удалён');
-        go('#/projects');
+        go('#/projects', { replace: true });
       };
 
       root.querySelector('[data-act="status"]').onclick = () => openStatusSheet(project);
@@ -267,9 +269,11 @@ function openPlanSheet(project, itemId) {
         closeSheet();
         forms.openPlanItemForm(project.id, itemId, refresh);
       };
-      panel.querySelector('[data-act="delete"]').onclick = () => {
-        actions.deletePlanItem(project.id, itemId);
+      panel.querySelector('[data-act="delete"]').onclick = async () => {
         closeSheet();
+        const ok = await confirmDialog('Удалить платёж из плана? Уже полученные деньги останутся.');
+        if (!ok) return;
+        actions.deletePlanItem(project.id, itemId);
         refresh();
       };
     },
@@ -284,7 +288,7 @@ function openAssignmentSheet(project, assignmentId) {
   openSheet({
     title: employee?.name || 'Сотрудник',
     body: html`
-      <p class="muted">${info.area} м² × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}
+      <p class="muted">${formatArea(info.area)} × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}
         · ${formatWithOriginal({ base: info.accruedBase, amount: info.accrued, currency: info.currency, fx: assignment.fx })}</p>
       ${raw(sectionTitle('Этап работы'))}
       <div class="list">${raw(WORK_STAGES.map((stage) => html`

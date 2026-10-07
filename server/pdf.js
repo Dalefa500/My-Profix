@@ -32,6 +32,19 @@ class FontSlot {
     this.used = new Map(); // глиф -> код буквы, для ToUnicode
   }
 
+  // Текст, пригодный для печати этим шрифтом: переводы строк и табуляция —
+  // пробелом, символы, которых в шрифте нет (эмодзи, иероглифы), — знаком «?»,
+  // а не пустым квадратиком. Таджикские буквы в шрифте есть.
+  clean(text) {
+    let out = '';
+    for (const ch of String(text ?? '').replace(/[\r\n\t\f\v]+/g, ' ')) {
+      const code = ch.codePointAt(0);
+      if (code < 0x20 || (code >= 0x7f && code < 0xa0)) continue;
+      out += glyphFor(this.font, code) ? ch : '?';
+    }
+    return out;
+  }
+
   // Переводит строку в последовательность номеров глифов.
   encode(text) {
     let hex = '';
@@ -56,6 +69,10 @@ class FontSlot {
 export class Pdf {
   constructor({ regular, bold, title = '', author = '' }) {
     this.fonts = { regular: new FontSlot(regular, 'F1'), bold: new FontSlot(bold, 'F2') };
+    // У каждого урезанного шрифта своё имя с приставкой (так требует
+    // стандарт): иначе просмотрщик мог бы спутать обычный и жирный.
+    this.fonts.regular.postName = 'AAAAAA+LiberationSans';
+    this.fonts.bold.postName = 'AAAAAB+LiberationSans-Bold';
     this.title = title;
     this.author = author;
     this.pages = [];
@@ -77,7 +94,7 @@ export class Pdf {
   // Пересчёт в систему PDF (снизу вверх) происходит здесь.
   text(x, y, value, { size = 10, font = 'regular', color = [0, 0, 0], align = 'left', width = 0 } = {}) {
     const slot = this.fonts[font] || this.fonts.regular;
-    const str = String(value ?? '');
+    const str = slot.clean(value);
     if (!str) return this;
     let left = x;
     if (align === 'right') left = x + width - slot.width(str, size);
@@ -92,19 +109,52 @@ export class Pdf {
   }
 
   widthOf(value, size, font = 'regular') {
-    return (this.fonts[font] || this.fonts.regular).width(String(value ?? ''), size);
+    const slot = this.fonts[font] || this.fonts.regular;
+    return slot.width(slot.clean(value), size);
   }
 
   // Обрезает строку по ширине колонки, чтобы длинное название
   // не наезжало на соседний столбец.
   fit(value, size, maxWidth, font = 'regular') {
-    const str = String(value ?? '');
-    if (this.widthOf(str, size, font) <= maxWidth) return str;
-    let cut = str;
-    while (cut.length > 1 && this.widthOf(`${cut}…`, size, font) > maxWidth) {
-      cut = cut.slice(0, -1);
+    const slot = this.fonts[font] || this.fonts.regular;
+    // Сначала грубо отрезаем: в строку шириной в лист больше 400 знаков
+    // всё равно не влезет, а мерить мегабайтный комментарий — долго.
+    const str = slot.clean(value).slice(0, 400);
+    if (slot.width(str, size) <= maxWidth) return str;
+    // Подбор длины делением пополам — быстро даже для длинных строк.
+    const chars = [...str];
+    let lo = 0;
+    let hi = chars.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (slot.width(`${chars.slice(0, mid).join('')}…`, size) <= maxWidth) lo = mid;
+      else hi = mid - 1;
     }
-    return `${cut.trim()}…`;
+    return `${chars.slice(0, lo).join('').trim()}…`;
+  }
+
+  // Разбивает текст на строки по ширине (по словам; слишком длинное
+  // слово режется). Возвращает не больше maxLines строк.
+  wrap(value, size, maxWidth, { font = 'regular', maxLines = 20 } = {}) {
+    const slot = this.fonts[font] || this.fonts.regular;
+    const words = slot.clean(value).slice(0, 4000).split(' ').filter(Boolean);
+    const lines = [];
+    let current = '';
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (slot.width(candidate, size) <= maxWidth) {
+        current = candidate;
+        continue;
+      }
+      if (current) lines.push(current);
+      current = slot.width(word, size) <= maxWidth ? word : this.fit(word, size, maxWidth, font);
+      if (lines.length >= maxLines) break;
+    }
+    if (current && lines.length < maxLines) lines.push(current);
+    if (lines.length === maxLines && words.length) {
+      lines[maxLines - 1] = this.fit(`${lines[maxLines - 1]}…`, size, maxWidth, font);
+    }
+    return lines;
   }
 
   line(x1, y1, x2, y2, { color = [0.8, 0.8, 0.8], width = 0.5 } = {}) {
@@ -155,7 +205,7 @@ export class Pdf {
 
     const pages = add(`<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`);
     const info = add(`<< /Title ${pdfString(this.title)} /Author ${pdfString(this.author)}`
-      + ` /Producer ${pdfString('Line Design — финансы студии')} >>`);
+      + ` /Producer ${pdfString(`${this.author || 'Финансы'} — финансы студии`)} >>`);
     const catalog = add(`<< /Type /Catalog /Pages ${pages} 0 R >>`);
 
     return assemble(objects, catalog, info);
@@ -174,7 +224,7 @@ export class Pdf {
     const scale = 1000 / slot.font.unitsPerEm;
     const bbox = slot.font.bbox.map((value) => Math.round(value * scale));
     const descriptorId = add(
-      `<< /Type /FontDescriptor /FontName /LiberationSans /Flags 32`
+      `<< /Type /FontDescriptor /FontName /${slot.postName} /Flags 32`
       + ` /FontBBox [${bbox.join(' ')}] /ItalicAngle 0`
       + ` /Ascent ${Math.round(slot.font.ascent * scale)}`
       + ` /Descent ${Math.round(slot.font.descent * scale)}`
@@ -189,7 +239,7 @@ export class Pdf {
       .map((glyph) => `${glyph} [${glyphWidth(slot.font, glyph)}]`)
       .join(' ');
     const descendantId = add(
-      `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /LiberationSans`
+      `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${slot.postName}`
       + ` /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >>`
       + ` /FontDescriptor ${descriptorId} 0 R /DW 1000 /W [${widths}]`
       + ` /CIDToGIDMap /Identity >>`,
@@ -203,7 +253,7 @@ export class Pdf {
     ]));
 
     return add(
-      `<< /Type /Font /Subtype /Type0 /BaseFont /LiberationSans /Encoding /Identity-H`
+      `<< /Type /Font /Subtype /Type0 /BaseFont /${slot.postName} /Encoding /Identity-H`
       + ` /DescendantFonts [${descendantId} 0 R] /ToUnicode ${unicodeId} 0 R >>`,
     );
   }

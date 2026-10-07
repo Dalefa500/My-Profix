@@ -5,7 +5,7 @@ import {
 } from '../ui.js';
 import { getState, byId } from '../store.js';
 import { employeeFinance, payrollState } from '../calc.js';
-import { formatAmount, formatRate } from '../money.js';
+import { formatAmount, formatRate, formatArea } from '../money.js';
 import { monthLabel, formatDate } from '../dates.js';
 import * as forms from '../forms.js';
 import * as actions from '../actions.js';
@@ -39,7 +39,7 @@ function assignmentCard(row) {
     <div class="row">
       <div class="row__main">
         <a class="row__title" href="#/projects/${assignment.projectId}">${project?.name || 'Проект удалён'}</a>
-        <span class="row__subtitle">${assignment.role} · ${info.area} м² × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}</span>
+        <span class="row__subtitle">${assignment.role} · ${formatArea(info.area)} × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}</span>
         <span class="row__subtitle">Аванс ${formatAmount(info.advance, info.currency)} ${info.advancePaid ? '✓' : '— не выплачен'}
           · остаток ${formatAmount(info.remainder, info.currency)} ${info.remainderPaid ? '✓' : ''}</span>
         ${raw(badge(info.label, info.tone))}
@@ -96,20 +96,21 @@ export default function employeeDetail(params) {
       <div class="stat"><span class="stat__label">После согласования</span><strong class="stat__value">${money(finance.lockedBase)}</strong></div>
     </div>
 
-    ${isFixed ? raw(html`
+    ${isFixed || finance.payrolls.length ? raw(html`
       <div class="card">
         ${raw(sectionTitle('Зарплата по месяцам'))}
         ${finance.payrolls.length
           ? raw(html`<div class="list">${raw(finance.payrolls.map(payrollCard).join(''))}</div>`)
           : raw(emptyState('Начислений пока нет'))}
-        <p class="muted">Начисление создаётся автоматически в начале каждого месяца.</p>
-      </div>`) : raw(html`
+        ${isFixed ? raw(html`<p class="muted">Начисление создаётся автоматически в начале каждого месяца.</p>`) : ''}
+      </div>`) : ''}
+    ${!isFixed || finance.rows.length ? raw(html`
       <div class="card">
         ${raw(sectionTitle('Работа по проектам'))}
         ${finance.rows.length
           ? raw(html`<div class="list">${raw(finance.rows.map(assignmentCard).join(''))}</div>`)
           : raw(emptyState('Сотрудник пока не назначен ни на один проект'))}
-      </div>`)}
+      </div>`) : ''}
 
     <div class="card">
       ${raw(sectionTitle('История выплат'))}
@@ -143,7 +144,7 @@ export default function employeeDetail(params) {
         if (!ok) return;
         actions.deleteEmployee(employee.id);
         toast('Сотрудник удалён');
-        go('#/employees');
+        go('#/employees', { replace: true });
       };
       root.querySelectorAll('[data-pay-salary]').forEach((button) => {
         button.onclick = () => forms.openPayrollPayment(button.dataset.paySalary, refresh);

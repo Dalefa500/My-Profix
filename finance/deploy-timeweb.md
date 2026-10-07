@@ -293,3 +293,59 @@ sudo -u line-design DATA_DIR=/var/lib/line-design-finance \
 
 Обычно это не нужно: пароль меняется прямо в приложении —
 **Ещё → Настройки → Пароль**.
+
+## 13. Ещё одна компания на том же сервере
+
+Одна программа может обслуживать несколько студий. У каждой — свой
+поддомен, свои данные, своя служба, свои коды входа и своё оформление.
+Первая студия (Line Design) при этом не затрагивается.
+
+1. В панели домена добавьте A-запись поддомена новой студии
+   (например, `finance.nova.tj`) на адрес сервера.
+2. На сервере выполните одну команду (значения — свои):
+
+```bash
+cd /opt/line-design-app && git pull && \
+APP_SLUG=nova \
+COMPANY_NAME="Nova Interiors" \
+BRAND_COLOR="#1f6f8b" \
+BRAND_TAGLINE="Студия дизайна интерьеров" \
+BOOTSTRAP_USERS="ali:Али:admin,vali:Вали:viewer" \
+bash server/install.sh finance.nova.tj почта@пример.ru
+```
+
+Что получится:
+
+| | Line Design | Новая студия |
+|---|---|---|
+| Код | `/opt/line-design-app` | `/opt/nova-app` |
+| Данные | `/var/lib/line-design-finance` | `/var/lib/nova-finance` |
+| Служба | `line-design` | `nova` |
+| Порт | 3000 | первый свободный, начиная с 3001 |
+| Настройки компании | `/etc/line-design/app.env` | `/etc/nova/app.env` |
+| Резервные копии | `/var/backups/line-design` | `/var/backups/nova` |
+
+* `BOOTSTRAP_USERS` — учётные записи первого запуска: `логин:Имя:роль`
+  через запятую, роль `admin` (всё) или `viewer` (только просмотр).
+  Коды для входа скрипт покажет в конце.
+* Логотип: положите `icon-180.png`, `icon-192.png`, `icon-512.png`
+  в `/etc/nova/brand/` и перезапустите службу: `systemctl restart nova`.
+* Поменять название или цвет позже: правка `/etc/nova/app.env`,
+  затем `systemctl restart nova`.
+
+Скрипт не трогает чужие файлы nginx, не переписывает уже настроенный
+HTTPS и не включает заново файрвол, если он уже работает.
+
+Обновление новой студии:
+
+```bash
+git -C /opt/nova-app pull && chown -R nova:nova /opt/nova-app && systemctl restart nova
+```
+
+Проверка: `APP_SLUG=nova bash /opt/nova-app/server/diagnose.sh`.
+
+Коды пользователей новой студии:
+
+```bash
+sudo -u nova DATA_DIR=/var/lib/nova-finance node /opt/nova-app/server/manage-users.js список
+```

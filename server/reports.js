@@ -3,12 +3,13 @@
 // Считаются теми же формулами, что и экраны приложения (finance/js/calc.js),
 // поэтому цифры в отчёте и на телефоне всегда совпадают.
 
+import { config } from './config.js';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { Pdf, PAGE } from './pdf.js';
-import { formatAmount, formatUsdRate, rateToHuman } from '../finance/js/money.js';
-import { formatDate, monthLabel, inRange } from '../finance/js/dates.js';
+import { formatAmount, formatUsdRate, rateToHuman, usdRate } from '../finance/js/money.js';
+import { formatDate, monthLabel, inRange, today as todayLocal } from '../finance/js/dates.js';
 import {
   categoryLabel, labelOf, PROJECT_STATUSES, INCOME_TYPES, PAYMENT_METHODS, BARTER_KINDS,
   FOUNDER_MOVES,
@@ -32,7 +33,13 @@ const BOTTOM = PAGE.height - 56;
 
 const INK = [0.14, 0.16, 0.2];
 const MUTED = [0.47, 0.51, 0.56];
-const BURGUNDY = [0.57, 0.0, 0.16];
+// Фирменный цвет компании (у Line Design — бордовый).
+const BURGUNDY = hexToRgb(config.color);
+
+function hexToRgb(hex) {
+  const n = parseInt(String(hex).slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255].map((v) => Math.round(v * 100) / 100);
+}
 const GOOD = [0.08, 0.47, 0.35];
 const LINE = [0.85, 0.88, 0.9];
 
@@ -41,7 +48,7 @@ const money = (value) => formatAmount(value, 'USD', { decimals: 2 });
 // Лист отчёта: шапка, подвал, курсор по вертикали и перенос на новую страницу.
 class Sheet {
   constructor({ title, subtitle, settings }) {
-    this.doc = new Pdf({ ...FONTS, title, author: settings.companyName || 'Line Design' });
+    this.doc = new Pdf({ ...FONTS, title, author: settings.companyName || config.companyName });
     this.title = title;
     this.subtitle = subtitle;
     this.settings = settings;
@@ -54,19 +61,19 @@ class Sheet {
     if (this.pageNumber > 1) this.doc.addPage();
     const doc = this.doc;
 
-    doc.text(MARGIN, 52, this.settings.companyName || 'Line Design', {
+    doc.text(MARGIN, 52, doc.fit(this.settings.companyName || config.companyName, 17, CONTENT - 70, 'bold'), {
       size: 17, font: 'bold', color: BURGUNDY,
     });
-    doc.text(MARGIN, 66, 'СТУДИЯ ДИЗАЙНА ИНТЕРЬЕРОВ', { size: 6.5, color: MUTED });
+    doc.text(MARGIN, 66, doc.fit(config.tagline.toUpperCase(), 6.5, CONTENT - 70), { size: 6.5, color: MUTED });
     doc.text(MARGIN, 52, `Лист ${this.pageNumber}`, {
       size: 8.5, color: MUTED, align: 'right', width: CONTENT,
     });
 
-    doc.text(MARGIN, 92, this.title, { size: 15, font: 'bold', color: INK });
-    if (this.subtitle) doc.text(MARGIN, 110, this.subtitle, { size: 10, color: MUTED });
+    doc.text(MARGIN, 92, doc.fit(this.title, 15, CONTENT, 'bold'), { size: 15, font: 'bold', color: INK });
+    if (this.subtitle) doc.text(MARGIN, 110, doc.fit(this.subtitle, 10, CONTENT), { size: 10, color: MUTED });
     doc.line(MARGIN, 122, MARGIN + CONTENT, 122, { color: BURGUNDY, width: 1.2 });
 
-    doc.text(MARGIN, BOTTOM + 24, `Сформировано ${formatDate(todayIso())} · курс ${formatUsdRate(this.settings.usdRate)}`, {
+    doc.text(MARGIN, BOTTOM + 24, `Сформировано ${formatDate(todayIso())} · курс ${formatUsdRate(usdRate(this.settings))}`, {
       size: 8, color: MUTED,
     });
     doc.text(MARGIN, BOTTOM + 24, 'Все суммы в долларах США', {
@@ -84,9 +91,11 @@ class Sheet {
   }
 
   heading(text) {
-    this.need(34);
+    // Место под заголовок, шапку таблицы и хотя бы одну строку — чтобы
+    // заголовок не остался один внизу листа.
+    this.need(84);
     this.gap(6);
-    this.doc.text(MARGIN, this.y, text, { size: 11, font: 'bold', color: INK });
+    this.doc.text(MARGIN, this.y, this.doc.fit(text, 11, CONTENT, 'bold'), { size: 11, font: 'bold', color: INK });
     this.y += 6;
     this.doc.line(MARGIN, this.y, MARGIN + CONTENT, this.y, { color: LINE });
     this.y += 16;
@@ -100,9 +109,13 @@ class Sheet {
     this.doc.rect(MARGIN, this.y - 12, CONTENT, height, { color: [0.96, 0.97, 0.98] });
     items.forEach((item, index) => {
       const x = MARGIN + width * index + 12;
-      this.doc.text(x, this.y + 2, item.label, { size: 8, color: MUTED });
-      this.doc.text(x, this.y + 20, money(item.value), {
-        size: 13, font: 'bold', color: item.color || INK,
+      this.doc.text(x, this.y + 2, this.doc.fit(item.label, 8, width - 16), { size: 8, color: MUTED });
+      // Сумму не обрезаем — уменьшаем шрифт, пока не поместится.
+      const text = money(item.value);
+      let size = 13;
+      while (size > 7 && this.doc.widthOf(text, size, 'bold') > width - 16) size -= 0.5;
+      this.doc.text(x, this.y + 20, text, {
+        size, font: 'bold', color: item.color || INK,
       });
     });
     this.y += height + 8;
@@ -111,8 +124,8 @@ class Sheet {
   // Строка «подпись — значение».
   pair(label, value, options = {}) {
     this.need(18);
-    this.doc.text(MARGIN, this.y, label, { size: 9.5, color: MUTED });
-    this.doc.text(MARGIN, this.y, String(value ?? '—'), {
+    this.doc.text(MARGIN, this.y, this.doc.fit(label, 9.5, CONTENT * 0.4), { size: 9.5, color: MUTED });
+    this.doc.text(MARGIN, this.y, this.doc.fit(value ?? '—', 9.5, CONTENT * 0.58, options.font), {
       size: 9.5, color: options.color || INK, font: options.font || 'regular',
       align: 'right', width: CONTENT,
     });
@@ -155,8 +168,15 @@ class Sheet {
       let x = MARGIN;
       row.forEach((cell, index) => {
         const value = cell && typeof cell === 'object' ? cell : { text: cell };
-        this.doc.text(x + 6, this.y, this.doc.fit(value.text, 9, widths[index] - 12, value.font), {
-          size: 9, color: value.color || INK, font: value.font || 'regular',
+        const room = widths[index] - 12;
+        // Числа в колонках справа не обрезаем «…» — пропавшая цифра даёт
+        // неверную сумму. Вместо этого уменьшаем шрифт.
+        let size = 9;
+        if (columns[index].align === 'right') {
+          while (size > 6 && this.doc.widthOf(value.text, size, value.font) > room) size -= 0.5;
+        }
+        this.doc.text(x + 6, this.y, this.doc.fit(value.text, size, room, value.font), {
+          size, color: value.color || INK, font: value.font || 'regular',
           align: columns[index].align || 'left', width: widths[index] - 12,
         });
         x += widths[index];
@@ -168,10 +188,14 @@ class Sheet {
   }
 
   note(text) {
-    this.need(26);
+    const lines = this.doc.wrap(text, 8.5, CONTENT, { maxLines: 8 });
+    this.need(14 + lines.length * 12);
     this.gap(4);
-    this.doc.text(MARGIN, this.y, text, { size: 8.5, color: MUTED });
-    this.y += 14;
+    for (const line of lines) {
+      this.doc.text(MARGIN, this.y, line, { size: 8.5, color: MUTED });
+      this.y += 12;
+    }
+    this.y += 2;
   }
 
   build() {
@@ -179,8 +203,15 @@ class Sheet {
   }
 }
 
+// Площадь: «84,5 м²», без «undefined» и с запятой, как принято.
+function area(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return '—';
+  return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(number)} м²`;
+}
+
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return todayLocal();
 }
 
 function statusLabel(status) {
@@ -190,6 +221,7 @@ function statusLabel(status) {
 // Имя файла: понятное человеку, но без символов, которые ломают вложения.
 function fileName(parts) {
   const base = parts.filter(Boolean).join(' - ')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
     .replace(/[\\/:*?"<>|]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -205,7 +237,7 @@ function employeeReport(state, employee) {
     : `${formatAmount(employee.rate, employee.rateCurrency)} за м²`;
 
   const sheet = new Sheet({
-    title: `Отчёт по сотруднику — ${employee.name}`,
+    title: `Отчёт по сотруднику — ${employee.name || 'без имени'}`,
     subtitle: [employee.position, pay].filter(Boolean).join(' · '),
     settings: state.settings,
   });
@@ -217,33 +249,32 @@ function employeeReport(state, employee) {
     { label: 'Ждёт согласования', value: finance.lockedBase },
   ]);
 
-  if (finance.type === 'piecework') {
+  if (finance.type === 'piecework' || finance.rows.length) {
     sheet.heading('Работа по проектам');
     sheet.table(
       [
-        { title: 'Проект', width: 150 },
-        { title: 'Площадь', width: 50, align: 'right' },
+        { title: 'Проект', width: 118 },
+        { title: 'Площадь', width: 48, align: 'right' },
         { title: 'Ставка', width: 50, align: 'right' },
-        { title: 'Начислено', width: 62, align: 'right' },
-        { title: 'Выплачено', width: 62, align: 'right' },
-        { title: 'Остаток', width: 62, align: 'right' },
-        { title: 'Состояние', width: 72 },
+        { title: 'Начислено', width: 66, align: 'right' },
+        { title: 'Выплачено', width: 66, align: 'right' },
+        { title: 'Остаток', width: 66, align: 'right' },
+        { title: 'Состояние', width: 100 },
       ],
       finance.rows.map((row) => [
         row.project?.name || 'Без проекта',
-        `${row.assignment.area} м²`,
+        area(row.assignment.area),
         formatAmount(row.assignment.rate, row.assignment.currency),
         money(row.state.accruedBase),
         { text: money(row.state.paidBase), color: GOOD },
         { text: money(row.state.owedBase), color: row.state.owedBase > 0 ? BURGUNDY : MUTED },
-        row.state.remainderAvailable || row.state.owedBase === 0
-          ? 'Готово к выплате'
-          : 'Ждёт одобрения клиента',
+        row.state.label,
       ]),
       { empty: 'Сотрудник пока не назначен ни на один проект' },
     );
     sheet.note('Остаток сдельной оплаты выплачивается после того, как клиент одобрил работу по проекту.');
-  } else {
+  }
+  if (finance.type === 'fixed' || finance.payrolls.length) {
     sheet.heading('Начисления по месяцам');
     sheet.table(
       [
@@ -297,7 +328,7 @@ function employeeReport(state, employee) {
 function clientReport(state, client) {
   const finance = clientFinance(state, client.id);
   const sheet = new Sheet({
-    title: `Отчёт по клиенту — ${client.name}`,
+    title: `Отчёт по клиенту — ${client.name || 'без имени'}`,
     subtitle: [client.phone, client.email].filter(Boolean).join(' · '),
     settings: state.settings,
   });
@@ -311,12 +342,12 @@ function clientReport(state, client) {
   sheet.heading('Проекты');
   sheet.table(
     [
-      { title: 'Проект', width: 150 },
-      { title: 'Адрес', width: 120 },
-      { title: 'Статус', width: 80 },
-      { title: 'Стоимость', width: 75, align: 'right' },
-      { title: 'Получено', width: 75, align: 'right' },
-      { title: 'Остаток', width: 75, align: 'right' },
+      { title: 'Проект', width: 140 },
+      { title: 'Адрес', width: 96 },
+      { title: 'Статус', width: 96 },
+      { title: 'Стоимость', width: 78, align: 'right' },
+      { title: 'Получено', width: 78, align: 'right' },
+      { title: 'Остаток', width: 78, align: 'right' },
     ],
     finance.projects.map((project) => {
       const info = projectFinance(state, project);
@@ -407,8 +438,8 @@ function projectReport(state, project) {
   const finance = projectFinance(state, project);
   const client = state.clients.find((item) => item.id === project.clientId);
   const sheet = new Sheet({
-    title: `Отчёт по проекту — ${project.name}`,
-    subtitle: [client?.name, project.address, project.area ? `${project.area} м²` : '']
+    title: `Отчёт по проекту — ${project.name || 'без названия'}`,
+    subtitle: [client?.name, project.address, project.area ? area(project.area) : '']
       .filter(Boolean).join(' · '),
     settings: state.settings,
   });
@@ -424,7 +455,7 @@ function projectReport(state, project) {
   sheet.pair('Статус', statusLabel(project.status));
   sheet.pair('Начало работ', project.startDate ? formatDate(project.startDate) : '—');
   sheet.pair('Срок сдачи', project.dueDate ? formatDate(project.dueDate) : '—');
-  if (project.currency !== 'USD') {
+  if (project.currency && project.currency !== 'USD' && Number(project.fx) > 0) {
     sheet.pair('Стоимость в договоре', `${formatAmount(project.price, project.currency)}`
       + ` по курсу ${formatUsdRate(rateToHuman(project.fx))}`);
   }
@@ -464,7 +495,7 @@ function projectReport(state, project) {
       return [
         employee?.name || 'Сотрудник',
         assignment.role || '—',
-        `${assignment.area} м²`,
+        area(assignment.area),
         formatAmount(assignment.rate, assignment.currency),
         money(info.accruedBase),
         { text: money(info.paidBase), color: GOOD },
@@ -490,7 +521,9 @@ function projectReport(state, project) {
     ],
     moves.map((item) => [
       formatDate(item.date, { short: true }),
-      item.comment || categoryLabel(item.category, state.settings),
+      item.comment || (item.kind === 'income'
+        ? labelOf(INCOME_TYPES, item.type, 'Поступление')
+        : categoryLabel(item.category, state.settings)),
       item.kind === 'income' ? { text: money(item.base), color: GOOD } : '',
       item.kind === 'expense' ? { text: money(item.base), color: BURGUNDY } : '',
     ]),
@@ -509,7 +542,7 @@ function founderReport(state, founder, from, to) {
   const info = founderState(state, founder, from, to);
   const period = from && to;
   const sheet = new Sheet({
-    title: `Отчёт по коллеге — ${founder.name}`,
+    title: `Отчёт по коллеге — ${founder.name || 'без имени'}`,
     subtitle: [founder.role, period ? `${formatDate(from)} — ${formatDate(to)}` : 'за всё время']
       .filter(Boolean).join(' · '),
     settings: state.settings,
@@ -652,7 +685,8 @@ function periodReport(state, from, to) {
         return {
           ...item,
           kind: 'expense',
-          comment: (item.kind || 'draw') === 'repay' ? `Вернули долг: ${name}` : `${name} взял себе`,
+          // Своя подпись коллеги («На отпуск») не теряется — дописывается.
+          comment: `${(item.kind || 'draw') === 'repay' ? `Вернули долг: ${name}` : `${name} взял себе`}${item.comment ? ` · ${item.comment}` : ''}`,
           projectId: null,
         };
       }),

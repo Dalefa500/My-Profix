@@ -27,7 +27,7 @@ function openCompanyForm(settings) {
     fields: [
       { name: 'companyName', label: 'Название студии', type: 'text', value: settings.companyName, wide: true },
       {
-        name: 'usdRate', label: 'Курс доллара, TJS за $1', type: 'number', step: '0.01',
+        name: 'usdRate', label: 'Курс доллара, TJS за $1', type: 'number', step: '0.01', min: 3, max: 40,
         value: settings.usdRate,
         hint: 'Запасной вариант, если сайт НБТ недоступен. Применяется к новым операциям — старые сохраняют свой курс.',
       },
@@ -72,6 +72,7 @@ function openCategoryForm() {
 function openNameForm(user) {
   openForm({
     title: 'Как вас подписывать',
+    viewerOk: true,
     intro: store.isAuthDisabled()
       ? 'Имя хранится в этом браузере и подставляется в операции, которые вы вносите.'
       : '',
@@ -100,6 +101,7 @@ function openNameForm(user) {
 function openPasswordForm() {
   openForm({
     title: 'Смена кода',
+    viewerOk: true,
     intro: 'Код заменяет логин и пароль: по нему приложение узнаёт, кто вошёл.',
     fields: [
       { name: 'currentPassword', label: 'Текущий код', type: 'password', required: true, wide: true },

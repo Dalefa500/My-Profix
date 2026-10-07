@@ -146,8 +146,27 @@ export function applyOp(data, op) {
       data.settings = { ...data.settings, ...(op.changes || {}) };
       return data;
     }
-    case 'replace': {
-      return normalizeData(op.data);
+    // Добавить, заменить или убрать один элемент вложенного списка
+    // (например, выплату в начислении зарплаты). В отличие от patch со
+    // всем списком, два человека, отметивших выплаты одновременно,
+    // не затрут друг друга.
+    case 'item': {
+      const items = collectionOf(data, op.collection);
+      if (!/^[a-z][a-zA-Z]{0,30}$/.test(String(op.field || ''))) throw new Error('Неверное поле');
+      const index = items.findIndex((item) => item.id === op.id);
+      if (index === -1) return data;
+      const list = Array.isArray(items[index][op.field]) ? [...items[index][op.field]] : [];
+      if (op.removeId) {
+        const at = list.findIndex((entry) => entry?.id === op.removeId || entry?.expenseId === op.removeId);
+        if (at >= 0) list.splice(at, 1);
+      } else {
+        if (!op.item?.id) throw new Error('Элемент без идентификатора');
+        const at = list.findIndex((entry) => entry?.id === op.item.id);
+        if (at >= 0) list[at] = { ...list[at], ...op.item };
+        else list.push(op.item);
+      }
+      items[index] = { ...items[index], [op.field]: list };
+      return data;
     }
     default:
       throw new Error(`Неизвестная операция: ${op.type}`);
@@ -165,4 +184,7 @@ export const op = {
   patch: (collection, id, changes, unset) => ({ type: 'patch', collection, id, changes, unset }),
   remove: (collection, id) => ({ type: 'remove', collection, id }),
   settings: (changes) => ({ type: 'settings', changes }),
+  // Один элемент вложенного списка: добавить/заменить или убрать.
+  putItem: (collection, id, field, item) => ({ type: 'item', collection, id, field, item }),
+  dropItem: (collection, id, field, removeId) => ({ type: 'item', collection, id, field, removeId }),
 };

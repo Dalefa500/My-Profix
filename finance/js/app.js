@@ -2,7 +2,7 @@
 
 import * as store from './store.js';
 import * as router from './router.js';
-import { html, raw, openSheet, closeSheet, money, toast, fastTap } from './ui.js';
+import { html, raw, esc, openSheet, closeSheet, money, toast, fastTap } from './ui.js';
 import { ensurePayrolls } from './actions.js';
 import { notifications } from './calc.js';
 import * as forms from './forms.js';
@@ -11,6 +11,7 @@ import { setRefresh } from './refresh.js';
 import { applyTheme } from './theme.js';
 import * as passkey from './passkey.js';
 import { ICONS, quickAction } from './icons.js';
+import { BRAND, WORDMARK_IS_SCRIPT } from './brand.js';
 
 import dashboard from './views/dashboard.js';
 import projects from './views/projects.js';
@@ -76,11 +77,11 @@ function renderAuth(error = '') {
     <div class="auth__inner">
       <div class="auth__brand">
         <h1 class="auth__word">
-          <span class="auth__script">Line design</span>
-          <span class="auth__studio">Studio</span>
+          <span class="auth__script ${WORDMARK_IS_SCRIPT ? '' : 'is-plain'}">${BRAND.wordmark}</span>
+          ${BRAND.subtitle ? raw(html`<span class="auth__studio">${BRAND.subtitle}</span>`) : ''}
         </h1>
         <span class="auth__rule"></span>
-        <p class="auth__tagline">Студия дизайна интерьеров</p>
+        <p class="auth__tagline">${BRAND.tagline}</p>
       </div>
 
       <form class="auth__form">
@@ -159,13 +160,13 @@ function shellHtml() {
     </header>
     <!-- Знак студии живёт отдельно от шапки: внутри неё стоит размытие фона,
          и тонкий рукописный шрифт из-за него терял чёткость. -->
-    <div class="brand" aria-hidden="true"><span class="brand__name">Line design</span></div>
+    <div class="brand" aria-hidden="true"><span class="brand__name ${raw(WORDMARK_IS_SCRIPT ? '' : 'is-plain')}">${BRAND.wordmark}</span></div>
     <main class="viewport" id="viewport">
       <div class="view" id="view"></div>
       <div class="view view--ghost" id="viewGhost" aria-hidden="true"></div>
     </main>
     <button class="fab" data-quick aria-label="Быстрое действие">+</button>
-    <nav class="tabbar" data-brand="${state.settings.companyName || 'Line Design'}">
+    <nav class="tabbar" data-brand="${state.settings.companyName || BRAND.companyName}">
       ${raw(TABS.map((tab) => html`
         <a class="tabbar__item" href="${tab.href}" data-tab="${tab.href}">
           ${raw(ICONS[tab.icon])}
@@ -178,13 +179,15 @@ function renderShell() {
   root.className = 'app';
   applyRole();
   root.innerHTML = shellHtml();
-  fastTap(root.querySelector('[data-quick]'), openQuickActions);
+  // «+» — по обычному нажатию, а не по касанию: иначе начатый на ней
+  // свайп между разделами открывал меню действий.
+  root.querySelector('[data-quick]')?.addEventListener('click', openQuickActions);
   fastTap(root.querySelector('[data-more]'), openMoreMenu);
   fastTap(root.querySelector('[data-notifications]'), openNotifications);
   fastTap(root.querySelector('[data-back]'), () => {
     // Если приложение открыли сразу на внутреннем экране, возвращаться
     // по истории некуда — уходим на заданный экран.
-    if (window.history.length > 1) window.history.back();
+    if (router.canGoBack()) window.history.back();
     else if (backTarget) router.go(backTarget, { replace: true });
   });
 
@@ -376,6 +379,10 @@ function renderView() {
   // на шаг дальше, чем нужно.
   backTarget = result.back || '';
 
+  // Название компании могли поменять в настройках — подпись меню обновляем сразу.
+  const tabbar = document.querySelector('.tabbar');
+  if (tabbar) tabbar.dataset.brand = store.getState().settings.companyName || BRAND.companyName;
+
   for (const tab of document.querySelectorAll('[data-tab]')) {
     const config = TABS.find((item) => item.href === tab.dataset.tab);
     tab.classList.toggle('is-active', config.match.includes(router.currentRoute().pattern));
@@ -504,6 +511,9 @@ store.subscribe((_, reason) => {
     toast('У вас доступ только для просмотра', 'danger');
     return;
   }
+  if (reason === 'rejected') {
+    toast('Сервер не принял последнее изменение — данные обновлены', 'danger');
+  }
   if (reason === 'auth' && !store.getUser() && !store.isAuthDisabled()) {
     renderAuth();
     return;
@@ -571,11 +581,11 @@ async function boot() {
     <div class="auth__inner">
       <div class="auth__brand">
         <h1 class="auth__word">
-          <span class="auth__script">Line design</span>
-          <span class="auth__studio">Studio</span>
+          <span class="auth__script ${WORDMARK_IS_SCRIPT ? '' : 'is-plain'}">${esc(BRAND.wordmark)}</span>
+          ${BRAND.subtitle ? `<span class="auth__studio">${esc(BRAND.subtitle)}</span>` : ''}
         </h1>
         <span class="auth__rule"></span>
-        <p class="auth__tagline">Студия дизайна интерьеров</p>
+        <p class="auth__tagline">${esc(BRAND.tagline)}</p>
       </div>
       <p class="auth__hint">Загружаем данные…</p>
     </div>`;

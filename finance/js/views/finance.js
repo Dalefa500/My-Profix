@@ -116,8 +116,8 @@ export default function finance(params) {
 
   const body = html`
     <div class="tabs">
-      <a class="tabs__item ${raw(tab === 'income' ? 'is-active' : '')}" href="#/finance/income">Приход</a>
-      <a class="tabs__item ${raw(tab === 'expense' ? 'is-active' : '')}" href="#/finance/expense">Расход</a>
+      <a class="tabs__item ${raw(tab === 'income' ? 'is-active' : '')}" href="#/finance/income" data-replace>Приход</a>
+      <a class="tabs__item ${raw(tab === 'expense' ? 'is-active' : '')}" href="#/finance/expense" data-replace>Расход</a>
     </div>
 
     <div class="stats">

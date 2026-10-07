@@ -8,7 +8,7 @@
 
 import { toBase, round } from './money.js';
 import {
-  today, monthKey, monthStart, monthEnd, addMonths, monthKeysBetween, inRange, formatDate, monthLabel,
+  today, monthKey, monthStart, monthEnd, addMonths, addDays, monthKeysBetween, inRange, formatDate, monthLabel,
 } from './dates.js';
 import {
   CLIENT_APPROVED_STATUSES, CLOSED_PROJECT_STATUSES, WORK_STAGES, labelOf,
@@ -55,10 +55,29 @@ export function isClientApproved(assignment, project) {
 
 // Сводный статус сдельного сотрудника в проекте (пункт 8 ТЗ).
 export function assignmentState(assignment, project) {
-  const totals = assignmentTotals(assignment);
+  const base = assignmentTotals(assignment);
   const advancePaid = Boolean(assignment?.advancePaidAt);
   const remainderPaid = Boolean(assignment?.remainderPaidAt);
   const approved = isClientApproved(assignment, project);
+  const fx = Number(assignment?.fx) > 0 ? Number(assignment.fx) : 1;
+  const known = (value) => value !== undefined && value !== null && Number.isFinite(Number(value));
+
+  // Сколько реально выплачено. Раньше «выплачено» пересчитывалось по
+  // текущей площади и ставке — и если их правили после аванса, история
+  // переписывалась задним числом. Теперь берётся сумма самой выплаты
+  // (у старых записей, где её нет, — как раньше).
+  const advancePaidBase = advancePaid
+    ? (known(assignment.advancePaidBase) ? Number(assignment.advancePaidBase) : base.advanceBase) : 0;
+  const remainderPaidBase = remainderPaid
+    ? (known(assignment.remainderPaidBase) ? Number(assignment.remainderPaidBase) : base.remainderBase) : 0;
+  // После аванса остаток — это всё начисленное минус то, что уже отдали:
+  // увеличили площадь — разница попадёт в остаток, выплатили меньше — тоже.
+  const remainderBase = advancePaid ? round(Math.max(0, base.accruedBase - advancePaidBase)) : base.remainderBase;
+  const totals = {
+    ...base,
+    remainderBase,
+    remainder: advancePaid ? round(remainderBase / fx) : base.remainder,
+  };
   const remainderAvailable = approved && !remainderPaid && totals.remainder > 0;
 
   let label;
@@ -86,13 +105,13 @@ export function assignmentState(assignment, project) {
   }
 
   // К выплате прямо сейчас: невыплаченный аванс + доступный остаток.
+  const paidBase = round(advancePaidBase + remainderPaidBase);
+  // Если после полной выплаты начисление выросло — доплата тоже к выплате.
+  const topUpBase = remainderPaid ? Math.max(0, round(totals.accruedBase - paidBase)) : 0;
   const dueNowBase = round(
     (advancePaid ? 0 : totals.advanceBase)
-    + (remainderAvailable ? totals.remainderBase : 0),
-  );
-  const paidBase = round(
-    (advancePaid ? totals.advanceBase : 0)
-    + (remainderPaid ? totals.remainderBase : 0),
+    + (remainderAvailable ? totals.remainderBase : 0)
+    + topUpBase,
   );
   // Остаток, который ещё не согласован клиентом, — обязательство будущего периода.
   const lockedBase = !remainderPaid && !approved ? totals.remainderBase : 0;
@@ -130,7 +149,10 @@ export function projectIncomes(state, projectId) {
 // Выплаты сдельным и зарплаты сюда не попадают — они считаются отдельно,
 // чтобы не задваивать суммы.
 export function projectDirectExpenses(state, projectId) {
-  return state.expenses.filter((item) => item.projectId === projectId && !item.source);
+  // Исключаются только выплаты по сдельным назначениям — они уже учтены
+  // через сами назначения. Расход, оплаченный коллегой из своих, и плановый
+  // платёж, привязанные к проекту, — это настоящие расходы проекта.
+  return state.expenses.filter((item) => item.projectId === projectId && item.source !== 'assignment');
 }
 
 // План поступлений проекта. Полученные деньги распределяются по платежам
@@ -382,7 +404,10 @@ export function employeePayrolls(state, employeeId) {
 // Какие месяцы должны быть начислены сотруднику на текущую дату.
 export function payrollMonthsFor(employee, nowIso = today()) {
   if (employee.payType !== 'fixed' || employee.active === false) return [];
-  const from = monthKey(employee.startDate || employee.createdAt || nowIso);
+  const start = monthKey(employee.startDate || employee.createdAt || nowIso);
+  // activeFrom: с какого месяца сотрудник снова (или впервые) в штате.
+  const back = employee.activeFrom ? monthKey(employee.activeFrom) : start;
+  const from = back > start ? back : start;
   const to = monthKey(nowIso);
   if (from > to) return [];
   return monthKeysBetween(from, to);
@@ -392,34 +417,25 @@ export function payrollMonthsFor(employee, nowIso = today()) {
 
 export function employeeFinance(state, employee) {
   if (!employee) return null;
-  if (employee.payType === 'fixed') {
-    const payrolls = employeePayrolls(state, employee.id);
-    const accruedBase = sum(payrolls, (item) => item.accruedBase);
-    const paidBase = sum(payrolls, (item) => payrollPaidBase(item));
-    return {
-      type: 'fixed',
-      payrolls,
-      accruedBase,
-      paidBase,
-      dueNowBase: round(Math.max(0, accruedBase - paidBase)),
-      lockedBase: 0,
-      owedBase: round(Math.max(0, accruedBase - paidBase)),
-    };
-  }
-  const assignments = employeeAssignments(state, employee.id);
-  const rows = assignments.map((assignment) => ({
-    assignment,
-    project: state.projects.find((item) => item.id === assignment.projectId) || null,
-    state: assignmentState(assignment, state.projects.find((item) => item.id === assignment.projectId)),
-  }));
+  // Считаем и зарплату, и сдельные работы: сотрудника могли перевести с одной
+  // оплаты на другую, а начатые работы и начисления никуда не деваются.
+  const payrolls = employeePayrolls(state, employee.id);
+  const rows = employeeAssignments(state, employee.id).map((assignment) => {
+    const project = state.projects.find((item) => item.id === assignment.projectId) || null;
+    return { assignment, project, state: assignmentState(assignment, project) };
+  });
+  const payrollAccrued = sum(payrolls, (item) => item.accruedBase);
+  const payrollPaid = sum(payrolls, (item) => payrollPaidBase(item));
+  const payrollOwed = round(Math.max(0, payrollAccrued - payrollPaid));
   return {
-    type: 'piecework',
+    type: employee.payType === 'fixed' ? 'fixed' : 'piecework',
+    payrolls,
     rows,
-    accruedBase: sum(rows, (row) => row.state.accruedBase),
-    paidBase: sum(rows, (row) => row.state.paidBase),
-    dueNowBase: sum(rows, (row) => row.state.dueNowBase),
+    accruedBase: round(payrollAccrued + sum(rows, (row) => row.state.accruedBase)),
+    paidBase: round(payrollPaid + sum(rows, (row) => row.state.paidBase)),
+    dueNowBase: round(payrollOwed + sum(rows, (row) => row.state.dueNowBase)),
     lockedBase: sum(rows, (row) => row.state.lockedBase),
-    owedBase: sum(rows, (row) => row.state.owedBase),
+    owedBase: round(payrollOwed + sum(rows, (row) => row.state.owedBase)),
   };
 }
 
@@ -510,8 +526,13 @@ export function receivables(state) {
     const finance = projectFinance(state, project);
     if (finance.toReceiveBase <= 0.01) continue;
     const client = state.clients.find((item) => item.id === project.clientId) || null;
+    // Сумма строк плана не может быть больше долга по договору: если цену
+    // проекта уменьшили, а план остался прежним, лишнее не показываем.
+    let budget = finance.toReceiveBase;
     for (const item of finance.plan) {
-      if (item.leftBase <= 0.01) continue;
+      if (item.leftBase <= 0.01 || budget <= 0.01) continue;
+      const amount = round(Math.min(item.leftBase, budget));
+      budget = round(budget - amount);
       rows.push({
         id: `${project.id}:${item.id}`,
         projectId: project.id,
@@ -519,15 +540,14 @@ export function receivables(state) {
         client,
         title: item.title || labelOfPlanType(item.type),
         type: item.type,
-        amountBase: item.leftBase,
+        amountBase: amount,
         dueDate: item.dueDate,
         overdue: Boolean(item.overdue),
         status: item.status,
       });
     }
     // Часть долга, не покрытая планом платежей, показывается отдельной строкой.
-    const planned = finance.plan.reduce((acc, item) => acc + item.leftBase, 0);
-    const uncovered = round(finance.toReceiveBase - planned);
+    const uncovered = round(budget);
     if (uncovered > 0.01) {
       rows.push({
         id: `${project.id}:rest`,
@@ -542,6 +562,28 @@ export function receivables(state) {
         status: 'planned',
       });
     }
+  }
+  // Работ по взаиморасчёту сделано больше, чем стоит имущество, —
+  // разницу клиент должен деньгами.
+  for (const barter of state.barters || []) {
+    const info = barterState(state, barter);
+    if (info.overBase <= 0.01) continue;
+    const client = state.clients.find((item) => item.id === barter.clientId) || null;
+    const lastStage = info.stages[info.stages.length - 1];
+    rows.push({
+      id: `barter:${barter.id}`,
+      projectId: lastStage?.income.projectId || null,
+      project: state.projects.find((item) => item.id === lastStage?.income.projectId) || { id: null, name: barter.title },
+      client,
+      title: `Доплата сверх имущества · ${barter.title}`,
+      type: 'final',
+      amountBase: info.overBase,
+      dueDate: lastStage?.income.date || barter.date || '',
+      overdue: false,
+      status: 'planned',
+      barterId: barter.id,
+      href: '#/barters',
+    });
   }
   return rows.sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
 }
@@ -648,14 +690,14 @@ export function notifications(state, nowIso = today()) {
         id: `late:${row.id}`, tone: 'danger', icon: '!',
         title: 'Просрочен платёж клиента',
         text: `${row.client?.name || 'Без клиента'} · ${row.project.name} · ${row.title}`,
-        amountBase: row.amountBase, href: `#/projects/${row.projectId}`,
+        amountBase: row.amountBase, href: row.href || `#/projects/${row.projectId}`,
       });
     } else if (row.dueDate && row.dueDate <= limit) {
       items.push({
         id: `soon:${row.id}`, tone: 'warn', icon: '→',
         title: 'Клиент должен оплатить',
         text: `${row.project.name} · ${row.title} · до ${formatDate(row.dueDate, { short: true })}`,
-        amountBase: row.amountBase, href: `#/projects/${row.projectId}`,
+        amountBase: row.amountBase, href: row.href || `#/projects/${row.projectId}`,
       });
     }
   }
@@ -670,6 +712,9 @@ export function notifications(state, nowIso = today()) {
       });
       continue;
     }
+    // Остаток, который клиент ещё не одобрил, платить пока нельзя —
+    // и тревожить «просрочкой» по нему незачем.
+    if (row.ready === false) continue;
     if (!row.dueDate) continue;
     if (row.dueDate < nowIso) {
       items.push({
@@ -702,9 +747,8 @@ export function notifications(state, nowIso = today()) {
 }
 
 function addDaysIso(iso, days) {
-  const date = new Date(iso);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  // Одна система времени — местная: смешение UTC и местного сдвигало дату.
+  return addDays(iso, days);
 }
 
 // Годовая сводка (пункт 20 ТЗ).
@@ -720,7 +764,8 @@ export function yearSummary(state, year) {
     return start >= from && start <= to;
   });
 
-  const ranked = state.projects
+  // Лучшие проекты — среди проектов этого года.
+  const ranked = projects
     .map((project) => projectFinance(state, project))
     .filter((finance) => finance.contractBase > 0)
     .sort((a, b) => b.profitPlanBase - a.profitPlanBase);

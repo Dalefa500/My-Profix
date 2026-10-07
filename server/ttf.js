@@ -215,6 +215,12 @@ export function subsetFont(font, glyphList) {
     return Buffer.from(font.buffer.subarray(table.offset, table.offset + table.length));
   };
 
+  // Таблицы хинтинга (cvt, fpgm, prep) оставляем: глифы ссылаются на них,
+  // и без них часть просмотрщиков рисует буквы с искажениями. OS/2 и post
+  // нужны для корректной метрики. Всё, чего в шрифте нет, просто пропускаем.
+  const optional = ['cvt ', 'fpgm', 'prep', 'OS/2']
+    .filter((name) => font.tables.has(name))
+    .map((name) => [name, copy(name)]);
   return buildSfnt([
     ['head', head],
     ['hhea', copy('hhea')],
@@ -222,6 +228,7 @@ export function subsetFont(font, glyphList) {
     ['hmtx', copy('hmtx')],
     ['loca', loca],
     ['glyf', glyf],
+    ...optional,
   ]);
 }
 
@@ -256,5 +263,12 @@ function buildSfnt(entries) {
     body.push(padded);
     offset += padded.length;
   });
-  return Buffer.concat([header, ...body]);
+  const file = Buffer.concat([header, ...body]);
+  // Контрольная сумма всего файла в таблице head (как требует стандарт TrueType).
+  const headIndex = sorted.findIndex(([name]) => name === 'head');
+  if (headIndex >= 0) {
+    const headOffset = header.readUInt32BE(12 + headIndex * 16 + 8);
+    file.writeUInt32BE((0xB1B0AFBA - checksum(file)) >>> 0, headOffset + 8);
+  }
+  return file;
 }

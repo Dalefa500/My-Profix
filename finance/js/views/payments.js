@@ -1,6 +1,6 @@
 // Платежи: что получить от клиентов и что выплатить.
 
-import { html, raw, money, emptyState, badge, sectionTitle, toast } from '../ui.js';
+import { html, raw, money, emptyState, badge, sectionTitle, toast, plural } from '../ui.js';
 import { getState, byId } from '../store.js';
 import { receivables, payables } from '../calc.js';
 import { formatDate, today, daysUntil } from '../dates.js';
@@ -25,19 +25,19 @@ function receiveTab(state) {
     <div class="stat stat--good">
       <span class="stat__label">Всего к получению</span>
       <strong class="stat__value">${money(total)}</strong>
-      <span class="stat__hint">${rows.length} платежей от клиентов</span>
+      <span class="stat__hint">${plural(rows.length, 'платёж', 'платежа', 'платежей')} от клиентов</span>
     </div>
     <div class="card card--flat">
       ${rows.length ? raw(html`<div class="list">${raw(rows.map((row) => html`
         <div class="row">
           <div class="row__main">
-            <a class="row__title" href="#/projects/${row.projectId}">${row.project.name}</a>
+            <a class="row__title" href="${row.href || `#/projects/${row.projectId}`}">${row.project.name}</a>
             <span class="row__subtitle">${row.client?.name || 'Без клиента'} · ${row.title}</span>
             ${raw(dueBadge(row.dueDate))}
           </div>
           <div class="row__side">
             <span class="row__amount good">${money(row.amountBase)}</span>
-            <button class="btn btn--sm btn--primary" data-receive="${row.projectId}" data-amount="${row.amountBase}" data-type="${row.type}">Получено</button>
+            <button class="btn btn--sm btn--primary" data-receive="${row.projectId || ''}" data-client="${row.client?.id || ''}" data-amount="${row.amountBase}" data-type="${row.type}">Получено</button>
           </div>
         </div>`).join(''))}</div>`)
         : raw(emptyState('Все клиенты рассчитались'))}
@@ -93,8 +93,8 @@ export default function payments(params) {
 
   const body = html`
     <div class="tabs">
-      <a class="tabs__item ${raw(tab === 'get' ? 'is-active' : '')}" href="#/payments/get">Получить</a>
-      <a class="tabs__item ${raw(tab === 'pay' ? 'is-active' : '')}" href="#/payments/pay">Выплатить</a>
+      <a class="tabs__item ${raw(tab === 'get' ? 'is-active' : '')}" href="#/payments/get" data-replace>Получить</a>
+      <a class="tabs__item ${raw(tab === 'pay' ? 'is-active' : '')}" href="#/payments/pay" data-replace>Выплатить</a>
     </div>
     ${raw(tab === 'get' ? receiveTab(state) : payTab(state))}`;
 
@@ -107,6 +107,13 @@ export default function payments(params) {
       root.querySelectorAll('[data-receive]').forEach((button) => {
         button.onclick = () => {
           const project = byId('projects', button.dataset.receive);
+          if (!project) {
+            // Доплата по взаиморасчёту — обычный приход от клиента.
+            forms.openIncomeForm({
+              clientId: button.dataset.client || '', type: 'other', amount: Number(button.dataset.amount),
+            }, refresh);
+            return;
+          }
           forms.openIncomeForm({
             projectId: project.id,
             clientId: project.clientId,

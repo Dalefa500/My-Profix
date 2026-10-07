@@ -5,7 +5,7 @@ import { openForm, toast, html, raw, esc } from './ui.js';
 import { getState, byId } from './store.js';
 import * as actions from './actions.js';
 import { today, monthLabel } from './dates.js';
-import { formatAmount } from './money.js';
+import { formatAmount, isBase } from './money.js';
 import {
   PROJECT_STATUSES, OBJECT_TYPES, PROJECT_ROLES, INCOME_TYPES, PAYMENT_METHODS,
   EMPLOYEE_PAY_TYPES, BARTER_KINDS, FOUNDER_MOVES,
@@ -94,7 +94,7 @@ export function openProjectForm(projectId = null, onDone) {
         name: 'price', label: 'Стоимость проекта', type: 'money', required: true,
         value: project?.price || '', currency: project?.currency, fx: project?.fx,
       },
-      { name: 'area', label: 'Площадь, м²', type: 'number', value: project?.area || '', step: '0.1' },
+      { name: 'area', label: 'Площадь, м²', type: 'number', value: project?.area || '', step: '0.1', max: 1000000 },
       { name: 'startDate', label: 'Дата начала', type: 'date', value: project?.startDate || today() },
     ],
     advanced: [
@@ -129,7 +129,7 @@ export function openPlanItemForm(projectId, itemId = null, onDone) {
         options: [option('advance', 'Аванс'), option('final', 'Остаток'), option('extra', 'Дополнительная работа')],
         value: item?.type || 'final',
       },
-      { name: 'amount', label: `Сумма, ${project?.currency || 'TJS'}`, type: 'number', required: true, value: item?.amount || '' },
+      { name: 'amount', label: `Сумма, ${project?.currency || 'TJS'}`, type: 'number', required: true, min: 0.01, value: item?.amount || '' },
       { name: 'dueDate', label: 'Ожидаемая дата', type: 'date', value: item?.dueDate || today() },
       { name: 'title', label: 'Название', type: 'text', value: item?.title || '' },
     ],
@@ -175,6 +175,14 @@ export function openEmployeeForm(employeeId = null, onDone) {
       { name: 'note', label: 'Заметка', type: 'textarea', value: employee?.note || '', wide: true },
     ],
     onSubmit: (values) => {
+      if (values.payType === 'fixed' && !(Number(values.salary) > 0)) {
+        toast('Укажите зарплату в месяц', 'danger');
+        return false;
+      }
+      if (values.payType === 'piecework' && !(Number(values.rate) > 0)) {
+        toast('Укажите ставку за м²', 'danger');
+        return false;
+      }
       const saved = actions.saveEmployee({
         ...values,
         salaryCurrency: values.salaryCurrency,
@@ -234,7 +242,7 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
         value: assignment?.role || employee?.position || PROJECT_ROLES[0],
       },
       {
-        name: 'area', label: 'Площадь этого сотрудника, м²', type: 'number', required: true, step: '0.1',
+        name: 'area', label: 'Площадь этого сотрудника, м²', type: 'number', required: true, step: '0.1', min: 0.1, max: 1000000,
         value: assignment?.area ?? project?.area ?? '',
         hint: 'У каждого сотрудника может быть свой объём работы',
       },
@@ -475,7 +483,15 @@ export function openPayrollPayment(payrollId, onDone) {
   const payroll = byId('payrolls', payrollId);
   const employee = byId('employees', payroll?.employeeId);
   const info = payrollState(payroll);
-  const leftInCurrency = payroll.fx > 1 ? info.leftBase / payroll.fx : info.leftBase;
+  // Остаток показываем в валюте начисления: для сомони — в сомони.
+  // Считаем прямо в валюте начисления, без пересчёта через доллары —
+  // иначе вместо 5000 сомони получалось бы 4999,99.
+  const paidInCurrency = (payroll.payments || []).reduce((total, item) => total + (item.currency === payroll.currency
+    ? Number(item.amount) || 0
+    : (Number(item.base) || 0) / (Number(payroll.fx) || 1)), 0);
+  const leftInCurrency = isBase(payroll.currency)
+    ? info.leftBase
+    : Math.max(0, (Number(payroll.amount) || 0) - paidInCurrency);
 
   openForm({
     title: 'Выплатить зарплату',
@@ -546,6 +562,20 @@ export function openPlannedForm(plannedId = null, onDone) {
       toast('Плановый платёж сохранён', 'good');
       onDone?.();
     },
+    extraHtml: planned ? html`<button type="button" class="btn btn--danger btn--block" data-act="delete-planned"
+      style="margin-top:14px">Удалить платёж</button>` : '',
+  });
+
+  // Регулярный платёж можно и убрать совсем — например, когда закончилась аренда.
+  document.querySelector('#sheet [data-act="delete-planned"]')?.addEventListener('click', async () => {
+    const { confirmDialog } = await import('./ui.js');
+    const ok = await confirmDialog(planned.repeat === 'monthly'
+      ? 'Удалить регулярный платёж? Уже оплаченные месяцы останутся в расходах.'
+      : 'Удалить плановый платёж? Если он уже оплачен, расход останется.');
+    if (!ok) return;
+    actions.deletePlanned(plannedId);
+    toast('Платёж удалён');
+    onDone?.();
   });
 }
 

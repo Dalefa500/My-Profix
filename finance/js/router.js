@@ -25,12 +25,22 @@ export function currentRoute() {
 //
 // replace: true — переход без новой записи в истории. Так переключаются
 // разделы: иначе системный жест «назад» уводил бы приложение по истории.
+// Сколько шагов сделано внутри приложения за этот запуск. По нему кнопка
+// «Назад» понимает, есть ли куда возвращаться внутри приложения: history.length
+// для этого не годится — в нём и страницы, открытые до приложения.
+let depth = 0;
+
+export function canGoBack() {
+  return depth > 0;
+}
+
 export function go(path, { replace = false } = {}) {
   const url = `${window.location.pathname}${window.location.search}${path}`;
   if (replace) {
-    window.history.replaceState(null, '', url);
+    window.history.replaceState({ depth }, '', url);
   } else if (window.location.hash !== path) {
-    window.history.pushState(null, '', url);
+    depth += 1;
+    window.history.pushState({ depth }, '', url);
   }
   resolve();
 }
@@ -70,7 +80,10 @@ function scheduleResolve() {
 }
 
 export function start() {
-  window.addEventListener('popstate', scheduleResolve);
+  window.addEventListener('popstate', (event) => {
+    depth = Number(event.state?.depth) || 0;
+    scheduleResolve();
+  });
   window.addEventListener('hashchange', scheduleResolve);
 
   // Ссылки внутри приложения ведут по нему сами. Отдавать переход
@@ -81,7 +94,9 @@ export function start() {
     const link = event.target?.closest?.('a[href^="#/"]');
     if (!link) return;
     event.preventDefault();
-    go(link.getAttribute('href'));
+    // Переключатели вкладок внутри экрана (data-replace) не копят историю:
+    // иначе «Назад» сначала перебирал бы их, а потом уже уходил с экрана.
+    go(link.getAttribute('href'), { replace: link.hasAttribute('data-replace') });
   });
 
   resolve();

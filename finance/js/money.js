@@ -78,12 +78,12 @@ export function makeMoney(amount, currency, rate) {
 
 const formatters = new Map();
 
-function formatterFor(decimals) {
-  const key = String(decimals);
+function formatterFor(min, max = min) {
+  const key = `${min}:${max}`;
   if (!formatters.has(key)) {
     formatters.set(key, new Intl.NumberFormat('ru-RU', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: decimals,
+      minimumFractionDigits: min,
+      maximumFractionDigits: max,
     }));
   }
   return formatters.get(key);
@@ -93,7 +93,9 @@ export function formatAmount(amount, currency = BASE_CURRENCY, opts = {}) {
   const meta = CURRENCIES[currency] || CURRENCIES[BASE_CURRENCY];
   const value = Number(amount) || 0;
   // Центы показываем только там, где они действительно есть.
-  const decimals = opts.decimals ?? (Math.abs(value % 1) > 0.004 ? meta.decimals : 0);
+  // Если центы есть — всегда обе цифры: «$12,50», а не «$12,5».
+  const hasCents = Math.abs(value % 1) > 0.004;
+  const decimals = hasCents ? (opts.decimals ?? meta.decimals) : 0;
   const text = formatterFor(decimals).format(Math.abs(value));
   const sign = value < 0 ? '−' : (opts.sign && value > 0 ? '+' : '');
   if (meta.code === 'USD') return `${sign}$${text}`;
@@ -103,7 +105,7 @@ export function formatAmount(amount, currency = BASE_CURRENCY, opts = {}) {
 // Число без обозначения валюты — для таблиц, где валюта указана в заголовке.
 export function formatPlain(amount, decimals = 0) {
   const value = Number(amount) || 0;
-  const text = formatterFor(decimals).format(Math.abs(value));
+  const text = formatterFor(0, decimals).format(Math.abs(value));
   return value < 0 ? `−${text}` : text;
 }
 
@@ -120,6 +122,12 @@ export function formatCompact(amount, currency = BASE_CURRENCY) {
   return formatAmount(value, currency);
 }
 
+// Площадь по-русски: «84,5 м²».
+export function formatArea(value) {
+  const number = Number(value) || 0;
+  return `${formatterFor(0, 2).format(number)} м²`;
+}
+
 // «$8 / м²»
 export function formatRate(amount, currency) {
   return `${formatAmount(amount, currency, { decimals: 2 })} / м²`;
@@ -127,12 +135,12 @@ export function formatRate(amount, currency) {
 
 // Курс в привычном виде: «1 $ = 10,95 TJS».
 export function formatUsdRate(rate, decimals = 2) {
-  return `1 $ = ${formatterFor(decimals).format(Number(rate) || 0)} TJS`;
+  return `1 $ = ${formatterFor(0, decimals).format(Number(rate) || 0)} TJS`;
 }
 
 // Подпись с исходной валютой, если операция была введена не в долларах.
 export function formatWithOriginal(entry) {
   if (!entry || isBase(entry.currency)) return formatAmount(entry?.base ?? 0);
   return `${formatAmount(entry.base)} · введено ${formatAmount(entry.amount, entry.currency)}`
-    + ` по курсу ${formatterFor(2).format(rateToHuman(entry.fx))}`;
+    + ` по курсу ${formatterFor(0, 2).format(rateToHuman(entry.fx))}`;
 }

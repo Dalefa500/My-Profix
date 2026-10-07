@@ -48,14 +48,20 @@ export function deleteClient(id) {
   for (const income of state.incomes.filter((item) => item.clientId === id)) {
     ops.push(op.patch('incomes', income.id, { clientId: null }));
   }
+  for (const barter of state.barters.filter((item) => item.clientId === id)) {
+    ops.push(op.patch('barters', barter.id, { clientId: null }));
+  }
   return store.commit(ops);
 }
 
 // ------------------------------------------------------------------ проекты
 
 // План поступлений по умолчанию: аванс и остаток пополам (пункт 5 ТЗ).
-export function defaultPaymentPlan(price, startDate, dueDate, percent = 50) {
-  const advance = round(Number(price) * clampPercent(percent) / 100);
+export function defaultPaymentPlan(price, startDate, dueDate, percent = 50, currency = 'USD') {
+  // Сомони — без копеек: иначе половины 46 162,5 + 46 162,5 на экране
+  // выглядят как 46 163 + 46 163 и не сходятся с суммой договора.
+  const raw = Number(price) * clampPercent(percent) / 100;
+  const advance = currency === 'TJS' ? Math.round(raw) : round(raw);
   return [
     { id: uid('pay'), type: 'advance', title: 'Аванс', amount: advance, dueDate: startDate || today() },
     { id: uid('pay'), type: 'final', title: 'Остаток', amount: round(Number(price) - advance), dueDate: dueDate || startDate || today() },
@@ -83,12 +89,35 @@ export function saveProject(values, id = null) {
   };
   if (id) {
     const existing = store.byId('projects', id);
-    // План платежей не трогаем при редактировании — его правят отдельно.
-    return store.patch('projects', id, { ...record, payments: existing?.payments || [] });
+    // План платежей не трогаем при редактировании — его правят отдельно
+    // и поштучно, чтобы правки двух человек не затирали друг друга.
+    if (!existing) return null;
+    const ops = [op.patch('projects', id, record)];
+    // Цену поменяли — план платежей пересчитываем пропорционально
+    // (кроме доп. работ): иначе карточка проекта и «Платежи» расходятся.
+    const oldPrice = Number(existing.price) || 0;
+    if (oldPrice > 0 && (oldPrice !== record.price || existing.currency !== record.currency)) {
+      const ratio = record.price / oldPrice;
+      const items = (existing.payments || []).filter((item) => item.type !== 'extra');
+      let left = record.price;
+      items.forEach((item, index) => {
+        const last = index === items.length - 1;
+        const raw = last ? left : Number(item.amount) * ratio;
+        const amount = record.currency === 'TJS' ? Math.round(raw) : round(raw);
+        left = round(left - amount);
+        ops.push(op.putItem('projects', id, 'payments', { ...item, amount }));
+      });
+    } else if (oldPrice <= 0 && record.price > 0 && !(existing.payments || []).length) {
+      for (const item of defaultPaymentPlan(record.price, record.startDate, record.dueDate, settings.defaultAdvancePercent, record.currency)) {
+        ops.push(op.putItem('projects', id, 'payments', item));
+      }
+    }
+    store.commit(ops);
+    return store.byId('projects', id);
   }
   return store.insert('projects', {
     ...record,
-    payments: defaultPaymentPlan(price.amount, record.startDate, record.dueDate, settings.defaultAdvancePercent),
+    payments: defaultPaymentPlan(price.amount, record.startDate, record.dueDate, settings.defaultAdvancePercent, price.currency),
     createdBy: currentOwner(),
   }, 'prj');
 }
@@ -100,28 +129,20 @@ export function setProjectStatus(id, status) {
 export function savePlanItem(projectId, values, itemId = null) {
   const project = store.byId('projects', projectId);
   if (!project) return null;
-  const payments = [...(project.payments || [])];
   const record = {
+    id: itemId || uid('pay'),
     type: values.type || 'final',
     title: values.title?.trim() || '',
     amount: round(values.amount),
     dueDate: values.dueDate || today(),
   };
-  if (itemId) {
-    const index = payments.findIndex((item) => item.id === itemId);
-    if (index >= 0) payments[index] = { ...payments[index], ...record };
-  } else {
-    payments.push({ id: uid('pay'), ...record });
-  }
-  return store.patch('projects', projectId, { payments });
+  return store.commit(op.putItem('projects', projectId, 'payments', record));
 }
 
 export function deletePlanItem(projectId, itemId) {
   const project = store.byId('projects', projectId);
   if (!project) return null;
-  return store.patch('projects', projectId, {
-    payments: (project.payments || []).filter((item) => item.id !== itemId),
-  });
+  return store.commit(op.dropItem('projects', projectId, 'payments', itemId));
 }
 
 export function deleteProject(id) {
@@ -170,7 +191,42 @@ export function saveEmployee(values, id = null) {
       salary: 0,
     });
   }
+  // С какого месяца начислять зарплату. Новому сотруднику — с месяца,
+  // когда его завели (прошлые месяцы, как правило, уже выплачены вне
+  // программы), а при возвращении из «неактивных» — с месяца возвращения,
+  // а не за всё время перерыва.
+  const existing = id ? store.byId('employees', id) : null;
+  const state = getState();
+  if (!existing) {
+    record.activeFrom = monthKey(record.startDate) < monthKey(today()) ? today() : record.startDate;
+  } else if (existing.active === false && record.active) {
+    record.activeFrom = today();
+  } else if (!existing.activeFrom) {
+    // Сотрудник заведён до этого правила. Если перенести «Работает с»
+    // в прошлое, не начисляем задним числом месяцы, которых раньше не было:
+    // начисления идут с самого раннего уже существующего месяца.
+    const first = state.payrolls
+      .filter((item) => item.employeeId === id)
+      .map((item) => item.month)
+      .sort()[0];
+    record.activeFrom = first ? `${first}-01` : today();
+  }
   const saved = id ? store.patch('employees', id, record) : store.insert('employees', record, 'emp');
+  // Зарплату изменили — начисление текущего месяца, по которому ещё ничего
+  // не выплачено, пересчитываем по новой сумме.
+  if (existing && record.payType === 'fixed'
+    && (existing.salary !== record.salary || existing.salaryCurrency !== record.salaryCurrency)) {
+    const current = state.payrolls.find((item) => item.employeeId === id && item.month === monthKey(today()));
+    if (current && !(current.payments || []).length) {
+      const fx = record.salaryCurrency === state.settings.baseCurrency ? 1 : defaultRate(record.salaryCurrency, state.settings);
+      store.patch('payrolls', current.id, {
+        amount: round(record.salary),
+        currency: record.salaryCurrency,
+        fx,
+        accruedBase: toBase(record.salary, record.salaryCurrency, fx),
+      });
+    }
+  }
   ensurePayrolls();
   return saved;
 }
@@ -183,6 +239,12 @@ export function deleteEmployee(id) {
   }
   for (const payroll of state.payrolls.filter((item) => item.employeeId === id)) {
     ops.push(op.remove('payrolls', payroll.id));
+  }
+  // Проведённые выплаты остаются в расходах как факт и как расход проекта.
+  for (const expense of state.expenses.filter((item) => item.employeeId === id && item.source)) {
+    if (expense.source === 'assignment' || expense.source === 'payroll') {
+      ops.push(op.patch('expenses', expense.id, { assignmentId: null, payrollId: null, source: null }));
+    }
   }
   return store.commit(ops);
 }
@@ -206,11 +268,14 @@ export function saveAssignment(values, id = null) {
     rate: round(values.rate),
     currency,
     fx,
-    advancePercent: clampPercent(values.advancePercent ?? settings.defaultAdvancePercent),
-    stage: values.stage || 'assigned',
+    advancePercent: clampPercent(values.advancePercent === '' || values.advancePercent == null
+      ? settings.defaultAdvancePercent : values.advancePercent),
   };
+  // Этап при правке не трогаем: исправление площади не должно снова
+  // закрывать остаток, уже одобренный клиентом.
+  if (values.stage) record.stage = values.stage;
   if (id) return store.patch('assignments', id, record);
-  return store.insert('assignments', record, 'asg');
+  return store.insert('assignments', { stage: 'assigned', ...record }, 'asg');
 }
 
 export function setAssignmentStage(id, stage) {
@@ -221,8 +286,10 @@ export function deleteAssignment(id) {
   const state = getState();
   // Уже проведённые выплаты остаются в расходах компании как факт.
   const ops = [op.remove('assignments', id)];
+  // Выплата перестаёт быть «выплатой по назначению» и остаётся обычным
+  // расходом проекта — иначе она пропала бы из себестоимости проекта.
   for (const expense of state.expenses.filter((item) => item.assignmentId === id)) {
-    ops.push(op.patch('expenses', expense.id, { assignmentId: null }));
+    ops.push(op.patch('expenses', expense.id, { assignmentId: null, source: null }));
   }
   return store.commit(ops);
 }
@@ -269,8 +336,8 @@ export function payAssignment(assignmentId, part, values = {}) {
   };
 
   const changes = part === 'advance'
-    ? { advancePaidAt: expense.date, advanceExpenseId: expense.id }
-    : { remainderPaidAt: expense.date, remainderExpenseId: expense.id, stage: 'approved' };
+    ? { advancePaidAt: expense.date, advanceExpenseId: expense.id, advancePaidBase: payment.base }
+    : { remainderPaidAt: expense.date, remainderExpenseId: expense.id, remainderPaidBase: payment.base, stage: 'approved' };
   store.commit([
     op.insert('expenses', expense),
     op.patch('assignments', assignmentId, changes),
@@ -293,22 +360,38 @@ export function ensurePayrolls(nowIso = today()) {
           (item) => item.employeeId === employee.id && item.month === month,
         );
         if (exists) continue;
+        // Начисление в сомони — по курсу НБТ на момент начисления,
+        // а не по курсу того дня, когда карточку сотрудника сохранили.
         const fx = employee.salaryCurrency === state.settings.baseCurrency
           ? 1
-          : (Number(employee.salaryFx) > 0 ? employee.salaryFx : defaultRate(employee.salaryCurrency, state.settings));
+          : defaultRate(employee.salaryCurrency, state.settings);
         const payday = Math.min(
           Number(employee.payday) || Number(state.settings.salaryDay) || 5,
           daysInMonth(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1),
         );
+        let dueDate = `${month}-${String(payday).padStart(2, '0')}`;
+        // Срок выплаты не раньше, чем сотрудник появился в программе:
+        // иначе новый сотрудник в день добавления уже «просрочен».
+        const since = employee.activeFrom || employee.startDate || '';
+        // Начал работать после дня зарплаты — за этот месяц платим
+        // в день зарплаты следующего месяца.
+        if (since && dueDate < since) {
+          const next = addMonths(`${month}-01`, 1);
+          const nextDay = Math.min(payday, daysInMonth(Number(next.slice(0, 4)), Number(next.slice(5, 7)) - 1));
+          dueDate = `${next.slice(0, 7)}-${String(nextDay).padStart(2, '0')}`;
+        }
         const record = {
-          id: uid('pyr'),
+          // Один сотрудник — одно начисление за месяц. Постоянный номер
+          // не даёт двум телефонам начислить один месяц дважды:
+          // сервер просто пропустит вторую такую запись.
+          id: `pyr_${employee.id}_${month}`,
           employeeId: employee.id,
           month,
           amount: round(employee.salary),
           currency: employee.salaryCurrency || state.settings.baseCurrency,
           fx,
           accruedBase: toBase(employee.salary, employee.salaryCurrency, fx),
-          dueDate: `${month}-${String(payday).padStart(2, '0')}`,
+          dueDate,
           payments: [],
           createdAt: nowIso,
         };
@@ -355,18 +438,17 @@ export function payPayroll(payrollId, values = {}) {
     createdAt: today(),
   };
 
-  const payments = [...(payroll.payments || []), {
-    id: uid('prt'),
-    date: expense.date,
-    expenseId: expense.id,
-    amount: payment.amount,
-    currency: payment.currency,
-    fx: payment.fx,
-    base: payment.base,
-  }];
   store.commit([
     op.insert('expenses', expense),
-    op.patch('payrolls', payrollId, { payments }),
+    op.putItem('payrolls', payrollId, 'payments', {
+      id: uid('prt'),
+      date: expense.date,
+      expenseId: expense.id,
+      amount: payment.amount,
+      currency: payment.currency,
+      fx: payment.fx,
+      base: payment.base,
+    }),
   ]);
   return { ok: true, expense };
 }
@@ -382,7 +464,10 @@ export function saveIncome(values, id = null) {
     ...payment,
     clientId: values.clientId || project?.clientId || null,
     projectId: values.projectId || null,
-    type: values.type || (values.projectId ? 'advance' : 'other'),
+    // Без проекта не бывает «аванса проекта» — это прочий доход.
+    type: values.projectId
+      ? (values.type || 'advance')
+      : (['advance', 'final'].includes(values.type) || !values.type ? 'other' : values.type),
     method: values.method || 'cash',
     // Приход по взаимозачёту привязан к имуществу, с которого списывается.
     barterId: values.method === 'barter' ? (values.barterId || null) : null,
@@ -427,18 +512,16 @@ export function deleteExpense(id) {
   if (expense.source === 'assignment' && expense.assignmentId) {
     const assignment = state.assignments.find((item) => item.id === expense.assignmentId);
     if (assignment?.advanceExpenseId === id) {
-      ops.push(op.patch('assignments', assignment.id, {}, ['advanceExpenseId', 'advancePaidAt']));
+      ops.push(op.patch('assignments', assignment.id, {}, ['advanceExpenseId', 'advancePaidAt', 'advancePaidBase']));
     }
     if (assignment?.remainderExpenseId === id) {
-      ops.push(op.patch('assignments', assignment.id, {}, ['remainderExpenseId', 'remainderPaidAt']));
+      ops.push(op.patch('assignments', assignment.id, {}, ['remainderExpenseId', 'remainderPaidAt', 'remainderPaidBase']));
     }
   }
   if (expense.source === 'payroll' && expense.payrollId) {
     const payroll = state.payrolls.find((item) => item.id === expense.payrollId);
     if (payroll) {
-      ops.push(op.patch('payrolls', payroll.id, {
-        payments: (payroll.payments || []).filter((item) => item.expenseId !== id),
-      }));
+      ops.push(op.dropItem('payrolls', payroll.id, 'payments', id));
     }
   }
   if (expense.source === 'planned' && expense.plannedId) {
@@ -466,10 +549,14 @@ export function savePlanned(values, id = null) {
     ...payment,
     dueDate: values.dueDate || today(),
     repeat: values.repeat === 'monthly' ? 'monthly' : 'none',
-    status: values.status || 'planned',
   };
+  // Число месяца, к которому привязан ежемесячный платёж: 31-го в феврале
+  // платим 28-го, а в марте — снова 31-го, а не 28-го навсегда.
+  record.anchorDay = Number(String(record.dueDate).slice(8, 10)) || 1;
+  // Правка не должна снова делать оплаченный платёж неоплаченным.
+  if (values.status) record.status = values.status;
   if (id) return store.patch('planned', id, record);
-  return store.insert('planned', record, 'pln');
+  return store.insert('planned', { status: 'planned', ...record }, 'pln');
 }
 
 export function deletePlanned(id) {
@@ -482,6 +569,7 @@ export function payPlanned(plannedId, values = {}) {
   const state = getState();
   const planned = store.byId('planned', plannedId);
   if (!planned) return { ok: false, error: 'Платёж не найден' };
+  if (planned.status === 'paid') return { ok: false, error: 'Этот платёж уже оплачен' };
   const payment = money({
     amount: values.amount ?? planned.amount,
     currency: values.currency || planned.currency,
@@ -508,19 +596,29 @@ export function payPlanned(plannedId, values = {}) {
     op.patch('planned', plannedId, { status: 'paid', expenseId: expense.id }),
   ];
   if (planned.repeat === 'monthly') {
-    const nextDate = addMonths(planned.dueDate, 1);
+    const anchor = Number(planned.anchorDay) || Number(String(planned.dueDate).slice(8, 10)) || 1;
+    const nextMonth = addMonths(`${String(planned.dueDate).slice(0, 7)}-01`, 1);
+    const year = Number(nextMonth.slice(0, 4));
+    const month = Number(nextMonth.slice(5, 7));
+    const day = Math.min(anchor, daysInMonth(year, month - 1));
+    const nextDate = `${nextMonth.slice(0, 7)}-${String(day).padStart(2, '0')}`;
+    // Постоянный номер следующего платежа: если два человека оплатят
+    // один и тот же месяц, следующий всё равно появится один.
+    const series = planned.seriesId || planned.id;
     const exists = state.planned.some(
-      (item) => item.title === planned.title
-        && item.category === planned.category
-        && item.dueDate === nextDate,
+      (item) => (item.seriesId || item.id) === series && item.dueDate.slice(0, 7) === nextDate.slice(0, 7),
+    ) || state.planned.some(
+      (item) => item.title === planned.title && item.category === planned.category && item.dueDate === nextDate,
     );
     if (!exists) {
+      const { expenseId: _paid, ...rest } = planned;
       ops.push(op.insert('planned', {
-        ...planned,
-        id: uid('pln'),
+        ...rest,
+        id: `${series}_${nextDate.slice(0, 7)}`,
+        seriesId: series,
+        anchorDay: anchor,
         dueDate: nextDate,
         status: 'planned',
-        expenseId: undefined,
         createdAt: today(),
       }));
     }
@@ -576,6 +674,11 @@ export function deleteFounder(id) {
   const ops = [op.remove('founders', id)];
   for (const draw of state.draws.filter((item) => item.founderId === id)) {
     ops.push(op.remove('draws', draw.id));
+  }
+  // Расходы, которые коллега оплатил за студию, остаются расходами
+  // студии — но уже обычными, которые можно открыть и исправить.
+  for (const expense of state.expenses.filter((item) => item.source === 'founder' && item.paidByFounderId === id)) {
+    ops.push(op.patch('expenses', expense.id, { source: null }, ['founderMoveId', 'paidByFounderId']));
   }
   return store.commit(ops);
 }

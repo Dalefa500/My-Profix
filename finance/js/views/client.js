@@ -1,5 +1,6 @@
 // Карточка клиента: проекты и расчёты по ним.
 
+import { formatArea } from '../money.js';
 import {
   html, raw, money, emptyState, sectionTitle, badge, confirmDialog, toast,
   progressBar,
@@ -56,7 +57,7 @@ export default function clientDetail(params) {
           <a class="row" href="#/projects/${project.id}">
             <div class="row__main">
               <span class="row__title">${project.name}</span>
-              <span class="row__subtitle">${project.area ? `${project.area} м² · ` : ''}${formatDate(project.startDate, { short: true })}</span>
+              <span class="row__subtitle">${project.area ? `${formatArea(project.area)} · ` : ''}${formatDate(project.startDate, { short: true })}</span>
               ${raw(badge(labelOf(PROJECT_STATUSES, project.status), toneOf(PROJECT_STATUSES, project.status)))}
             </div>
             <div class="row__side">
@@ -123,7 +124,7 @@ export default function clientDetail(params) {
         if (!ok) return;
         actions.deleteClient(client.id);
         toast('Клиент удалён');
-        go('#/clients');
+        go('#/clients', { replace: true });
       };
     },
   };

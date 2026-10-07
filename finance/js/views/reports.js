@@ -120,6 +120,7 @@ function openCustomPeriod() {
   const range = activeRange();
   openForm({
     title: 'Произвольный период',
+    viewerOk: true,
     fields: [
       { name: 'from', label: 'С какой даты', type: 'date', required: true, value: range.from },
       { name: 'to', label: 'По какую дату', type: 'date', required: true, value: range.to },

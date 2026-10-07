@@ -80,8 +80,10 @@ export async function setPassword(login, password) {
   // Код входа должен быть у каждого свой — иначе непонятно, кто вошёл.
   for (const other of users) {
     if (other.id === user.id) continue;
+    // Чей это код — не сообщаем: иначе смена своего кода превращается
+    // в способ подобрать чужой.
     if (await verifyPassword(String(password), other)) {
-      throw new Error(`Такой код уже у пользователя ${other.name}. Придумайте другой.`);
+      throw new Error('Этот код не подходит — придумайте другой.');
     }
   }
   const { salt, hash } = await hashPassword(password);
@@ -170,7 +172,21 @@ export async function userForToken(token) {
 
 // ------------------------------------------------------------------- вход
 
+// Общий предел неудачных попыток со всех адресов: даже если кто-то
+// перебирает коды с множества адресов, за час у него будет не больше
+// GLOBAL_MAX_FAILURES попыток. Вход по Face ID при этом работает.
+const GLOBAL_MAX_FAILURES = 100;
+const GLOBAL_WINDOW_MS = 60 * 60 * 1000;
+let globalFailures = [];
+
+function globalBlocked() {
+  const since = Date.now() - GLOBAL_WINDOW_MS;
+  globalFailures = globalFailures.filter((time) => time > since);
+  return globalFailures.length >= GLOBAL_MAX_FAILURES;
+}
+
 export function loginBlocked(ip) {
+  if (globalBlocked()) return true;
   const record = failures.get(ip);
   if (!record) return false;
   if (record.until < Date.now()) {
@@ -181,6 +197,7 @@ export function loginBlocked(ip) {
 }
 
 function registerFailure(ip) {
+  globalFailures.push(Date.now());
   const record = failures.get(ip) || { count: 0, until: Date.now() + FAILURE_WINDOW_MS };
   record.count += 1;
   record.until = Date.now() + FAILURE_WINDOW_MS;
@@ -217,7 +234,19 @@ export async function authenticateByCode(code, ip) {
   return null;
 }
 
+// Смена кода — не чаще PASSWORD_MAX_ATTEMPTS раз за 15 минут на человека,
+// считая и удачные попытки: перебирать коды через эту форму бесполезно.
+const PASSWORD_MAX_ATTEMPTS = 5;
+const passwordAttempts = new Map();
+
 export async function changePassword(user, currentPassword, newPassword) {
+  const now = Date.now();
+  const recent = (passwordAttempts.get(user.id) || []).filter((time) => time > now - FAILURE_WINDOW_MS);
+  if (recent.length >= PASSWORD_MAX_ATTEMPTS) {
+    throw new Error('Слишком много попыток сменить код. Попробуйте через 15 минут.');
+  }
+  recent.push(now);
+  passwordAttempts.set(user.id, recent);
   const ok = await verifyPassword(String(currentPassword || ''), user);
   if (!ok) throw new Error('Текущий код неверный');
   const next = String(newPassword || '').trim();

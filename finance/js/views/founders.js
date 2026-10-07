@@ -89,7 +89,7 @@ export default function founders() {
                 : range.label.toLowerCase()}</span>
             </div>
           </a>`).join(''))}</div>`)
-        : raw(emptyState('Коллеги не заведены. Добавьте Шохина и Ризвона, чтобы вести их выплаты.'))}
+        : raw(emptyState('Коллеги не заведены. Добавьте владельцев студии, чтобы вести их выплаты.'))}
     </div>
 
     ${summary.rows.length ? raw(html`

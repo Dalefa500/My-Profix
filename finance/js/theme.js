@@ -1,7 +1,9 @@
 // Оформление: тёмное (по умолчанию), светлое или по настройке телефона.
 // Выбор хранится в самом устройстве — у каждого может быть свой.
 
-const KEY = 'studio-finance/theme';
+import { BRAND } from './brand.js';
+
+const KEY = `${BRAND.storagePrefix}/theme`;
 export const THEMES = [
   { id: 'dark', label: 'Тёмное' },
   { id: 'light', label: 'Светлое' },

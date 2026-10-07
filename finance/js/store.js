@@ -6,9 +6,12 @@
 // а операции отправятся, как только сеть вернётся.
 
 import { emptyData, normalizeData, applyOps, op } from './ops.js';
+import { BRAND } from './brand.js';
 
-const CACHE_KEY = 'studio-finance/cache/v2';
-const NAME_KEY = 'studio-finance/name';
+// Ключи свои у каждой компании: если две студии когда-нибудь окажутся
+// на одном адресе, их данные и очередь операций не перепутаются.
+const CACHE_KEY = `${BRAND.storagePrefix}/cache/v2`;
+const NAME_KEY = `${BRAND.storagePrefix}/name`;
 const POLL_INTERVAL = 8000;
 
 let data = emptyData();
@@ -130,14 +133,19 @@ async function api(path, options = {}) {
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
+  const payload = await response.json().catch(() => ({}));
   if (response.status === 401) {
-    user = null;
-    emit('auth');
-    const error = new Error('Требуется вход');
+    // При попытке входа сервер объясняет причину («Неверный код») —
+    // её и показываем. Для остальных запросов 401 — это истёкший вход.
+    const isLogin = path === '/login' || path.startsWith('/passkey/login');
+    if (!isLogin) {
+      user = null;
+      emit('auth');
+    }
+    const error = new Error(payload.error || 'Требуется вход');
     error.code = 401;
     throw error;
   }
-  const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(payload.error || 'Ошибка сервера');
     error.code = response.status;
@@ -250,29 +258,54 @@ export async function refreshUsdRate() {
   }
 }
 
+// Отправка очереди на сервер. Одновременно идёт только одна отправка:
+// раньше несколько отправок могли пересечься, и тогда одни изменения
+// уходили дважды, а другие терялись. Из очереди убираются именно те
+// операции, что ушли, — а не «первые N», которые к ответу могли смениться.
+let flushing = false;
+let flushAgain = false;
+
+function dropSent(sending) {
+  const sent = new Set(sending);
+  queue = queue.filter((item) => !sent.has(item));
+}
+
 async function flush() {
   if (!queue.length || !user) return;
+  if (flushing) {
+    flushAgain = true;
+    return;
+  }
+  flushing = true;
+  flushAgain = false;
   const sending = queue.slice();
   setStatus('saving');
   try {
     const payload = await api('/ops', { method: 'POST', body: { rev, ops: sending } });
-    queue = queue.slice(sending.length);
+    dropSent(sending);
     adopt(payload);
     retryDelay = 1000;
     setStatus(queue.length ? 'saving' : 'online');
-    if (queue.length) scheduleFlush(0);
   } catch (error) {
     if (error.code === 400 || error.code === 422) {
       // Сервер отверг операцию — повторять бессмысленно.
-      queue = queue.slice(sending.length);
+      // Локально изменение уже показано — забираем с сервера настоящие
+      // данные, чтобы на экране не осталось того, чего на сервере нет.
+      dropSent(sending);
       cache();
-      setStatus('online');
+      emit('rejected');
+      void pull();
+    } else {
+      setStatus('offline');
+      retryDelay = Math.min(retryDelay * 2, 30000);
+      flushing = false;
+      scheduleFlush(retryDelay);
       return;
     }
-    setStatus('offline');
-    retryDelay = Math.min(retryDelay * 2, 30000);
-    scheduleFlush(retryDelay);
+  } finally {
+    flushing = false;
   }
+  if (queue.length || flushAgain) scheduleFlush(0);
 }
 
 function scheduleFlush(delay = 120) {

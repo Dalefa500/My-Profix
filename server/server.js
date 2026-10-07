@@ -20,6 +20,7 @@ import {
 } from './auth.js';
 import { fetchUsdRate } from './nbt.js';
 import { buildReport } from './reports.js';
+import { config, publicConfig } from './config.js';
 
 // Вход можно отключить: тогда приложение открывается сразу, без логина
 // и пароля. Включается обратно снятием этой настройки — данные и учётные
@@ -32,7 +33,8 @@ const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = path.resolve(new URL('..', import.meta.url).pathname);
 const STATE_FILE = 'state.json';
 const PASSKEY_FILE = 'passkeys.json';
-const COOKIE = 'sf_session';
+const COOKIE = config.cookie;
+const APP_DIR = path.join(ROOT, 'finance');
 const MAX_BODY = 4 * 1024 * 1024;
 
 const MIME = {
@@ -46,6 +48,8 @@ const MIME = {
   '.webp': 'image/webp',
   '.ico': 'image/x-icon',
   '.webmanifest': 'application/manifest+json',
+  '.woff2': 'font/woff2',
+  '.pdf': 'application/pdf',
 };
 
 // ------------------------------------------------------------ данные компании
@@ -56,7 +60,10 @@ async function loadState() {
   if (cache) return cache;
   const stored = await readJSON(STATE_FILE, null);
   if (!stored || typeof stored.rev !== 'number') {
-    cache = { rev: 0, state: emptyData() };
+    const state = emptyData();
+    // Новая копия сразу подписана названием своей компании.
+    state.settings.companyName = config.companyName;
+    cache = { rev: 0, state };
     return cache;
   }
 
@@ -230,7 +237,10 @@ function rpFromRequest(req) {
   return {
     id: hostname,
     host,
-    origins: [`https://${host}`, `https://${hostname}`, `http://${host}`],
+    // Без шифрования Face ID допускаем только при проверке на своём компьютере.
+    origins: hostname === 'localhost' || hostname === '127.0.0.1'
+      ? [`https://${host}`, `https://${hostname}`, `http://${host}`]
+      : [`https://${host}`, `https://${hostname}`],
     secure,
   };
 }
@@ -281,9 +291,15 @@ function sessionCookie(req, token, maxAge) {
   return parts.join('; ');
 }
 
+// Адрес посетителя. Приложение стоит за nginx, и настоящий адрес
+// nginx кладёт в X-Real-IP. Заголовку X-Forwarded-For верить нельзя:
+// его левую часть присылает сам посетитель и может подставить что угодно.
+// X-Real-IP учитываем, только если запрос пришёл от nginx с этого же сервера.
 function clientIp(req) {
-  const forwarded = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return forwarded || req.socket.remoteAddress || 'unknown';
+  const socket = req.socket.remoteAddress || 'unknown';
+  const local = socket === '127.0.0.1' || socket === '::1' || socket === '::ffff:127.0.0.1';
+  const real = String(req.headers['x-real-ip'] || '').trim();
+  return local && real ? real : socket;
 }
 
 function readBody(req) {
@@ -319,6 +335,11 @@ async function currentUser(req) {
 
 async function handleApi(req, res, url) {
   const route = url.pathname.replace(/^\/api/, '') || '/';
+
+  // Название, цвет и надписи компании нужны ещё до входа — экрану входа.
+  if (route === '/config' && req.method === 'GET') {
+    return send(res, 200, publicConfig());
+  }
 
   if (AUTH_DISABLED && (route === '/login' || route === '/logout') && req.method === 'POST') {
     return send(res, 200, { user: OPEN_USER, authDisabled: true });
@@ -426,6 +447,20 @@ async function handleApi(req, res, url) {
   // переслать клиенту или сотруднику прямо с телефона.
   if (route === '/report' && req.method === 'GET') {
     const params = url.searchParams;
+    // Даты — только в виде ГГГГ-ММ-ДД: «abc» вместо даты — ошибка, а не
+    // отчёт «за 1 января 1970».
+    const isDate = (value) => {
+      if (!value) return true;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const [y, m, d] = value.split('-').map(Number);
+      const date = new Date(Date.UTC(y, m - 1, d));
+      return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+    };
+    const from = params.get('from') || '';
+    const to = params.get('to') || '';
+    if (!isDate(from) || !isDate(to) || (from && to && from > to)) {
+      return send(res, 400, { error: 'Неверный период отчёта' });
+    }
     const current = await loadState();
     let report = null;
     try {
@@ -445,7 +480,7 @@ async function handleApi(req, res, url) {
       'Content-Type': 'application/pdf',
       'Content-Length': report.buffer.length,
       // inline — чтобы на телефоне открылся просмотрщик с кнопкой «Поделиться».
-      'Content-Disposition': `inline; filename="report.pdf"; filename*=UTF-8''${encodeURIComponent(report.name)}`,
+      'Content-Disposition': `inline; filename="report.pdf"; filename*=UTF-8''${encodeFileName(report.name)}`,
       'Cache-Control': 'no-store',
     });
     return res.end(report.buffer);
@@ -468,7 +503,12 @@ async function handleApi(req, res, url) {
         const current = await loadState();
         // Операции адресуются по id записей, поэтому применяются к текущим
         // данным независимо от того, какую версию видел клиент.
-        const state = applyOps(normalizeData(current.state), ops);
+        // Операции применяются к копии: если хоть одна в пакете отклонена,
+        // не должно остаться ни следа от остальных — ни в памяти, ни на диске.
+        if (ops.some((item) => item?.type === 'replace')) {
+          throw new Error('Замена всех данных разом через приложение запрещена');
+        }
+        const state = applyOps(normalizeData(structuredClone(current.state)), ops);
         const next = { rev: current.rev + 1, state, updatedAt: new Date().toISOString() };
         await saveState(next);
         await appendLine('log.jsonl', {
@@ -493,7 +533,7 @@ async function handleApi(req, res, url) {
     rememberChallenge(challenge, { kind: 'register', userId: user.id });
     return send(res, 200, {
       challenge,
-      rp: { id: rp.id, name: 'Line Design' },
+      rp: { id: rp.id, name: config.companyName },
       user: {
         id: b64url.encode(Buffer.from(user.id)),
         name: user.login,
@@ -592,13 +632,140 @@ async function handleApi(req, res, url) {
   return send(res, 404, { error: 'Не найдено' });
 }
 
+// Имя файла для заголовка Content-Disposition (RFC 5987): кириллица
+// кодируется, апострофы и скобки тоже — иначе браузер отбросит имя.
+// Длину ограничиваем, а «битые» символы заменяем.
+function encodeFileName(name) {
+  const safe = String(name || 'report.pdf').toWellFormed?.() ?? String(name || 'report.pdf');
+  const trimmed = [...safe].slice(0, 120).join('');
+  const withExt = trimmed.toLowerCase().endsWith('.pdf') ? trimmed : `${trimmed}.pdf`;
+  return encodeURIComponent(withExt).replace(/['()*!]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
 // ------------------------------------------------------------ статические файлы
 
+// Оформление компании, которое собирается на лету: заголовок страницы,
+// манифест для установки на телефон, фирменный цвет и значок.
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[ch]);
+}
+
+function faviconSvg() {
+  const letters = escapeHtml(config.initials);
+  return `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>`
+    + `<rect width='32' height='32' rx='8' fill='#393f4b'/>`
+    + `<text x='16' y='20' font-family='-apple-system,Inter,sans-serif' font-size='${letters.length > 2 ? 9 : 11}' `
+    + `font-weight='500' fill='#ecf4f7' text-anchor='middle'>${letters}</text>`
+    + `<rect x='9' y='24' width='14' height='2' rx='1' fill='${config.color}'/></svg>`;
+}
+
+async function sendIndex(res) {
+  let page = await fs.readFile(path.join(APP_DIR, 'index.html'), 'utf8');
+  const name = escapeHtml(config.companyName);
+  const brand = JSON.stringify(publicConfig()).replace(/</g, '\\u003c');
+  page = page
+    .replace(/<title>[^<]*<\/title>/, `<title>${name} — финансы</title>`)
+    .replace(/(<meta name="description" content=")[^"]*/, `$1${name} — учёт финансов студии: проекты, клиенты, сотрудники, приходы, расходы и отчёты.`)
+    .replace(/(<meta name="apple-mobile-web-app-title" content=")[^"]*/, `$1${name}`)
+    .replace(/<link rel="icon"[^>]*>/, `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(faviconSvg())}">`)
+    .replace('<link rel="stylesheet" href="css/app.css">',
+      '<link rel="stylesheet" href="css/app.css">\n<link rel="stylesheet" href="brand.css">\n'
+      + `<script>window.__BRAND__ = ${brand};</script>`);
+  res.writeHead(200, {
+    'Content-Type': MIME['.html'],
+    'Cache-Control': 'no-cache',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(page);
+}
+
+async function sendManifest(res) {
+  const manifest = JSON.parse(await fs.readFile(path.join(APP_DIR, 'manifest.webmanifest'), 'utf8'));
+  manifest.id = `./?app=${config.slug}`;
+  manifest.name = `${config.companyName} — финансы студии`;
+  manifest.short_name = config.companyName.length <= 12 ? config.companyName : 'Финансы';
+  manifest.description = `Учёт финансов ${config.companyName}: проекты, клиенты, сотрудники, приходы, расходы и отчёты.`;
+  res.writeHead(200, { 'Content-Type': MIME['.webmanifest'], 'Cache-Control': 'no-cache' });
+  res.end(JSON.stringify(manifest, null, 2));
+}
+
+// Фирменный цвет компании поверх общего оформления. Оттенки выводятся
+// из одного цвета, чтобы при установке хватало одной настройки.
+function sendBrandCss(res) {
+  const c = config.color;
+  // У Line Design оттенки подобраны вручную в app.css — их не трогаем.
+  if (config.slug === 'line-design' && c === '#910029') {
+    res.writeHead(200, { 'Content-Type': MIME['.css'], 'Cache-Control': 'no-cache' });
+    res.end('/* Line Design: фирменные цвета заданы в app.css */\n');
+    return;
+  }
+  const css = `/* Цвет компании ${config.companyName} — собирается сервером. */
+:root {
+  --brand-burgundy: ${c};
+  --brand-signature: ${c};
+  --signature-hi: color-mix(in srgb, ${c} 78%, #ff5577);
+  --signature-lo: color-mix(in srgb, ${c} 50%, #000);
+  --signature-on-dark: color-mix(in srgb, ${c} 85%, #fff);
+  --signature-on-dark-hi: color-mix(in srgb, ${c} 65%, #fff);
+  --signature-on-dark-lo: color-mix(in srgb, ${c} 55%, #000);
+  --accent: ${c};
+  --accent-soft: color-mix(in srgb, ${c} 12%, #fff);
+  --hero-from: color-mix(in srgb, ${c} 88%, #fff);
+  --hero-to: color-mix(in srgb, ${c} 45%, #000);
+}
+:root[data-theme="dark"], :root:not([data-theme]) {
+  --accent: color-mix(in srgb, ${c} 82%, #fff);
+  --accent-soft: color-mix(in srgb, ${c} 28%, #1b1f26);
+  --brand-signature: color-mix(in srgb, ${c} 85%, #fff);
+  --signature-hi: color-mix(in srgb, ${c} 65%, #fff);
+  --signature-lo: color-mix(in srgb, ${c} 50%, #000);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --accent: ${c};
+    --accent-soft: color-mix(in srgb, ${c} 12%, #fff);
+    --brand-signature: ${c};
+  }
+}
+`;
+  res.writeHead(200, { 'Content-Type': MIME['.css'], 'Cache-Control': 'no-cache' });
+  res.end(css);
+}
+
 async function serveStatic(req, res, url) {
-  let pathname = decodeURIComponent(url.pathname);
-  if (pathname.endsWith('/')) pathname += 'index.html';
-  const target = path.join(ROOT, pathname);
-  if (!target.startsWith(ROOT) || target.startsWith(path.join(ROOT, 'server'))) {
+  let pathname;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    res.writeHead(400).end('Неверный адрес');
+    return;
+  }
+  // Наружу отдаётся только само приложение — папка finance/.
+  // Код сервера, данные, .git и прочие файлы репозитория недоступны.
+  if (!pathname.startsWith('/finance/') && pathname !== '/finance') {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Страница не найдена');
+    return;
+  }
+  let relative = pathname.slice('/finance'.length) || '/';
+  if (relative.endsWith('/')) relative += 'index.html';
+  if (relative.includes('\0') || relative.split('/').some((part) => part.startsWith('.'))) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Страница не найдена');
+    return;
+  }
+
+  if (relative === '/index.html') return sendIndex(res);
+  if (relative === '/manifest.webmanifest') return sendManifest(res);
+  if (relative === '/brand.css') return sendBrandCss(res);
+
+  // Свои иконки компании, если их положили при установке.
+  let target = path.join(APP_DIR, relative);
+  if (config.brandDir && /^\/icon-\d+\.png$/.test(relative)) {
+    const own = path.join(path.resolve(config.brandDir), relative);
+    try { await fs.access(own); target = own; } catch { /* берём стандартную */ }
+  }
+  if (!target.startsWith(APP_DIR + path.sep) && !target.startsWith(path.resolve(config.brandDir || APP_DIR) + path.sep)) {
     res.writeHead(403).end('Доступ запрещён');
     return;
   }
@@ -649,10 +816,9 @@ async function bootstrapUsers() {
   const users = await loadUsers();
   if (users.length) return;
   const created = [];
-  const accounts = [
-    { login: 'shohin', name: 'Шохин', role: 'admin' },
-    { login: 'rizvon', name: 'Ризвон', role: 'viewer' },
-  ];
+  // Кто заводится при первом запуске — задаётся при установке
+  // (BOOTSTRAP_USERS). У Line Design — Шохин и Ризвон.
+  const accounts = config.bootstrapUsers;
   const codes = new Set();
   for (const account of accounts) {
     let password;
@@ -693,7 +859,7 @@ refreshUsdRate().then((result) => {
 });
 setInterval(() => { refreshUsdRate().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
 server.listen(PORT, HOST, () => {
-  console.log(`Line Design — финансы студии: http://localhost:${PORT}/finance/`);
+  console.log(`${config.companyName} — финансы студии: http://localhost:${PORT}/finance/`);
   if (AUTH_DISABLED) {
     console.log('ВНИМАНИЕ: вход отключён — приложение открыто всем, кто знает адрес.');
   }

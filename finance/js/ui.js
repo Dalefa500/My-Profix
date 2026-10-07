@@ -140,6 +140,17 @@ export function closeSheet() {
 
 // Универсальная нижняя панель (на телефоне выезжает снизу, на компьютере —
 // это диалог по центру).
+// Жест «назад» (свайп от края на iPhone, кнопка на Android) и Escape
+// закрывают открытый лист, а не меняют экран под ним.
+if (typeof window !== 'undefined') {
+  window.addEventListener('popstate', () => {
+    if (document.getElementById('sheet')?.classList.contains('is-open')) closeSheet();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && document.getElementById('sheet')?.classList.contains('is-open')) closeSheet();
+  });
+}
+
 export function openSheet({ title, body, footer = '', onMount, size = '' }) {
   const host = document.getElementById('sheet');
   if (!host) return;
@@ -200,8 +211,11 @@ function fieldControl(field) {
     case 'date':
       return html`<input id="${id}" name="${field.name}" type="date" value="${value}" ${raw(required)}>`;
     case 'number':
-      return html`<input id="${id}" name="${field.name}" type="number" inputmode="decimal" step="${field.step || 'any'}"
-        min="${field.min ?? ''}" max="${field.max ?? ''}" value="${value}" placeholder="${field.placeholder || ''}" ${raw(required)}>`;
+      // Текстовое поле с цифровой клавиатурой: на русской раскладке iPhone
+      // десятичный знак — запятая, и поле type="number" её не понимает
+      // («12,5» превращалось в 125). Запятую переводим в точку сами.
+      return html`<input id="${id}" name="${field.name}" type="text" inputmode="decimal" data-num
+        value="${value}" placeholder="${field.placeholder || ''}" autocomplete="off" ${raw(required)}>`;
     case 'checkbox':
       return html`<label class="switch">
         <input id="${id}" name="${field.name}" type="checkbox" ${raw(field.value ? 'checked' : '')}>
@@ -237,8 +251,8 @@ function moneyControl(field) {
   const suffix = field.suffix ? html`<span class="money-suffix">${field.suffix}</span>` : '';
   return html`<div class="money-field" data-money="${field.name}">
     <div class="money-field__row">
-      <input name="${field.name}" type="number" inputmode="decimal" step="any" value="${field.value ?? ''}"
-        placeholder="0" ${raw(field.required ? 'required' : '')}>
+      <input name="${field.name}" type="text" inputmode="decimal" data-num value="${field.value ?? ''}"
+        placeholder="0" autocomplete="off" ${raw(field.required ? 'required' : '')}>
       ${raw(suffix)}
       <div class="segmented segmented--sm" data-field="${field.name}__currency">
         ${raw(CURRENCY_LIST.map((item) => html`
@@ -249,7 +263,7 @@ function moneyControl(field) {
     </div>
     <div class="money-field__fx ${raw(currency === settings.baseCurrency ? 'is-hidden' : '')}">
       <label>Курс 1 $ =</label>
-      <input name="${field.name}__rate" type="number" inputmode="decimal" step="0.01" value="${human}">
+      <input name="${field.name}__rate" type="text" inputmode="decimal" data-num value="${human}" autocomplete="off">
       <span>TJS</span>
       <span class="money-field__base" data-fx-base></span>
       <input type="hidden" name="${field.name}__fx" value="${fx}">
@@ -268,10 +282,22 @@ function fieldBlock(field) {
   </div>`;
 }
 
+// Число из поля ввода: «1 250,5» → 1250.5. Пустое поле — пустая строка,
+// нечисловое — NaN (форма покажет ошибку).
+export function parseNum(text) {
+  const clean = String(text ?? '').replace(/[\s\u00a0]/g, '').replace(',', '.');
+  if (!clean) return '';
+  return /^-?\d*\.?\d+$|^-?\d+\.$/.test(clean) ? Number(clean) : NaN;
+}
+
 function collectValues(form) {
   const data = new FormData(form);
   const values = {};
   for (const [key, value] of data.entries()) values[key] = value;
+  for (const input of form.querySelectorAll('input[data-num]')) {
+    const number = parseNum(input.value);
+    if (number !== '' && Number.isFinite(number)) values[input.name] = String(number);
+  }
   for (const input of form.querySelectorAll('input[type="checkbox"]')) {
     values[input.name] = input.checked;
   }
@@ -286,11 +312,42 @@ function collectValues(form) {
   return values;
 }
 
+const MAX_AMOUNT = 1e9;
+
+function numberProblem(form, list) {
+  const byName = new Map(list.map((field) => [field.name, field]));
+  for (const input of form.querySelectorAll('input[data-num]')) {
+    const raw = input.value.trim();
+    if (!raw) continue;
+    const number = parseNum(raw);
+    if (!Number.isFinite(number)) return { input, message: 'Введите число, например 1250 или 12,5' };
+    const isRate = input.name.endsWith('__rate');
+    if (isRate) {
+      if (number < 3 || number > 40) return { input, message: 'Проверьте курс: обычно от 3 до 40 сомони за доллар' };
+      continue;
+    }
+    const field = byName.get(input.name) || {};
+    const min = field.min ?? (field.type === 'money' ? 0.01 : 0);
+    const max = field.max ?? MAX_AMOUNT;
+    if (number < min) {
+      return { input, message: field.type === 'money' ? 'Сумма должна быть больше нуля' : `Значение не может быть меньше ${min}` };
+    }
+    if (number > max) return { input, message: `Слишком большое число — проверьте, нет ли лишних нулей (не больше ${max.toLocaleString('ru-RU')})` };
+  }
+  return null;
+}
+
 // Основная форма приложения. Возвращает элемент панели.
 export function openForm({
   title, fields = [], advanced = [], submitLabel = 'Сохранить', onSubmit,
-  intro = '', extraHtml = '', size = '',
+  intro = '', extraHtml = '', size = '', viewerOk = false,
 }) {
+  // Тому, у кого доступ только на просмотр, формы изменения не открываются:
+  // иначе он нажал бы «Сохранить» и увидел «сохранено», хотя ничего не изменилось.
+  if (!viewerOk && document.documentElement.classList.contains('is-viewer')) {
+    toast('У вас доступ только для просмотра', 'danger');
+    return;
+  }
   const body = html`
     ${intro ? raw(html`<p class="form-intro">${intro}</p>`) : ''}
     <form class="form" novalidate>
@@ -326,6 +383,15 @@ export function openForm({
           errorBox.textContent = 'Заполните обязательные поля';
           errorBox.hidden = false;
           missing.focus();
+          return;
+        }
+        // Числа: только настоящие числа, суммы — больше нуля и в разумных
+        // пределах. Отрицательная или нулевая сумма почти всегда опечатка.
+        const problem = numberProblem(form, [...fields, ...advanced]);
+        if (problem) {
+          errorBox.textContent = problem.message;
+          errorBox.hidden = false;
+          problem.input.focus();
           return;
         }
         const result = onSubmit?.(collectValues(form), { panel, form });
@@ -381,14 +447,14 @@ export function bindMoney(scope) {
       const currency = currencyInput.value;
       const isBase = currency === settings.baseCurrency;
       fxWrap.classList.toggle('is-hidden', isBase);
-      if (!isBase && (rateOwner !== currency || !(Number(rateInput.value) > 0))) {
+      if (!isBase && (rateOwner !== currency || !(Number(parseNum(rateInput.value)) > 0))) {
         rateInput.value = usdRate(settings);
         rateOwner = currency;
       }
       // В операции хранится множитель к доллару, человек видит курс НБТ.
-      fxInput.value = isBase ? 1 : humanToRate(rateInput.value);
+      fxInput.value = isBase ? 1 : humanToRate(parseNum(rateInput.value));
       if (baseOut) {
-        const base = toBase(Number(amountInput.value) || 0, currency, Number(fxInput.value) || 1);
+        const base = toBase(Number(parseNum(amountInput.value)) || 0, currency, Number(fxInput.value) || 1);
         baseOut.textContent = isBase ? '' : `= ${formatAmount(base)}`;
       }
     };

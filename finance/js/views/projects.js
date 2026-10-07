@@ -1,5 +1,6 @@
 // Список проектов с поиском и фильтрами.
 
+import { formatArea } from '../money.js';
 import { html, raw, emptyState, money, searchBar, chips, badge, progressBar } from '../ui.js';
 import { getState, byId } from '../store.js';
 import { projectFinance } from '../calc.js';
@@ -39,7 +40,7 @@ export default function projects() {
       <a class="row" href="#/projects/${project.id}">
         <div class="row__main">
           <span class="row__title">${project.name}</span>
-          <span class="row__subtitle">${client?.name || 'Без клиента'}${project.area ? ` · ${project.area} м²` : ''}</span>
+          <span class="row__subtitle">${client?.name || 'Без клиента'}${project.area ? ` · ${formatArea(project.area)}` : ''}</span>
           ${raw(badge(labelOf(PROJECT_STATUSES, project.status), toneOf(PROJECT_STATUSES, project.status)))}
           ${raw(progressBar(percent, percent >= 99.5 ? 'good' : 'warn'))}
         </div>
