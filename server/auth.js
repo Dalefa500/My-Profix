@@ -2,7 +2,7 @@
 
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { readJSON, writeJSON } from './storage.js';
+import { readJSON, writeJSON, withAuthLock } from './storage.js';
 
 const scryptAsync = promisify(scrypt);
 
@@ -52,7 +52,7 @@ export function canEdit(user) {
   return Boolean(user) && user.role !== 'viewer';
 }
 
-export async function createUser({ login, name, password, role = 'admin' }) {
+async function createUserUnlocked({ login, name, password, role = 'admin' }) {
   const users = await loadUsers();
   const normalized = String(login).trim().toLowerCase();
   if (users.some((user) => user.login === normalized)) {
@@ -73,7 +73,7 @@ export async function createUser({ login, name, password, role = 'admin' }) {
   return publicUser(user);
 }
 
-export async function setPassword(login, password) {
+async function setPasswordUnlocked(login, password, keepToken = null) {
   const users = await loadUsers();
   const user = users.find((item) => item.login === String(login).trim().toLowerCase());
   if (!user) throw new Error('Пользователь не найден');
@@ -90,20 +90,24 @@ export async function setPassword(login, password) {
   user.salt = salt;
   user.hash = hash;
   await saveUsers(users);
+  // Сменили код — все прежние входы этого человека закрываются
+  // (кроме текущего, если код меняют из приложения).
+  await dropUserSessions(user.id, keepToken);
   return publicUser(user);
 }
 
-export async function setRole(login, role) {
+async function setRoleUnlocked(login, role) {
   if (!ROLES.includes(role)) throw new Error('Роль может быть admin или viewer');
   const users = await loadUsers();
   const user = users.find((item) => item.login === String(login).trim().toLowerCase());
   if (!user) throw new Error('Пользователь не найден');
   user.role = role;
   await saveUsers(users);
+  await dropUserSessions(user.id);
   return publicUser(user);
 }
 
-export async function deleteUser(login) {
+async function deleteUserUnlocked(login) {
   const users = await loadUsers();
   const normalized = String(login).trim().toLowerCase();
   const next = users.filter((item) => item.login !== normalized);
@@ -112,10 +116,12 @@ export async function deleteUser(login) {
     throw new Error('Нельзя удалить последнего пользователя с полным доступом');
   }
   await saveUsers(next);
+  const removed = users.find((item) => item.login === normalized);
+  if (removed) await dropUserSessions(removed.id);
   return true;
 }
 
-export async function setName(id, name) {
+async function setNameUnlocked(id, name) {
   const users = await loadUsers();
   const user = users.find((item) => item.id === id);
   if (!user) throw new Error('Пользователь не найден');
@@ -140,7 +146,19 @@ async function loadSessions() {
   return sessions;
 }
 
-export async function createSession(userId) {
+async function dropUserSessions(userId, keepToken = null) {
+  const sessions = await loadSessions();
+  let changed = false;
+  for (const [token, session] of Object.entries(sessions)) {
+    if (session.userId === userId && token !== keepToken) {
+      delete sessions[token];
+      changed = true;
+    }
+  }
+  if (changed) await writeJSON(SESSIONS_FILE, sessions);
+}
+
+async function createSessionUnlocked(userId) {
   const sessions = await loadSessions();
   const token = randomBytes(32).toString('hex');
   sessions[token] = {
@@ -152,7 +170,7 @@ export async function createSession(userId) {
   return { token, maxAge: SESSION_DAYS * 86400 };
 }
 
-export async function destroySession(token) {
+async function destroySessionUnlocked(token) {
   if (!token) return;
   const sessions = await loadSessions();
   if (sessions[token]) {
@@ -161,7 +179,7 @@ export async function destroySession(token) {
   }
 }
 
-export async function userForToken(token) {
+async function userForTokenUnlocked(token) {
   if (!token) return null;
   const sessions = await loadSessions();
   const session = sessions[token];
@@ -179,17 +197,20 @@ const GLOBAL_MAX_FAILURES = 100;
 const GLOBAL_WINDOW_MS = 60 * 60 * 1000;
 let globalFailures = [];
 
-function globalBlocked() {
+function globalBlocked(limit = GLOBAL_MAX_FAILURES) {
   const since = Date.now() - GLOBAL_WINDOW_MS;
   globalFailures = globalFailures.filter((time) => time > since);
-  return globalFailures.length >= GLOBAL_MAX_FAILURES;
+  return globalFailures.length >= limit;
 }
 
 // trusted — запрос с телефона, где уже был успешный вход (см. server.js).
 // На него общий предел не действует: иначе посторонний мог бы, набрав сотню
 // неверных попыток с разных адресов, закрыть вход владельцам на час.
+// Но и у него есть потолок — втрое выше обычного: метка есть у каждого,
+// кто хоть раз входил (в том числе у «только просмотра»), и перебирать
+// чужой код с неё без ограничений нельзя.
 export function loginBlocked(ip, { trusted = false } = {}) {
-  if (!trusted && globalBlocked()) return true;
+  if (globalBlocked(trusted ? GLOBAL_MAX_FAILURES * 3 : GLOBAL_MAX_FAILURES)) return true;
   const record = failures.get(ip);
   if (!record) return false;
   if (record.until < Date.now()) {
@@ -207,33 +228,61 @@ function registerFailure(ip) {
   failures.set(ip, record);
 }
 
-export async function authenticate(login, password, ip) {
+// Попытка входа учитывается ДО проверки кода (она медленная — scrypt):
+// иначе сотня одновременных запросов успевала пройти проверку предела
+// раньше, чем засчитывалась первая неудача. С одного адреса — не больше
+// одной проверки за раз, со всех — не больше MAX_IN_FLIGHT.
+const MAX_IN_FLIGHT = 8;
+const inFlight = new Map();
+let inFlightTotal = 0;
+
+// Возвращает объект попытки, 'blocked' (предел исчерпан) или 'busy'
+// (с этого адреса уже идёт проверка).
+export function beginLogin(ip, { trusted = false } = {}) {
+  if (loginBlocked(ip, { trusted })) return 'blocked';
+  if ((inFlight.get(ip) || 0) >= 1 || inFlightTotal >= MAX_IN_FLIGHT) return 'busy';
+  inFlight.set(ip, (inFlight.get(ip) || 0) + 1);
+  inFlightTotal += 1;
+  registerFailure(ip);
+  let done = false;
+  const release = () => {
+    const left = (inFlight.get(ip) || 1) - 1;
+    if (left > 0) inFlight.set(ip, left);
+    else inFlight.delete(ip);
+    inFlightTotal = Math.max(0, inFlightTotal - 1);
+  };
+  return {
+    succeed() {
+      if (done) return;
+      done = true;
+      release();
+      failures.delete(ip);
+      globalFailures.pop();
+    },
+    fail() {
+      if (done) return;
+      done = true;
+      release();
+    },
+  };
+}
+
+// Проверки ниже предел не считают — это делает beginLogin.
+export async function authenticate(login, password) {
   const users = await loadUsers();
   const user = users.find((item) => item.login === String(login || '').trim().toLowerCase());
   const ok = user ? await verifyPassword(String(password || ''), user) : false;
-  if (!ok) {
-    registerFailure(ip);
-    return null;
-  }
-  failures.delete(ip);
-  return user;
+  return ok ? user : null;
 }
 
 // Вход по коду: логин вводить не нужно, код сам определяет, кто вошёл.
-export async function authenticateByCode(code, ip) {
+export async function authenticateByCode(code) {
   const value = String(code || '').trim();
-  if (value.length < 4) {
-    registerFailure(ip);
-    return null;
-  }
+  if (value.length < 4) return null;
   const users = await loadUsers();
   for (const user of users) {
-    if (await verifyPassword(value, user)) {
-      failures.delete(ip);
-      return user;
-    }
+    if (await verifyPassword(value, user)) return user;
   }
-  registerFailure(ip);
   return null;
 }
 
@@ -242,7 +291,7 @@ export async function authenticateByCode(code, ip) {
 const PASSWORD_MAX_ATTEMPTS = 5;
 const passwordAttempts = new Map();
 
-export async function changePassword(user, currentPassword, newPassword) {
+export async function changePassword(user, currentPassword, newPassword, keepToken = null) {
   const now = Date.now();
   const recent = (passwordAttempts.get(user.id) || []).filter((time) => time > now - FAILURE_WINDOW_MS);
   if (recent.length >= PASSWORD_MAX_ATTEMPTS) {
@@ -254,5 +303,15 @@ export async function changePassword(user, currentPassword, newPassword) {
   if (!ok) throw new Error('Текущий код неверный');
   const next = String(newPassword || '').trim();
   if (next.length < 4) throw new Error('Код должен быть не короче 4 символов');
-  return setPassword(user.login, next);
+  return setPassword(user.login, next, keepToken);
 }
+
+// Открытые функции работают с файлами входа строго по очереди.
+export const createUser = (...args) => withAuthLock(() => createUserUnlocked(...args));
+export const setPassword = (...args) => withAuthLock(() => setPasswordUnlocked(...args));
+export const setRole = (...args) => withAuthLock(() => setRoleUnlocked(...args));
+export const deleteUser = (...args) => withAuthLock(() => deleteUserUnlocked(...args));
+export const setName = (...args) => withAuthLock(() => setNameUnlocked(...args));
+export const createSession = (...args) => withAuthLock(() => createSessionUnlocked(...args));
+export const destroySession = (...args) => withAuthLock(() => destroySessionUnlocked(...args));
+export const userForToken = (...args) => withAuthLock(() => userForTokenUnlocked(...args));

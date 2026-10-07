@@ -8,6 +8,7 @@ import { toBase, defaultRate, round, formatAmount, isBase } from './money.js';
 import { today, monthKey, monthLabel, addMonths, daysInMonth } from './dates.js';
 import {
   assignmentState, assignmentHasPayments, payrollMonthsFor, payrollState, clampPercent, projectPlan,
+  projectSettledBase,
 } from './calc.js';
 import { categoryLabel } from './model.js';
 
@@ -82,9 +83,7 @@ export function defaultPaymentPlan(price, startDate, dueDate, percent = 50, curr
 // начиная с последнего, а если всё уже оплачено — отдельной строкой.
 function replanOps(existing, record) {
   const state = getState();
-  const receivedBase = state.incomes
-    .filter((item) => item.projectId === existing.id)
-    .reduce((acc, item) => acc + (Number(item.base) || 0), 0);
+  const receivedBase = projectSettledBase(existing, state.incomes.filter((item) => item.projectId === existing.id));
   const plan = projectPlan(existing, receivedBase).filter((item) => item.type !== 'extra');
   const fx = isBase(record.currency) ? 1 : (Number(record.fx) > 0 ? Number(record.fx) : 1);
   const whole = record.currency === 'TJS';
@@ -396,10 +395,12 @@ export function payAssignment(assignmentId, part, values = {}) {
   // Больше, чем начислено за работу, выплатить нельзя: переплата нигде
   // бы не числилась и просто пропала бы из учёта. Небольшой допуск —
   // на округление при пересчёте между валютами.
-  const limitBase = part === 'advance' ? info.accruedBase : info.remainderBase;
+  // Аванс — не больше того, что ещё не выплачено остатком (остаток могли
+  // отдать раньше аванса).
+  const limitBase = part === 'advance' ? round(Math.max(0, info.accruedBase - info.finalPaidBase)) : info.remainderBase;
   // В валюте ставки сравниваем сами суммы, в другой валюте — доллары
   // (с допуском в цент на округление пересчёта).
-  const limitAmount = part === 'advance' ? info.accrued : info.remainder;
+  const limitAmount = part === 'advance' ? round(Math.max(0, info.accrued - info.finalPaidCur)) : info.remainder;
   const over = payment.currency === assignment.currency
     ? payment.amount > limitAmount + 0.005
     : payment.base > limitBase + 0.01;
@@ -407,7 +408,7 @@ export function payAssignment(assignmentId, part, values = {}) {
     return {
       ok: false,
       error: part === 'advance'
-        ? `Аванс не может быть больше всей суммы за работу (${formatAmount(limitBase)})`
+        ? `Аванс не может быть больше невыплаченной суммы за работу (${formatAmount(limitBase)})`
         : `Остаток к выплате — ${formatAmount(limitBase)}. Если сумма за работу изменилась, сначала поправьте площадь или ставку`,
     };
   }
@@ -434,7 +435,8 @@ export function payAssignment(assignmentId, part, values = {}) {
   const ops = [
     op.insert('expenses', expense),
     op.putItem('assignments', assignmentId, 'payments', {
-      id: uid('apt'), expenseId: expense.id, part, date: expense.date, base: payment.base,
+      id: uid('apt'), expenseId: expense.id, part, date: expense.date,
+      amount: payment.amount, currency: payment.currency, base: payment.base,
     }),
   ];
   if (part === 'final') ops.push(op.patch('assignments', assignmentId, { stage: 'approved' }));

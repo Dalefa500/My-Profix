@@ -5,7 +5,7 @@ import { openForm, toast, html, raw, esc, parseNum } from './ui.js';
 import { getState, byId } from './store.js';
 import * as actions from './actions.js';
 import { today, monthLabel } from './dates.js';
-import { formatAmount, isBase } from './money.js';
+import { formatAmount, isBase, rateForInput, rateToHuman } from './money.js';
 import {
   PROJECT_STATUSES, OBJECT_TYPES, PROJECT_ROLES, INCOME_TYPES, PAYMENT_METHODS,
   EMPLOYEE_PAY_TYPES, BARTER_KINDS, FOUNDER_MOVES,
@@ -407,6 +407,27 @@ export function openIncomeForm(prefill = {}, onDone) {
       toast('Приход записан', 'good');
       onDone?.();
     },
+  });
+
+  // Выбрали проект — подставляем валюту и курс его договора: оплата
+  // в сомони по курсу договора закрывает долг ровно, без копеечных хвостов.
+  const panel = document.getElementById('sheet');
+  const projectSelect = panel?.querySelector('select[name="projectId"]');
+  projectSelect?.addEventListener('change', () => {
+    const chosen = byId('projects', projectSelect.value);
+    if (!chosen) return;
+    const target = chosen.currency || 'USD';
+    const currencyInput = panel.querySelector('input[name="amount__currency"]');
+    if (currencyInput && currencyInput.value !== target) {
+      panel.querySelector(`[data-field="amount__currency"] .segmented__item[data-value="${target}"]`)?.click();
+    }
+    const rateInput = panel.querySelector('input[name="amount__rate"]');
+    if (rateInput && !isBase(target) && Number(chosen.fx) > 0) {
+      rateInput.value = rateForInput(rateToHuman(chosen.fx));
+      rateInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    const clientSelect = panel.querySelector('select[name="clientId"]');
+    if (clientSelect && chosen.clientId && !clientSelect.value) clientSelect.value = chosen.clientId;
   });
 }
 

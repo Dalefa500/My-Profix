@@ -71,15 +71,29 @@ export function assignmentState(assignment, project) {
   // если площадь потом увеличили). У старых записей — одиночные поля
   // advancePaidAt/remainderPaidAt с суммой или без неё.
   const payments = Array.isArray(assignment?.payments) ? assignment.payments : [];
-  const partSum = (part) => sum(payments.filter((item) => item.part === part), (item) => item.base);
+  // Сумма выплаты в валюте ставки: если платили в ней же — как ввели,
+  // иначе пересчитываем по курсу назначения. Так работа в сомони,
+  // оплаченная сомони по другому курсу, закрывается без «хвоста».
+  const inCurrency = (item) => (item.currency === assignment.currency && Number.isFinite(Number(item.amount))
+    ? Number(item.amount)
+    : (Number(item.base) || 0) / fx);
+  const partSum = (part, pick) => sum(payments.filter((item) => item.part === part), pick);
   const hasPart = (part) => payments.some((item) => item.part === part);
   const legacyAdvance = assignment?.advancePaidAt && !hasPart('advance');
   const legacyFinal = assignment?.remainderPaidAt && !hasPart('final');
   const advancePaid = Boolean(assignment?.advancePaidAt) || hasPart('advance');
-  const advancePaidBase = round(partSum('advance') + (legacyAdvance
-    ? (known(assignment.advancePaidBase) ? Number(assignment.advancePaidBase) : base.advanceBase) : 0));
-  const finalPaidBase = round(partSum('final') + (legacyFinal
-    ? (known(assignment.remainderPaidBase) ? Number(assignment.remainderPaidBase) : base.remainderBase) : 0));
+  const legacyAdvanceBase = legacyAdvance
+    ? (known(assignment.advancePaidBase) ? Number(assignment.advancePaidBase) : base.advanceBase) : 0;
+  const legacyFinalBase = legacyFinal
+    ? (known(assignment.remainderPaidBase) ? Number(assignment.remainderPaidBase) : base.remainderBase) : 0;
+  // Сколько ушло деньгами (в долларах) — для расходов и «Выплачено».
+  const advancePaidBase = round(partSum('advance', (item) => item.base) + legacyAdvanceBase);
+  const finalPaidBase = round(partSum('final', (item) => item.base) + legacyFinalBase);
+  // То же в валюте ставки — для остатка.
+  const advancePaidCur = partSum('advance', inCurrency) + (legacyAdvance
+    ? (known(assignment.advancePaidBase) ? legacyAdvanceBase / fx : base.advance) : 0);
+  const finalPaidCur = partSum('final', inCurrency) + (legacyFinal
+    ? (known(assignment.remainderPaidBase) ? legacyFinalBase / fx : base.remainder) : 0);
   // У старых записей, оплаченных полностью, «выплачено» = начислено
   // (без копеечной разницы от округления двух половин).
   const legacyFull = legacyFinal && !payments.length
@@ -88,16 +102,21 @@ export function assignmentState(assignment, project) {
 
   // Остаток — всё начисленное минус то, что уже отдали: увеличили площадь —
   // разница попадёт в остаток, выплатили меньше — тоже.
-  const remainderBase = legacyFull ? 0 : round(Math.max(0,
-    (advancePaid ? base.accruedBase - advancePaidBase : base.remainderBase) - finalPaidBase));
+  let remainderCur = legacyFull ? 0 : Math.max(0,
+    (advancePaid ? base.accrued - advancePaidCur : base.remainder) - finalPaidCur);
+  if (remainderCur <= 0.005) remainderCur = 0;
+  const untouched = !advancePaid && finalPaidCur === 0 && !legacyFull;
   const totals = {
     ...base,
-    remainderBase,
-    // Пока ничего не платили — точная сумма в валюте ставки (без пересчёта).
-    remainder: !advancePaid && finalPaidBase === 0 && !legacyFull ? base.remainder : round(remainderBase / fx),
+    // Пока ничего не платили — точные суммы из ставки, без пересчёта.
+    remainderBase: untouched ? base.remainderBase : round(remainderCur * fx),
+    remainder: untouched ? base.remainder : round(remainderCur),
+    finalPaidBase,
+    finalPaidCur: round(finalPaidCur),
   };
-  const remainderPaid = (finalPaidBase > 0 || legacyFull) && remainderBase <= 0.01;
-  const remainderPartly = finalPaidBase > 0 && !remainderPaid;
+  const remainderBase = totals.remainderBase;
+  const remainderPaid = (finalPaidCur > 0 || legacyFull) && remainderBase <= 0.01;
+  const remainderPartly = finalPaidCur > 0 && !remainderPaid;
   const remainderAvailable = approved && !remainderPaid && totals.remainder > 0;
 
   let label;
@@ -146,7 +165,8 @@ export function assignmentState(assignment, project) {
     dueNowBase,
     paidBase,
     lockedBase,
-    owedBase: round(totals.accruedBase - paidBase),
+    // Долг перед сотрудником: невыплаченный аванс и остаток.
+    owedBase: round((advancePaid ? 0 : totals.advanceBase) + totals.remainderBase),
   };
 }
 
@@ -217,12 +237,26 @@ export function planTolerance(project) {
   return Math.max(0.01, round(fx, 2));
 }
 
+// Сколько получено по договору в его валюте, выраженное в долларах по курсу
+// договора. Для договора в долларах — просто сумма приходов.
+export function projectSettledBase(project, incomes) {
+  if (isBase(project?.currency)) return sum(incomes, (item) => item.base);
+  const fx = Number(project.fx) > 0 ? Number(project.fx) : 1;
+  const inCurrency = incomes.reduce((acc, item) => acc + (item.currency === project.currency
+    ? Number(item.amount) || 0
+    : (Number(item.base) || 0) / fx), 0);
+  return round(inCurrency * fx);
+}
+
 export function projectFinance(state, project) {
   if (!project) return null;
   const fx = Number(project.fx) > 0 ? Number(project.fx) : 1;
   const priceBase = toBase(project.price, project.currency, fx);
   const incomes = projectIncomes(state, project.id);
   const receivedBase = sum(incomes, (item) => item.base);
+  // Долг по договору считаем в валюте договора: 10 000 сомони, оплаченные
+  // сомони по другому курсу, — это полный расчёт, а не долг в пару долларов.
+  const settledBase = projectSettledBase(project, incomes);
 
   // Обязательство клиента = стоимость договора + запланированные доп. работы.
   const extraPlanBase = sum(
@@ -230,9 +264,9 @@ export function projectFinance(state, project) {
     (item) => toBase(item.amount, project.currency, fx),
   );
   const contractBase = round(priceBase + extraPlanBase);
-  const plan = projectPlan(project, receivedBase);
+  const plan = projectPlan(project, settledBase);
   const cancelled = CLOSED_PROJECT_STATUSES.includes(project.status);
-  const owed = round(contractBase - receivedBase);
+  const owed = round(contractBase - settledBase);
   const toReceiveBase = cancelled || owed <= planTolerance(project) ? 0 : owed;
 
   const assignments = projectAssignments(state, project.id);
@@ -419,7 +453,19 @@ export function payrollPaidBase(payroll) {
 export function payrollState(payroll) {
   const accruedBase = Number(payroll?.accruedBase) || 0;
   const paidBase = payrollPaidBase(payroll);
-  const leftBase = round(Math.max(0, accruedBase - paidBase));
+  // Остаток — в валюте начисления: 5000 сомони, выплаченные сомони по
+  // другому курсу, — это полная выплата.
+  let leftBase;
+  if (isBase(payroll?.currency) || !(Number(payroll?.amount) > 0)) {
+    leftBase = round(Math.max(0, accruedBase - paidBase));
+  } else {
+    const fx = Number(payroll.fx) > 0 ? Number(payroll.fx) : 1;
+    const paidInCurrency = (payroll.payments || []).reduce((acc, item) => acc + (item.currency === payroll.currency
+      ? Number(item.amount) || 0
+      : (Number(item.base) || 0) / fx), 0);
+    const left = Number(payroll.amount) - paidInCurrency;
+    leftBase = left <= 0.005 ? 0 : round(left * fx);
+  }
   let label = 'Начислено';
   let tone = 'warn';
   if (paidBase <= 0) {
@@ -465,13 +511,12 @@ export function employeeFinance(state, employee) {
     return { assignment, project, state: assignmentState(assignment, project) };
   });
   const payrollAccrued = sum(payrolls, (item) => item.accruedBase);
-  const payrollPaid = sum(payrolls, (item) => payrollPaidBase(item));
-  const payrollOwed = round(Math.max(0, payrollAccrued - payrollPaid));
+  const payrollOwed = sum(payrolls, (item) => payrollState(item).leftBase);
   // «К выплате сейчас» — только зарплата, срок которой уже наступил.
   const nowIso = today();
   const payrollDue = sum(
     payrolls.filter((item) => !item.dueDate || item.dueDate <= nowIso),
-    (item) => Math.max(0, item.accruedBase - payrollPaidBase(item)),
+    (item) => payrollState(item).leftBase,
   );
   // Выплачено — всё, что реально ушло сотруднику, по его расходам.
   // Так сумма совпадает с «Историей выплат», даже если работу, за которую

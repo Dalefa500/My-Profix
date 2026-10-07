@@ -7,16 +7,16 @@ import path from 'node:path';
 import { promises as fs, createReadStream } from 'node:fs';
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 
-import { applyOps, normalizeData, emptyData, SCHEMA_VERSION } from '../finance/js/ops.js';
+import { applyOps, validateOps, normalizeData, emptyData, SCHEMA_VERSION } from '../finance/js/ops.js';
 import {
-  ensureDir, readJSON, writeJSON, appendLine, withLock, DATA_DIR,
+  ensureDir, readJSON, writeJSON, appendLine, withLock, withAuthLock, DATA_DIR,
 } from './storage.js';
 import {
   createChallenge, verifyRegistration, verifyAssertion, b64url,
 } from './webauthn.js';
 import {
   authenticate, authenticateByCode, createSession, destroySession, userForToken,
-  publicUser, loadUsers, createUser, changePassword, setName, loginBlocked, canEdit,
+  publicUser, loadUsers, createUser, changePassword, setName, beginLogin, canEdit,
 } from './auth.js';
 import { fetchUsdRate } from './nbt.js';
 import { buildReport } from './reports.js';
@@ -90,9 +90,11 @@ async function loadState() {
   return cache;
 }
 
+// Память обновляем только после того, как запись на диск удалась:
+// иначе при сбое записи сервер отдавал бы данные, которых нет на диске.
 async function saveState(next) {
-  cache = next;
   await writeJSON(STATE_FILE, next);
+  cache = next;
 }
 
 // Ранние записи подписаны безличным «Учредитель»: их вносили, пока вход
@@ -214,11 +216,21 @@ async function refreshUsdRate({ force = false } = {}) {
 // Одноразовые запросы живут пять минут — этого хватает, чтобы поднести лицо.
 const challenges = new Map();
 
+const MAX_CHALLENGES = 500;
+let challengeSweepAt = 0;
+
 function rememberChallenge(challenge, payload = {}) {
-  challenges.set(challenge, { ...payload, expiresAt: Date.now() + 5 * 60 * 1000 });
-  for (const [key, item] of challenges) {
-    if (item.expiresAt < Date.now()) challenges.delete(key);
+  const now = Date.now();
+  // Просроченные убираем не чаще раза в секунду, а общее число держим
+  // ограниченным: запрос без входа не должен раздувать память сервера.
+  if (now - challengeSweepAt > 1000) {
+    challengeSweepAt = now;
+    for (const [key, item] of challenges) {
+      if (item.expiresAt < now) challenges.delete(key);
+    }
   }
+  while (challenges.size >= MAX_CHALLENGES) challenges.delete(challenges.keys().next().value);
+  challenges.set(challenge, { ...payload, expiresAt: now + 5 * 60 * 1000 });
 }
 
 function takeChallenge(challenge) {
@@ -377,8 +389,28 @@ async function currentUser(req) {
 
 // --------------------------------------------------------------------- API
 
+// Запрос, меняющий данные, должен прийти со страницы самого приложения:
+// формы с чужих сайтов (в том числе с соседнего поддомена) отсекаем.
+function crossSiteProblem(req) {
+  if (req.method === 'GET' || req.method === 'HEAD') return null;
+  if (!String(req.headers['content-type'] || '').startsWith('application/json')) return 'Нужен запрос в формате JSON';
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none') return 'Запрос с другого сайта отклонён';
+  const origin = req.headers.origin;
+  if (origin && origin !== 'null') {
+    try {
+      if (new URL(origin).host !== req.headers.host) return 'Запрос с другого сайта отклонён';
+    } catch {
+      return 'Запрос с другого сайта отклонён';
+    }
+  }
+  return null;
+}
+
 async function handleApi(req, res, url) {
   const route = url.pathname.replace(/^\/api/, '') || '/';
+  const crossSite = crossSiteProblem(req);
+  if (crossSite) return send(res, 403, { error: crossSite });
 
   // Название, цвет и надписи компании нужны ещё до входа — экрану входа.
   if (route === '/config' && req.method === 'GET') {
@@ -391,14 +423,25 @@ async function handleApi(req, res, url) {
 
   if (route === '/login' && req.method === 'POST') {
     const ip = clientIp(req);
-    if (loginBlocked(ip, { trusted: await isTrustedDevice(req) })) {
+    const attempt = beginLogin(ip, { trusted: await isTrustedDevice(req) });
+    if (attempt === 'blocked') {
       return send(res, 429, { error: 'Слишком много попыток. Попробуйте через 15 минут.' });
     }
-    const body = await readBody(req);
-    // Вход по коду (одно поле) или по логину с паролем — оба варианта работают.
-    const user = body.code
-      ? await authenticateByCode(body.code, ip)
-      : await authenticate(body.login, body.password, ip);
+    if (attempt === 'busy') {
+      return send(res, 429, { error: 'Подождите секунду и повторите' });
+    }
+    let body;
+    let user = null;
+    try {
+      body = await readBody(req);
+      // Вход по коду (одно поле) или по логину с паролем — оба варианта работают.
+      user = body.code
+        ? await authenticateByCode(body.code)
+        : await authenticate(body.login, body.password);
+    } finally {
+      if (user) attempt.succeed();
+      else attempt.fail();
+    }
     if (!user) {
       return send(res, 401, { error: body.code ? 'Неверный код' : 'Неверный логин или пароль' });
     }
@@ -441,9 +484,14 @@ async function handleApi(req, res, url) {
         rpId: rp.id,
         credential,
       });
-      credential.signCount = result.signCount;
-      credential.usedAt = new Date().toISOString();
-      await savePasskeys(passkeys);
+      await withAuthLock(async () => {
+        const fresh = await loadPasskeys();
+        const stored = fresh.find((item) => item.id === credential.id);
+        if (!stored) return;
+        stored.signCount = result.signCount;
+        stored.usedAt = new Date().toISOString();
+        await savePasskeys(fresh);
+      });
     } catch (error) {
       return send(res, 401, { error: error.message });
     }
@@ -558,16 +606,20 @@ async function handleApi(req, res, url) {
         }
         let state;
         try {
-          state = applyOps(normalizeData(structuredClone(current.state)), ops);
+          validateOps(ops);
+          // Данные уже приведены к нужному виду при загрузке — здесь их
+          // не пересобираем (и не запускаем перевод старой схемы).
+          state = applyOps(structuredClone(current.state), ops);
         } catch (error) {
           error.rejected = true;
           throw error;
         }
         const next = { rev: current.rev + 1, state, updatedAt: new Date().toISOString() };
         await saveState(next);
+        // Журнал — вспомогательный: его сбой не отменяет уже сохранённое.
         await appendLine('log.jsonl', {
           at: next.updatedAt, rev: next.rev, user: user.login, ops,
-        });
+        }).catch((error) => console.error('Журнал изменений не записан:', error.message));
         return next;
       });
       return send(res, 200, result);
@@ -619,21 +671,22 @@ async function handleApi(req, res, url) {
         origins: rp.origins,
         rpId: rp.id,
       });
-      const passkeys = await loadPasskeys();
-      if (passkeys.some((item) => item.id === credential.credentialId)) {
-        return send(res, 200, { ok: true, already: true });
-      }
-      passkeys.push({
-        id: credential.credentialId,
-        userId: user.id,
-        publicKey: credential.publicKey,
-        alg: credential.alg,
-        signCount: credential.signCount,
-        label: String(body.label || 'Телефон').slice(0, 40),
-        createdAt: new Date().toISOString(),
+      const already = await withAuthLock(async () => {
+        const passkeys = await loadPasskeys();
+        if (passkeys.some((item) => item.id === credential.credentialId)) return true;
+        passkeys.push({
+          id: credential.credentialId,
+          userId: user.id,
+          publicKey: credential.publicKey,
+          alg: credential.alg,
+          signCount: credential.signCount,
+          label: String(body.label || 'Телефон').slice(0, 40),
+          createdAt: new Date().toISOString(),
+        });
+        await savePasskeys(passkeys);
+        return false;
       });
-      await savePasskeys(passkeys);
-      return send(res, 200, { ok: true });
+      return send(res, 200, already ? { ok: true, already: true } : { ok: true });
     } catch (error) {
       return send(res, 400, { error: error.message });
     }
@@ -652,9 +705,11 @@ async function handleApi(req, res, url) {
 
   if (route === '/passkey/delete' && req.method === 'POST') {
     const body = await readBody(req);
-    const passkeys = await loadPasskeys();
-    const next = passkeys.filter((item) => !(item.id === body.id && item.userId === user.id));
-    await savePasskeys(next);
+    await withAuthLock(async () => {
+      const passkeys = await loadPasskeys();
+      const next = passkeys.filter((item) => !(item.id === body.id && item.userId === user.id));
+      await savePasskeys(next);
+    });
     return send(res, 200, { ok: true });
   }
 
@@ -681,7 +736,7 @@ async function handleApi(req, res, url) {
     }
     const body = await readBody(req);
     try {
-      await changePassword(user, body.currentPassword, body.newPassword);
+      await changePassword(user, body.currentPassword, body.newPassword, readCookie(req, COOKIE));
       return send(res, 200, { ok: true });
     } catch (error) {
       return send(res, 400, { error: error.message });
@@ -861,6 +916,13 @@ async function serveStatic(req, res, url) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  // Общие заголовки безопасности: приложение нельзя встроить в чужую
+  // страницу, браузер не угадывает типы файлов, адрес не утекает наружу.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
+  if (isSecure(req)) res.setHeader('Strict-Transport-Security', 'max-age=15552000');
   try {
     if (url.pathname === '/') {
       res.writeHead(302, { Location: '/finance/' }).end();
@@ -901,7 +963,8 @@ async function bootstrapUsers() {
   await fs.writeFile(
     path.join(DATA_DIR, 'КОДЫ-ДЛЯ-ВХОДА.txt'),
     `${lines.join('\n')}\n\nСменить код можно в приложении: Ещё → Настройки.\n`,
-    'utf8',
+    // Читать может только сама программа (и администратор сервера).
+    { encoding: 'utf8', mode: 0o600 },
   );
   console.log('\nКоды для входа в приложение:');
   for (const line of lines) console.log(`  ${line}`);

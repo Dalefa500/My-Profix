@@ -17,6 +17,9 @@ const POLL_INTERVAL = 8000;
 let data = emptyData();
 let rev = 0;
 let user = null;
+// Чьи изменения лежат в очереди: если вход истёк и тот же человек вошёл
+// снова, неотправленное не выбрасываем.
+let queueOwner = null;
 // Когда вход отключён, приложение открывается сразу. Имя того, кто работает,
 // хранится в браузере — только чтобы было видно, кто внёс операцию.
 let authDisabled = false;
@@ -97,7 +100,7 @@ function setStatus(next) {
 
 function cache() {
   try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ rev, data, queue, user }));
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ rev, data, queue, user, owner: queueOwner }));
   } catch {
     /* переполнение или приватный режим — работаем без кэша */
   }
@@ -112,6 +115,7 @@ function restoreCache() {
     rev = Number(saved.rev) || 0;
     queue = Array.isArray(saved.queue) ? saved.queue : [];
     user = saved.user || null;
+    queueOwner = saved.owner || saved.user?.id || null;
     return Boolean(user);
   } catch {
     return false;
@@ -139,7 +143,9 @@ async function api(path, options = {}) {
     // её и показываем. Для остальных запросов 401 — это истёкший вход.
     const isLogin = path === '/login' || path.startsWith('/passkey/login');
     if (!isLogin) {
+      if (user) queueOwner = user.id;
       user = null;
+      cache();
       emit('auth');
     }
     const error = new Error(payload.error || 'Требуется вход');
@@ -183,26 +189,32 @@ export async function checkSession() {
 // доступа из командной строки.
 export async function signIn(code, password) {
   const body = password === undefined ? { code } : { login: code, password };
-  clearCache();
-  data = emptyData();
-  rev = 0;
-  queue = [];
   const payload = await api('/login', { method: 'POST', body });
-  user = payload.user;
   authDisabled = Boolean(payload.authDisabled);
-  await pull();
-  return user;
+  return startSession(payload.user);
 }
 
 // Вход по Face ID выполняется отдельным модулем; сюда приходит уже
 // подтверждённый сервером пользователь.
 export async function completeLogin(nextUser) {
-  clearCache();
-  data = emptyData();
-  rev = 0;
-  queue = [];
+  return startSession(nextUser);
+}
+
+// Тот же человек вошёл снова (истёк вход, телефон был без связи) — его
+// неотправленные изменения сохраняем и отправляем. Другой человек —
+// начинаем с чистого листа: чужие черновики ему не принадлежат.
+async function startSession(nextUser) {
+  const keep = queue.length > 0 && queueOwner && nextUser?.id === queueOwner;
+  if (!keep) {
+    clearCache();
+    data = emptyData();
+    rev = 0;
+    queue = [];
+  }
   user = nextUser;
+  queueOwner = user?.id || null;
   await pull();
+  if (queue.length) scheduleFlush(0);
   return user;
 }
 
@@ -211,6 +223,7 @@ export async function signOut() {
     await api('/logout', { method: 'POST' });
   } catch { /* даже при ошибке выходим локально */ }
   user = null;
+  queueOwner = null;
   queue = [];
   data = emptyData();
   rev = 0;
@@ -283,7 +296,9 @@ async function flush() {
   }
   flushing = true;
   flushAgain = false;
-  const sending = queue.slice();
+  // Частями: очередь, накопленная за долгое время без связи, не должна
+  // упираться в предел размера запроса.
+  const sending = queue.slice(0, 50);
   setStatus('saving');
   try {
     const payload = await api('/ops', { method: 'POST', body: { rev, ops: sending } });

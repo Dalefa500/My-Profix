@@ -116,6 +116,78 @@ function collectionOf(data, name) {
   return data[name];
 }
 
+// Какие настройки можно менять операцией и какими они должны быть.
+// Валюту учёта и версию схемы так поменять нельзя: от них зависит
+// пересчёт всех сумм.
+const text = (max) => (value) => typeof value === 'string' && value.length <= max;
+const number = (min, max) => (value) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
+const SETTINGS_RULES = {
+  companyName: text(120),
+  usdRate: number(1, 100),
+  usdRateDate: text(40),
+  usdRateSource: (value) => value === 'manual' || value === 'nbt',
+  usdRateCheckedAt: text(40),
+  defaultAdvancePercent: number(0, 100),
+  salaryDay: number(1, 31),
+  notifyDaysAhead: number(0, 60),
+  payrollThrough: text(10),
+  customCategories: (value) => Array.isArray(value) && value.length <= 300 && value.every((item) => item
+    && typeof item === 'object' && text(80)(item.id) && text(40)(item.group) && text(120)(item.label)
+    && (item.removed === undefined || typeof item.removed === 'boolean')),
+};
+
+function cleanSettings(changes) {
+  const clean = {};
+  for (const [key, value] of Object.entries(changes || {})) {
+    const rule = SETTINGS_RULES[key];
+    if (!rule) continue;
+    if (!rule(value)) throw new Error(`Неверное значение настройки: ${key}`);
+    clean[key] = value;
+  }
+  return clean;
+}
+
+// Проверка формы операций до применения (на сервере): глубина вложенности
+// и размер ограничены, чтобы одна испорченная операция не могла уронить
+// сервер или раздуть данные.
+const OP_TYPES = ['insert', 'patch', 'remove', 'settings', 'item'];
+const MAX_DEPTH = 12;
+const MAX_OP_BYTES = 256 * 1024;
+
+function tooDeep(value) {
+  const stack = [[value, 0]];
+  while (stack.length) {
+    const [node, depth] = stack.pop();
+    if (node === null || typeof node !== 'object') continue;
+    if (depth >= MAX_DEPTH) return true;
+    for (const child of Object.values(node)) stack.push([child, depth + 1]);
+  }
+  return false;
+}
+
+export function validateOps(ops) {
+  if (!Array.isArray(ops)) throw new Error('Операции должны быть списком');
+  for (const op of ops) {
+    if (!op || typeof op !== 'object' || Array.isArray(op)) throw new Error('Неверная операция');
+    if (!OP_TYPES.includes(op.type)) throw new Error(`Неизвестная операция: ${op.type}`);
+    if (tooDeep(op)) throw new Error('Слишком сложная операция');
+    if (JSON.stringify(op).length > MAX_OP_BYTES) throw new Error('Слишком большая операция');
+    if (op.type === 'insert' && (!op.record || typeof op.record !== 'object' || Array.isArray(op.record))) {
+      throw new Error('Неверная запись');
+    }
+    for (const id of [op.id, op.record?.id, op.item?.id, op.removeId]) {
+      if (id !== undefined && (typeof id !== 'string' || id.length > 80)) throw new Error('Неверный идентификатор');
+    }
+    if (op.changes !== undefined && (typeof op.changes !== 'object' || op.changes === null || Array.isArray(op.changes))) {
+      throw new Error('Неверные изменения');
+    }
+    if (op.unset !== undefined && !(Array.isArray(op.unset) && op.unset.every((field) => typeof field === 'string'))) {
+      throw new Error('Неверные изменения');
+    }
+  }
+  return true;
+}
+
 export function applyOp(data, op) {
   if (!op || typeof op !== 'object') return data;
   switch (op.type) {
@@ -148,7 +220,7 @@ export function applyOp(data, op) {
       return data;
     }
     case 'settings': {
-      data.settings = { ...data.settings, ...(op.changes || {}) };
+      data.settings = { ...data.settings, ...cleanSettings(op.changes) };
       return data;
     }
     // Добавить, заменить или убрать один элемент вложенного списка

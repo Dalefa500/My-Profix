@@ -69,6 +69,9 @@ const PLAN_ART = `
   </svg>`;
 
 function renderAuth(error = '') {
+  // Открытая форма не должна остаться поверх экрана входа: то, что в неё
+  // ввели бы, ушло бы в никуда.
+  closeSheet();
   document.body.classList.remove('is-locked');
   root.className = 'auth';
   root.innerHTML = html`
@@ -502,9 +505,21 @@ function registerRoutes() {
   router.setNotFound(() => router.go('#/'));
 }
 
+// Маршруты и обработчики истории ставятся один раз за жизнь страницы:
+// после повторного входа второй комплект обработчиков дублировал бы
+// каждое «назад» (и закрывал только что открытые формы).
+let routerStarted = false;
+
 function startApp() {
   renderShell();
-  ensurePayrolls();
+  // Начисления создаёт тот, кто может вносить данные: у «только просмотра»
+  // попытка заканчивалась сообщением об отказе в начале каждого месяца.
+  if (store.canEdit()) ensurePayrolls();
+  if (routerStarted) {
+    router.resolve();
+    return;
+  }
+  routerStarted = true;
   registerRoutes();
   router.start();
 }

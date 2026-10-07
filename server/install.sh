@@ -136,7 +136,13 @@ if [ -z "${APP_PORT:-}" ]; then
   else
     # Свободный порт, который не занят сейчас и не записан ни в одной
     # другой службе (та может быть просто остановлена).
-    taken_ports="$(sed -n 's/^Environment=PORT=//p' /etc/systemd/system/*.service 2>/dev/null | tr '\n' ' ')"
+    # Учитываем и порты, на которые nginx уже отправляет запросы (бот может
+    # как раз перезапускаться и не слушать порт в эту секунду).
+    taken_ports="$( {
+      sed -n 's/^Environment=PORT=//p' /etc/systemd/system/*.service 2>/dev/null || true
+      { grep -Rhos 'PORT=[0-9]*' /etc/systemd/system/ /etc/*/app.env 2>/dev/null || true; } | cut -d= -f2
+      { grep -Rhos '127\.0\.0\.1:[0-9]*\|localhost:[0-9]*' /etc/nginx/ 2>/dev/null || true; } | cut -d: -f2
+    } | tr '\n' ' ' || true)"
     APP_PORT=3001
     while port_in_use "$APP_PORT" || printf ' %s ' "$taken_ports" | grep -q " ${APP_PORT} "; do
       APP_PORT=$((APP_PORT + 1))
@@ -422,12 +428,20 @@ write "$CRON_FILE" <<BACKUP
 #!/bin/sh
 # Ежедневная копия данных ${APP_SLUG}. Хранится 30 дней.
 set -e
+# Копии содержат коды входа и сессии — читать их может только root.
+umask 077
 mkdir -p ${BACKUP_DIR}
+chmod 700 ${BACKUP_DIR}
 tar -czf "${BACKUP_DIR}/\$(date +%F).tar.gz" -C "$(dirname "$APP_DATA")" "$(basename "$APP_DATA")"
 find ${BACKUP_DIR} -name '*.tar.gz' -mtime +30 -delete
 BACKUP
 run chmod +x "$CRON_FILE"
 run mkdir -p "$BACKUP_DIR"
+run chmod 700 "$BACKUP_DIR"
+# Уже сделанные копии тоже закрываем от посторонних.
+if [ "$DRY_RUN" != "1" ]; then
+  find "$BACKUP_DIR" -name '*.tar.gz' -exec chmod 600 {} + 2>/dev/null || true
+fi
 
 say "Готово"
 if [ -n "$DOMAIN" ]; then
