@@ -104,6 +104,12 @@ def common(got, *, first: bool, tajik: bool, card: bool) -> None:
               "посреди разговора не здоровается заново")
     check(t.count("PROFIX ҳастам") + t.count("представитель компании PROFIX") <= (1 if first else 0),
           "представляется только в первом ответе")
+    if first and getattr(app, "WA_FIRST", False) and "900565858" not in re.sub(r"\D", "", t):
+        card = True  # режим «сразу в WhatsApp»: кнопка в первом ответе
+    if first and getattr(app, "WA_FIRST", False) and card:
+        q = questions(t[len(greet):] if t.startswith(greet) else t)
+        check(not any(w in q for w in ("помещ", "метр", "квадрат", "когда", "сами ", "дохил", "берун", "девор", "чанд")),
+              "без уточняющих вопросов (режим «сразу в WhatsApp»)")
     check(any(k == "card" for k, _ in got) == card,
           "карточка WhatsApp пришла" if card else "карточки WhatsApp нет (клиент не просил)")
     if tajik:
@@ -124,8 +130,9 @@ async def main() -> None:
     got = await say("t1", "Ака клей кафел чанд сумай оптовиш")
     common(got, first=False, tajik=True, card=False)
     low = texts(got).lower()
-    check(any(w in low for w in ("чанд", "мешок", "халта", "рақам", "раками", "телефон")),
-          "оптовик: спрашивает количество или номер")
+    if not app.WA_FIRST:
+        check(any(w in low for w in ("чанд", "мешок", "халта", "рақам", "раками", "телефон")),
+              "оптовик: спрашивает количество или номер")
     check(not any(w in questions(texts(got)) for w in ("дохил", "берун", "девор", "ремонт")),
           "оптовику не задаёт вопросов про ремонт")
     # Клиент перешёл на русский — ответ и карточка тоже по-русски.
@@ -165,7 +172,7 @@ async def main() -> None:
     common(got, first=True, tajik=False, card=False)
     check(not re.search(r"\d+\s*(сом|smn|с\.)", texts(got).lower()), "не выдумывает цену мешка")
     low = texts(got).lower()
-    check("удобн" in low and "наш" in low, "даёт выбор: свой номер или наш")
+    if not app.WA_FIRST: check("удобн" in low and "наш" in low, "даёт выбор: свой номер или наш")
     got = await say("r3", "Отправьте ваш")
     common(got, first=False, tajik=False, card=True)
 
@@ -173,7 +180,7 @@ async def main() -> None:
     got = await say("r4", "Салом, штукатурка 30 мешок лозим, нархаш чанд?")
     common(got, first=True, tajik=True, card=False)
     low = texts(got).lower()
-    check("қулай" in low or "моро" in low, "даёт выбор: свой номер или наш")
+    if not app.WA_FIRST: check("қулай" in low or "моро" in low, "даёт выбор: свой номер или наш")
     leads_before = len(leads)
     got = await say("r4", "Рақами ман 918765432")
     common(got, first=False, tajik=True, card=False)
@@ -209,7 +216,7 @@ async def main() -> None:
     print("\n── 11. Оптовик на таджикском ──")
     got = await say("s4", "Салом, 200 мешок штукатурка оптом лозим, нархаш чанд?")
     common(got, first=True, tajik=True, card=False)
-    check(has(got, "рақам", "раками", "телефон"), "количество известно — сразу просит номер")
+    if not app.WA_FIRST: check(has(got, "рақам", "раками", "телефон"), "количество известно — сразу просит номер")
     check(not any(w in questions(texts(got)) for w in ("дохил", "берун", "девор", "ремонт")),
           "оптовику не задаёт вопросов про ремонт")
     check(not re.search(r"\d+\s*сомон", texts(got).lower()), "не называет цену мешка")
@@ -217,7 +224,7 @@ async def main() -> None:
     print("\n── 12. Просит менеджера → сначала предлагает помощь ──")
     got = await say("s5", "Хочу поговорить с менеджером")
     common(got, first=True, tajik=False, card=False)
-    check(has(got, "помо", "подобра"), "предлагает свою помощь")
+    if not app.WA_FIRST: check(has(got, "помо", "подобра"), "предлагает свою помощь")
     check(has(got, "менеджер"), "предлагает связать с менеджером")
 
     print("\n── 13. Под покраску → жидкая шпатлевка финишная ──")

@@ -91,6 +91,28 @@ app = FastAPI()
 
 # ── характер бота ──────────────────────────────────────────────────
 
+# Режим «сразу в WhatsApp»: без расспросов — короткий ответ по делу и
+# кнопка WhatsApp уже в первом сообщении. WA_FIRST=0 возвращает режим
+# консультанта, который сначала выясняет задачу.
+WA_FIRST = os.getenv("WA_FIRST", "1").strip().lower() not in ("0", "no", "false", "")
+MASTERS_DIGITS = "900565858"  # WhatsApp для мастеров (вакансия)
+WA_FIRST_RULES = """
+
+СРАЗУ В WHATSAPP (это главнее пунктов выше про выяснение задачи)
+Хозяин хочет, чтобы клиент как можно быстрее попал в WhatsApp к менеджеру.
+- Не задавай уточняющих вопросов: какое помещение, сколько метров, когда,
+  сам или мастера — ничего этого не спрашивай.
+- Ответь на вопрос клиента коротко, одним-двумя предложениями по делу:
+  что подходит и чем хорошо.
+- Затем скажи, что менеджер в WhatsApp сразу ответит на всё и рассчитает
+  количество и цену, и поставь в конце метку [WHATSAPP] — кнопка придёт
+  следом. Номер клиента не проси. Если клиент сам написал свой номер —
+  поблагодари: менеджер свяжется.
+- Если клиент пишет ещё после кнопки — ответь коротко по делу и напомни,
+  что быстрее всего в WhatsApp, без вопросов.
+- Исключение — мастера, которые ищут работу: для них раздел «Вакансия»
+  (номер для мастеров, метку [WHATSAPP] не ставь).""" if WA_FIRST else ""
+
 SYSTEM = f"""Тебя зовут Фарзона. Ты представитель компании PROFIX в Instagram
 Direct и сильный, опытный продавец: консультант, которому клиенты
 доверяют. Ты отвечаешь людям, которые пришли из наших публикаций, и
@@ -299,7 +321,7 @@ PROFIX ищет опытных мастеров на механизирован�
   посторонние темы — вежливо одной фразой и вернись к делу.
 - Не дави, не пугай и не создавай ложной срочности. Ты помогаешь
   выбрать, а не впариваешь.
-"""
+""" + WA_FIRST_RULES
 
 COMMENT_SYSTEM = SYSTEM + """
 
@@ -846,6 +868,12 @@ async def send_private_reply(comment_id: str, text: str) -> None:
         print(f"личное сообщение по комментарию отклонено: {resp.status_code} {resp.text[:300]}", flush=True)
 
 
+_MASTER_RE = re.compile(
+    r"(я|ман)\s+(мастер|усто)|вакан|ищу работ|нужны мастер|кор\s+(доред|лозим|ҳаст)|устоҳо\s+лозим",
+    re.IGNORECASE,
+)
+
+
 async def handle_comment(comment_id: str, author: str, text: str) -> None:
     public = await ask_claude([{"role": "user", "content": text}], system=COMMENT_SYSTEM)
     if public:
@@ -864,7 +892,7 @@ async def handle_comment(comment_id: str, author: str, text: str) -> None:
     # Спрашивают номер или WhatsApp — первым сообщением в директ сразу
     # шлём карточку с кнопкой. По комментарию Meta разрешает написать
     # только одно сообщение, поэтому это и будет оно.
-    if asks_contact(text) and MANAGER_WHATSAPP:
+    if MANAGER_WHATSAPP and (asks_contact(text) or (WA_FIRST and not _MASTER_RE.search(text))):
         if await send_whatsapp_card({"comment_id": comment_id}, tajik):
             return
         print("карточка по комментарию не ушла — шлём текст", flush=True)
@@ -1025,11 +1053,16 @@ async def handle_message(sender: str, text: str) -> None:
     if wants_button and not (asks_contact(text) or offered_contact_choice(history)):
         print("модель хотела карточку без просьбы клиента — не шлём", flush=True)
         wants_button = False
+    # Режим «сразу в WhatsApp»: кнопка уже в первом ответе, без расспросов.
+    # Мастеру кнопку заказов не шлём — у него свой номер.
+    if WA_FIRST and first_reply and MANAGER_WHATSAPP and MASTERS_DIGITS not in re.sub(r"\D", "", reply):
+        wants_button = True
     # Просят наш номер или WhatsApp — всегда благодарность и карточка.
     # Если модель вместо этого стала отказывать или просить номер
     # клиента, её ответ заменяем.
     if MANAGER_WHATSAPP and not wants_button and (
-            asks_our_contact(text) or picks_our_contact(text, history)):
+            asks_our_contact(text) or picks_our_contact(text, history)
+            or (WA_FIRST and _PICK_OURS_RE.search(text) and not find_phone(text))):
         print("просят наш контакт — шлём карточку WhatsApp", flush=True)
         thanks = THANKS_TJ if tajik else THANKS_RU
         reply = with_greeting(thanks, tajik) if first_reply else thanks
