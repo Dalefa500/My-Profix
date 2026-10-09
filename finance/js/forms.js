@@ -12,7 +12,7 @@ import {
   expenseGroups, SYSTEM_CATEGORIES, categoryLabel,
 } from './model.js';
 import {
-  assignmentState, assignmentTotals, assignmentHasPayments, payrollState, barterState,
+  assignmentState, assignmentStateIn, assignmentTotals, assignmentHasPayments, payrollState, barterState,
 } from './calc.js';
 
 const option = (value, label) => ({ value, label });
@@ -165,7 +165,8 @@ export function openEmployeeForm(employeeId = null, onDone) {
       { name: 'position', label: 'Должность', type: 'text', value: employee?.position || '', placeholder: 'Дизайнер, чертёжник…' },
       {
         name: 'payType', label: 'Тип оплаты', type: 'segmented',
-        options: EMPLOYEE_PAY_TYPES.map((item) => option(item.id, item.id === 'fixed' ? 'Зарплата' : 'Сдельно')),
+        options: EMPLOYEE_PAY_TYPES.map((item) => option(item.id,
+          { fixed: 'Зарплата', piecework: 'Сдельно', percent: 'Процент' }[item.id] || item.label)),
         value: payType, wide: true,
       },
       {
@@ -175,6 +176,11 @@ export function openEmployeeForm(employeeId = null, onDone) {
       {
         name: 'rate', label: 'Ставка за м²', type: 'money', suffix: '/ м²',
         value: employee?.rate || '', currency: employee?.rateCurrency || 'USD', fx: employee?.rateFx,
+      },
+      {
+        name: 'percent', label: 'Процент от суммы проекта', type: 'number', min: 1, max: 100,
+        value: employee?.percent ?? 50,
+        hint: 'Сотрудник получает эту долю от стоимости каждого проекта, куда его добавят. Выплачивается по мере оплаты клиентом',
       },
     ],
     advanced: [
@@ -193,6 +199,9 @@ export function openEmployeeForm(employeeId = null, onDone) {
         toast('Укажите ставку за м²', 'danger');
         return false;
       }
+      if (values.payType === 'percent' && !(Number(values.percent) > 0)) {
+        return 'Укажите процент от суммы проекта';
+      }
       const saved = actions.saveEmployee({
         ...values,
         salaryCurrency: values.salaryCurrency,
@@ -210,13 +219,15 @@ export function openEmployeeForm(employeeId = null, onDone) {
   if (!panel) return;
   const salaryField = panel.querySelector('[data-field-name="salary"]');
   const rateField = panel.querySelector('[data-field-name="rate"]');
+  const percentField = panel.querySelector('[data-field-name="percent"]');
   const paydayField = panel.querySelector('[data-field-name="payday"]');
   const typeInput = panel.querySelector('input[name="payType"]');
   const sync = () => {
-    const isFixed = typeInput.value === 'fixed';
-    salaryField.hidden = !isFixed;
-    if (paydayField) paydayField.hidden = !isFixed;
-    rateField.hidden = isFixed;
+    const type = typeInput.value;
+    salaryField.hidden = type !== 'fixed';
+    if (paydayField) paydayField.hidden = type !== 'fixed';
+    rateField.hidden = type !== 'piecework';
+    if (percentField) percentField.hidden = type !== 'percent';
   };
   typeInput.addEventListener('change', sync);
   sync();
@@ -235,13 +246,19 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
   // конкретному человеку и должна остаться у него.
   const paidOut = assignmentHasPayments(assignment);
   const pieceworkers = state.employees.filter((item) => (paidOut ? false
-    : item.payType === 'piecework' && item.active !== false)
+    : ['piecework', 'percent'].includes(item.payType) && item.active !== false)
     || item.id === assignment?.employeeId);
 
   if (!pieceworkers.length && !assignment) {
-    toast('Сначала добавьте сотрудника со сдельной оплатой', 'danger');
+    toast('Сначала добавьте сотрудника со сдельной оплатой или на проценте', 'danger');
     return;
   }
+  // Сумма договора в валюте проекта — от неё считается доля сотрудника на проценте.
+  const contractAmount = (Number(project?.price) || 0) + (project?.payments || [])
+    .filter((item) => item.type === 'extra').reduce((acc, item) => acc + (Number(item.amount) || 0), 0);
+  const isPercent = (employeeId) => (assignment && assignment.employeeId === employeeId && paidOut
+    ? assignment.mode === 'percent'
+    : byId('employees', employeeId)?.payType === 'percent');
 
   const first = pieceworkers[0];
   const employee = assignment ? byId('employees', assignment.employeeId) : first;
@@ -276,9 +293,29 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
         value: assignment?.advancePercent ?? state.settings.defaultAdvancePercent,
         hint: 'Остальное — остаток после одобрения клиентом',
       },
+      {
+        name: 'percent', label: 'Доля от суммы проекта, %', type: 'number', min: 1, max: 100,
+        value: assignment?.mode === 'percent' ? assignment.percent : (employee?.percent ?? 50),
+        hint: 'Выплачивается по мере оплаты клиентом',
+      },
     ],
     extraHtml: '<div class="form__preview" data-preview hidden></div>',
     onSubmit: (values) => {
+      if (isPercent(values.employeeId)) {
+        const pct = Number(values.percent);
+        if (!(pct > 0)) return 'Укажите долю от суммы проекта';
+        if (assignment) {
+          const info = assignmentStateIn(getState(), assignment, project);
+          const paid = info.mode === 'percent' ? info.paidCur : 0;
+          if (paid > 0 && contractAmount * pct / 100 < paid - 0.005) {
+            return `По этому проекту уже выплачено ${formatAmount(paid, project?.currency)} — долю нельзя уменьшить ниже этой суммы`;
+          }
+        }
+        const saved = actions.saveAssignment({ ...values, projectId, mode: 'percent' }, assignmentId);
+        toast('Сотрудник на проценте добавлен в проект', 'good');
+        onDone?.(saved);
+        return true;
+      }
       // Сумма за работу не может стать меньше уже выплаченного: переплата
       // нигде бы не числилась.
       if (assignment) {
@@ -333,11 +370,43 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
       roleSelect.value = chosen.position;
     }
   });
+  // Поля зависят от сотрудника: сдельщику — площадь и ставка, сотруднику
+  // на проценте — только доля. Скрытые поля не обязательны.
+  const pieceFields = ['area', 'rate', 'advancePercent']
+    .map((name) => form.querySelector(`[data-field-name="${name}"]`)).filter(Boolean);
+  const percentFieldNode = form.querySelector('[data-field-name="percent"]');
+  const syncMode = () => {
+    const percentMode = isPercent(employeeSelect?.value);
+    for (const node of pieceFields) {
+      node.hidden = percentMode;
+      node.querySelectorAll('input').forEach((input) => {
+        if (input.name === 'area' || input.name === 'rate') input.required = !percentMode;
+      });
+    }
+    if (percentFieldNode) percentFieldNode.hidden = !percentMode;
+  };
+  employeeSelect?.addEventListener('change', () => {
+    const chosen = byId('employees', employeeSelect.value);
+    const percentInput = form.querySelector('[name="percent"]');
+    if (chosen?.payType === 'percent' && percentInput) percentInput.value = chosen.percent ?? 50;
+    syncMode();
+  });
+  syncMode();
+
   preview.hidden = false;
   preview.style.background = 'var(--accent-soft)';
   preview.style.color = 'var(--ink)';
   const update = () => {
     const data = new FormData(form);
+    if (isPercent(data.get('employeeId'))) {
+      const pct = Number(parseNum(data.get('percent'))) || 0;
+      const share = Math.round(contractAmount * pct) / 100;
+      preview.innerHTML = html`
+        <b>${raw(esc(formatAmount(share, project?.currency)))}</b> — доля ${pct}% от суммы проекта
+        ${raw(esc(formatAmount(contractAmount, project?.currency)))}
+        <br><span class="muted">Выплачивается по мере оплаты клиентом: клиент внёс часть — доступна такая же часть доли.</span>`;
+      return;
+    }
     const totals = assignmentTotals({
       area: Number(parseNum(data.get('area'))) || 0,
       rate: Number(parseNum(data.get('rate'))) || 0,
@@ -520,7 +589,47 @@ export function openAssignmentPayment(assignmentId, part, onDone) {
   const assignment = byId('assignments', assignmentId);
   const project = byId('projects', assignment?.projectId);
   const employee = byId('employees', assignment?.employeeId);
-  const info = assignmentState(assignment, project);
+  const info = assignmentStateIn(getState(), assignment, project);
+
+  if (info.mode === 'percent') {
+    if (!(info.available > 0)) {
+      toast('Доля станет доступна, когда клиент внесёт следующую оплату', 'danger');
+      return;
+    }
+    openForm({
+      title: 'Выплатить долю',
+      intro: `${employee?.name || ''} · ${project?.name || ''} · ${info.percent}% от суммы проекта. `
+        + `Клиент оплатил — доля ${formatAmount(info.earned, info.currency)}, выплачено ${formatAmount(info.paidCur, info.currency)}.`,
+      fields: [
+        {
+          name: 'amount', label: 'Сумма выплаты', type: 'money', required: true,
+          value: info.available, currency: info.currency, fx: project?.fx,
+          hint: `Доступно сейчас: ${formatAmount(info.available, info.currency)}`,
+        },
+        { name: 'date', label: 'Дата выплаты', type: 'date', required: true, value: today() },
+      ],
+      advanced: [
+        {
+          name: 'method', label: 'Способ оплаты', type: 'select',
+          options: PAYMENT_METHODS.map((item) => option(item.id, item.label)), value: 'cash',
+        },
+        { name: 'comment', label: 'Комментарий', type: 'textarea', wide: true },
+      ],
+      submitLabel: 'Выплатить',
+      onSubmit: (values) => {
+        const result = actions.payAssignment(assignmentId, 'share', {
+          ...values,
+          currency: values.amountCurrency,
+          fx: values.amountFx,
+        });
+        if (!result.ok) return result.error;
+        toast('Выплата доли записана в расходы компании', 'good');
+        onDone?.();
+        return true;
+      },
+    });
+    return;
+  }
 
   if (part === 'final' && !info.remainderAvailable) {
     toast('Остаток станет доступен после одобрения проекта клиентом', 'danger');
@@ -796,6 +905,11 @@ export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
         hint: FOUNDER_MOVES.find((item) => item.id === moveKind)?.hint || '',
       },
       {
+        name: 'investWay', label: 'Как вложил', type: 'segmented', wide: true,
+        options: [option('paid', 'Оплатил за студию'), option('cash', 'Деньгами в кассу')],
+        value: draw?.investWay || 'paid',
+      },
+      {
         name: 'amount', label: 'Сумма', type: 'money', required: true,
         value: draw?.amount ?? '', currency: draw?.currency, fx: draw?.fx,
       },
@@ -843,16 +957,22 @@ export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
   const kindSelect = panel?.querySelector('select[name="kind"]');
   const categoryField = panel?.querySelector('[data-field-name="category"]');
   const projectField = panel?.querySelector('[data-field-name="projectId"]');
+  const wayField = panel?.querySelector('[data-field-name="investWay"]');
+  const wayInput = panel?.querySelector('input[name="investWay"]');
   const kindHint = panel?.querySelector('[data-field-name="kind"] .field__hint');
   const sync = () => {
     const current = kindSelect.value;
-    if (categoryField) categoryField.hidden = current !== 'spend';
-    // Проект сохраняется только у расхода — для остальных полей его нет.
-    if (projectField) projectField.hidden = current !== 'spend';
+    // Расход студии есть, когда коллега сам заплатил за студию: в долг
+    // или как вклад. Только тогда нужны «На что» и «Проект».
+    const paysExpense = current === 'spend' || (current === 'invest' && wayInput?.value !== 'cash');
+    if (wayField) wayField.hidden = current !== 'invest';
+    if (categoryField) categoryField.hidden = !paysExpense;
+    if (projectField) projectField.hidden = !paysExpense;
     if (kindHint) kindHint.textContent = FOUNDER_MOVES.find((item) => item.id === current)?.hint || '';
   };
   if (kindSelect) {
     kindSelect.addEventListener('change', sync);
+    wayInput?.addEventListener('change', sync);
     sync();
   }
 }

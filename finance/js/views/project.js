@@ -7,7 +7,7 @@ import {
 import { getState, byId } from '../store.js';
 import { openReport } from '../report.js';
 import { openOperation } from '../operation.js';
-import { projectFinance, assignmentState } from '../calc.js';
+import { projectFinance, assignmentStateIn } from '../calc.js';
 import {
   PROJECT_STATUSES, WORK_STAGES, CLOSED_PROJECT_STATUSES, labelOf, toneOf, categoryLabel,
 } from '../model.js';
@@ -52,7 +52,33 @@ function nearWhole(value) {
 }
 
 // У отменённого проекта кнопок выплаты нет — как и строк в «Платежах».
+// Сотрудник на проценте: доля от суммы проекта, выплачивается по мере
+// оплаты клиентом.
+function shareRow(row, info, closed) {
+  const employee = byId('employees', row.employeeId);
+  return html`
+    <div class="row row--stack" data-assignment="${row.id}">
+      <div class="row__main">
+        <a class="row__title" href="#/employees/${row.employeeId}">${employee?.name || 'Сотрудник'}</a>
+        <span class="row__subtitle">${row.role} · ${info.percent}% от суммы проекта = ${formatAmount(info.accrued, info.currency)}</span>
+        <span class="row__subtitle">Клиент оплатил — доля ${formatAmount(info.earned, info.currency)} · выплачено ${formatAmount(info.paidCur, info.currency)}</span>
+        ${raw(badge(info.label, info.tone))}
+      </div>
+      <div class="row__side">
+        <span class="row__amount">${money(info.accruedBase)}</span>
+        <span class="row__meta">Выплачено ${money(info.paidBase)}</span>
+        <div class="btn-row">
+          ${!closed && info.available > 0
+            ? raw(html`<button class="btn btn--sm btn--good" data-pay-share="${row.id}">Выплатить ${formatAmount(info.available, info.currency)}</button>`)
+            : ''}
+          <button class="btn btn--sm btn--ghost" data-edit-assignment="${row.id}">⋯</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 function assignmentRow(row, info, closed = false) {
+  if (info.mode === 'percent') return shareRow(row, info, closed);
   const employee = byId('employees', row.employeeId);
   return html`
     <div class="row row--stack" data-assignment="${row.id}">
@@ -162,7 +188,7 @@ export default function projectDetail(params) {
     </div>
 
     <div class="card">
-      ${raw(sectionTitle('Сдельные сотрудники', '<button class="btn btn--sm" data-act="add-assignment">Добавить</button>'))}
+      ${raw(sectionTitle('Сотрудники на проекте', '<button class="btn btn--sm" data-act="add-assignment">Добавить</button>'))}
       ${finance.assignments.length
         ? raw(html`<div class="list">${raw(finance.assignments
           .map((row, index) => assignmentRow(row, finance.assignmentStates[index], CLOSED_PROJECT_STATUSES.includes(project.status))).join(''))}</div>`)
@@ -190,7 +216,7 @@ export default function projectDetail(params) {
       <table class="data">
         <tbody>
           <tr><td>Доход по договору</td><td>${money(finance.contractBase)}</td></tr>
-          <tr><td>Сдельные сотрудники</td><td class="danger">${raw(finance.pieceworkAccruedBase > 0 ? '−' : '')}${money(finance.pieceworkAccruedBase)}</td></tr>
+          <tr><td>Сотрудники проекта</td><td class="danger">${raw(finance.pieceworkAccruedBase > 0 ? '−' : '')}${money(finance.pieceworkAccruedBase)}</td></tr>
           <tr><td>Другие расходы проекта</td><td class="danger">${raw(finance.directBase > 0 ? '−' : '')}${money(finance.directBase)}</td></tr>
         </tbody>
         <tfoot>
@@ -262,6 +288,9 @@ export default function projectDetail(params) {
       root.querySelectorAll('[data-pay-final]').forEach((button) => {
         button.onclick = () => forms.openAssignmentPayment(button.dataset.payFinal, 'final', refresh);
       });
+      root.querySelectorAll('[data-pay-share]').forEach((button) => {
+        button.onclick = () => forms.openAssignmentPayment(button.dataset.payShare, 'share', refresh);
+      });
       root.querySelectorAll('[data-locked]').forEach((button) => {
         button.onclick = () => toast('Остаток станет доступен после того, как клиент одобрит работу', 'danger');
       });
@@ -324,10 +353,15 @@ function openPlanSheet(project, itemId) {
 function openAssignmentSheet(project, assignmentId) {
   const assignment = byId('assignments', assignmentId);
   const employee = byId('employees', assignment?.employeeId);
-  const info = assignmentState(assignment, project);
+  const info = assignmentStateIn(getState(), assignment, project);
+  const percentMode = info.mode === 'percent';
   openSheet({
     title: employee?.name || 'Сотрудник',
     body: html`
+      ${percentMode ? raw(html`
+        <p class="muted">${info.percent}% от суммы проекта = ${formatAmount(info.accrued, info.currency)}.
+          Клиент оплатил — доля ${formatAmount(info.earned, info.currency)}, выплачено ${formatAmount(info.paidCur, info.currency)},
+          ждёт оплаты клиента ${formatAmount(info.locked, info.currency)}.</p>`) : raw(html`
       <p class="muted">${formatArea(info.area)} × ${formatAmount(info.rate, info.currency)} = ${formatAmount(info.accrued, info.currency)}
         · ${formatWithOriginal({ base: info.accruedBase, amount: info.accrued, currency: info.currency, fx: assignment.fx })}</p>
       ${raw(sectionTitle('Этап работы'))}
@@ -335,9 +369,9 @@ function openAssignmentSheet(project, assignmentId) {
         <button class="row" data-stage="${stage.id}" style="width:100%;text-align:left">
           <div class="row__main"><span class="row__title">${stage.label}</span></div>
           ${raw(assignment.stage === stage.id ? badge('Сейчас', 'info') : '')}
-        </button>`).join(''))}</div>
+        </button>`).join(''))}</div>`)}
       <div class="btn-row">
-        <button class="btn" data-act="edit">Изменить расчёт</button>
+        <button class="btn" data-act="edit">${percentMode ? 'Изменить долю' : 'Изменить расчёт'}</button>
         <button class="btn btn--danger" data-act="delete">Убрать из проекта</button>
       </div>`,
     onMount: (panel) => {

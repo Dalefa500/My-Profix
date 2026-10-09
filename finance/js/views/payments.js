@@ -61,7 +61,7 @@ function payTab(state) {
       <div class="row__main">
         <span class="row__title">${row.title}</span>
         <span class="row__subtitle">${row.kind === 'planned' ? categoryLabel(row.subtitle, state.settings) : row.subtitle}</span>
-        ${raw(row.ready ? dueBadge(row.dueDate) : badge('Ждёт одобрения клиента', 'warn'))}
+        ${raw(row.ready ? dueBadge(row.dueDate) : badge(row.waitLabel || 'Ждёт одобрения клиента', 'warn'))}
       </div>
       <div class="row__side">
         <span class="row__amount danger">${money(row.amountBase)}</span>
@@ -75,7 +75,7 @@ function payTab(state) {
   return html`
     <div class="stats">
       <div class="stat stat--warn"><span class="stat__label">Готово к выплате</span><strong class="stat__value">${money(readyTotal)}</strong></div>
-      <div class="stat"><span class="stat__label">После согласования</span><strong class="stat__value">${money(waitingTotal)}</strong></div>
+      <div class="stat"><span class="stat__label">Ждут клиента</span><strong class="stat__value">${money(waitingTotal)}</strong></div>
     </div>
 
     <div class="card card--flat">
@@ -92,9 +92,9 @@ function payTab(state) {
 
     ${waiting.length ? raw(html`
       <div class="card card--flat">
-        ${raw(sectionTitle('Ждут одобрения клиента'))}
+        ${raw(sectionTitle('Ждут клиента'))}
         <div class="list">${raw(waiting.map(renderRow).join(''))}</div>
-        <p class="muted">Остаток сдельного сотрудника выплачивается после того, как клиент одобрил работу.</p>
+        <p class="muted">Остаток сдельного сотрудника выплачивается после того, как клиент одобрил работу; доля сотрудника на проценте — по мере оплаты клиентом.</p>
       </div>`) : ''}`;
 }
 
@@ -137,6 +137,7 @@ export default function payments(params) {
           const { kind } = button.dataset;
           if (kind === 'assignment-advance') forms.openAssignmentPayment(button.dataset.assignment, 'advance', refresh);
           else if (kind === 'assignment-final') forms.openAssignmentPayment(button.dataset.assignment, 'final', refresh);
+          else if (kind === 'assignment-share') forms.openAssignmentPayment(button.dataset.assignment, 'share', refresh);
           else if (kind === 'payroll') forms.openPayrollPayment(button.dataset.payroll, refresh);
           else if (kind === 'planned') forms.openPlannedPayment(button.dataset.planned, refresh);
           else toast('Неизвестный тип платежа', 'danger');

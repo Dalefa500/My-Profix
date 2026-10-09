@@ -7,7 +7,7 @@ import { op } from './ops.js';
 import { toBase, defaultRate, round, formatAmount, isBase } from './money.js';
 import { today, monthKey, monthLabel, addMonths, daysInMonth } from './dates.js';
 import {
-  assignmentState, assignmentHasPayments, payrollMonthsFor, payrollState, clampPercent, projectPlan,
+  assignmentState, assignmentStateIn, assignmentHasPayments, payrollMonthsFor, payrollState, clampPercent, projectPlan,
   projectSettledBase, founderDebt,
 } from './calc.js';
 import { categoryLabel } from './model.js';
@@ -235,7 +235,7 @@ export function saveEmployee(values, id = null) {
   const record = {
     name: values.name?.trim() || 'Без имени',
     position: values.position?.trim() || '',
-    payType: values.payType === 'piecework' ? 'piecework' : 'fixed',
+    payType: ['piecework', 'percent'].includes(values.payType) ? values.payType : 'fixed',
     phone: values.phone?.trim() || '',
     startDate: values.startDate || today(),
     active: values.active !== false,
@@ -250,6 +250,9 @@ export function saveEmployee(values, id = null) {
       payday: Number(values.payday) || settings.salaryDay,
       rate: 0,
     });
+  } else if (record.payType === 'percent') {
+    // Доля от суммы каждого проекта, на который сотрудника добавят.
+    Object.assign(record, { percent: clampPercent(values.percent || 50), rate: 0, salary: 0 });
   } else {
     const rate = money({ amount: values.rate, currency: values.rateCurrency, fx: values.rateFx }, settings);
     Object.assign(record, {
@@ -325,6 +328,29 @@ export function saveAssignment(values, id = null) {
   const state = getState();
   const settings = state.settings;
   const employee = store.byId('employees', values.employeeId);
+  // Сотрудник на проценте: храним только долю, сумма считается от цены
+  // проекта (и меняется вместе с ней).
+  if (values.mode === 'percent') {
+    const project = store.byId('projects', values.projectId);
+    const record = {
+      projectId: values.projectId,
+      employeeId: values.employeeId,
+      role: values.role?.trim() || employee?.position || 'Сотрудник',
+      mode: 'percent',
+      percent: clampPercent(values.percent === '' || values.percent == null ? (employee?.percent || 50) : values.percent),
+      currency: project?.currency || settings.baseCurrency,
+      fx: project?.fx || 1,
+      area: 0,
+      rate: 0,
+      advancePercent: 0,
+    };
+    if (id) {
+      const existing = store.byId('assignments', id);
+      if (existing && assignmentHasPayments(existing)) record.employeeId = existing.employeeId;
+      return store.patch('assignments', id, record);
+    }
+    return store.insert('assignments', { stage: 'assigned', ...record }, 'asg');
+  }
   const currency = values.currency || employee?.rateCurrency || settings.baseCurrency;
   const fx = currency === settings.baseCurrency
     ? 1
@@ -368,6 +394,52 @@ export function deleteAssignment(id) {
   return store.commit(ops);
 }
 
+// Выплата доли сотруднику на проценте: не больше того, что уже заработано
+// оплатами клиента (студия не платит долю вперёд из своих денег).
+function payShare(assignment, project, info, values) {
+  const state = getState();
+  const payment = money({
+    amount: values.amount ?? info.available,
+    currency: values.currency || info.currency,
+    fx: values.fx ?? (isBase(info.currency) ? 1 : project?.fx),
+  }, state.settings);
+  if (payment.base <= 0) return { ok: false, error: 'Укажите сумму больше нуля' };
+  const over = payment.currency === info.currency
+    ? payment.amount > info.available + 0.005
+    : payment.base > info.availableBase + 0.01;
+  if (over) {
+    return {
+      ok: false,
+      error: info.available > 0
+        ? `Сейчас можно выплатить не больше ${formatAmount(info.available, info.currency)} — ${info.percent}% от того, что уже оплатил клиент`
+        : `Клиент пока не оплатил ничего сверх уже выплаченной доли. Доля станет доступна после следующей оплаты клиента`,
+    };
+  }
+  const employee = store.byId('employees', assignment.employeeId);
+  const expense = {
+    id: uid('exp'),
+    date: values.date || today(),
+    category: 'staff/share',
+    ...payment,
+    projectId: assignment.projectId,
+    employeeId: assignment.employeeId,
+    assignmentId: assignment.id,
+    source: 'assignment',
+    method: values.method || 'cash',
+    comment: values.comment || `Доля ${info.percent}% · ${employee?.name || ''} · ${project?.name || ''}`.trim(),
+    createdBy: currentOwner(),
+    createdAt: today(),
+  };
+  store.commit([
+    op.insert('expenses', expense),
+    op.putItem('assignments', assignment.id, 'payments', {
+      id: uid('apt'), expenseId: expense.id, part: 'share', date: expense.date,
+      amount: payment.amount, currency: payment.currency, base: payment.base,
+    }),
+  ]);
+  return { ok: true, expense };
+}
+
 // Выплата аванса или остатка сдельному сотруднику.
 // Правило 5 ТЗ: фактическая выплата сразу становится расходом компании.
 export function payAssignment(assignmentId, part, values = {}) {
@@ -375,7 +447,8 @@ export function payAssignment(assignmentId, part, values = {}) {
   const assignment = store.byId('assignments', assignmentId);
   if (!assignment) return { ok: false, error: 'Назначение не найдено' };
   const project = store.byId('projects', assignment.projectId);
-  const info = assignmentState(assignment, project);
+  const info = assignmentStateIn(state, assignment, project);
+  if (info.mode === 'percent') return payShare(assignment, project, info, values);
 
   if (part === 'advance' && info.advancePaid) return { ok: false, error: 'Аванс уже выплачен' };
   if (part === 'final') {
@@ -816,7 +889,12 @@ export function saveDraw(values, id = null) {
   const state = getState();
   const settings = state.settings;
   const payment = money(values, settings);
-  const kind = ['draw', 'spend', 'repay'].includes(values.kind) ? values.kind : 'draw';
+  const kind = ['draw', 'spend', 'repay', 'invest'].includes(values.kind) ? values.kind : 'draw';
+  // Вклад: деньгами в кассу или оплатой расхода за студию.
+  const investWay = kind === 'invest' ? (values.investWay === 'cash' ? 'cash' : 'paid') : null;
+  // Расход студии появляется, когда коллега сам заплатил за студию:
+  // в долг («Оплатил из своих») или как вклад («Вложил — оплатил за студию»).
+  const paysExpense = kind === 'spend' || investWay === 'paid';
   const founder = store.byId('founders', values.founderId);
   if (!values.founderId) return { ok: false, error: 'Выберите коллегу' };
 
@@ -854,15 +932,16 @@ export function saveDraw(values, id = null) {
     ...payment,
     kind,
     method: values.method || 'cash',
-    category: kind === 'spend' ? (values.category || 'other/misc') : null,
-    projectId: kind === 'spend' ? (values.projectId || null) : null,
+    category: paysExpense ? (values.category || 'other/misc') : null,
+    projectId: paysExpense ? (values.projectId || null) : null,
+    investWay,
     comment: values.comment?.trim() || '',
   };
 
   const ops = [];
   // Расход студии, оплаченный коллегой, должен попасть в общие расходы —
   // иначе прибыль окажется завышенной.
-  if (kind === 'spend') {
+  if (paysExpense) {
     const expenseId = existing?.expenseId || uid('exp');
     const expense = {
       id: expenseId,
@@ -875,7 +954,7 @@ export function saveDraw(values, id = null) {
       founderMoveId: drawId,
       paidByFounderId: record.founderId,
       comment: record.comment
-        || `Оплатил ${founder?.name || 'коллега'} · ${categoryLabel(record.category, settings)}`,
+        || `${kind === 'invest' ? 'Вклад' : 'Оплатил'} ${founder?.name || 'коллега'} · ${categoryLabel(record.category, settings)}`,
       createdBy: currentOwner(),
       createdAt: today(),
     };

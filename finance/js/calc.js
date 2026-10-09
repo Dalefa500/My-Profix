@@ -60,7 +60,104 @@ export function assignmentHasPayments(assignment) {
     || (Array.isArray(assignment?.payments) && assignment.payments.length));
 }
 
-export function assignmentState(assignment, project) {
+// Сотрудник «на проценте»: получает долю (например, 50%) от суммы проекта.
+// Начислено = доля от стоимости договора (с доп. работами) в валюте
+// проекта. Выплачивать можно по мере оплаты клиентом: клиент внёс $4 200 —
+// при 50% сотруднику доступно $2 100, остальное ждёт следующих оплат.
+// settledBase — сколько клиент оплатил по договору (в долларах по курсу
+// договора, см. projectSettledBase).
+function percentAssignmentState(assignment, project, settledBase = 0, settledAmount = null) {
+  const percent = clampPercent(assignment?.percent);
+  const currency = project?.currency || assignment?.currency || 'USD';
+  const fx = isBase(currency) ? 1 : (Number(project?.fx) > 0 ? Number(project.fx) : 1);
+  const cancelled = CLOSED_PROJECT_STATUSES.includes(project?.status);
+  const extras = (project?.payments || []).filter((item) => item.type === 'extra')
+    .reduce((acc, item) => acc + (Number(item.amount) || 0), 0);
+  const settledCur = settledAmount != null ? Number(settledAmount) || 0 : (Number(settledBase) || 0) / fx;
+  // У отменённого проекта «договор» — то, что клиент успел заплатить.
+  const contractCur = project ? (cancelled ? settledCur : (Number(project.price) || 0) + extras) : 0;
+  const accrued = round(contractCur * percent / 100);
+  const earnedCur = Math.min(accrued, settledCur * percent / 100);
+  const payments = Array.isArray(assignment?.payments) ? assignment.payments : [];
+  const paidCur = payments.reduce((acc, item) => acc + (item.currency === currency && Number.isFinite(Number(item.amount))
+    ? Number(item.amount) : (Number(item.base) || 0) / fx), 0);
+  const paidBase = sum(payments, (item) => item.base);
+  let availableCur = Math.max(0, earnedCur - paidCur);
+  if (availableCur <= 0.005) availableCur = 0;
+  let lockedCur = Math.max(0, accrued - Math.max(earnedCur, paidCur));
+  if (lockedCur <= 0.005) lockedCur = 0;
+  const availableBase = round(availableCur * fx);
+  const lockedBase = round(lockedCur * fx);
+  const owedBase = round(availableBase + lockedBase);
+  const allPaid = accrued > 0 && paidCur >= accrued - 0.005;
+
+  let label;
+  let tone;
+  if (allPaid) {
+    label = 'Доля выплачена полностью';
+    tone = 'good';
+  } else if (availableCur > 0) {
+    label = 'Доля доступна к выплате';
+    tone = 'good';
+  } else if (lockedCur > 0) {
+    label = 'Ждёт оплаты клиента';
+    tone = 'warn';
+  } else {
+    label = 'Назначен';
+    tone = 'neutral';
+  }
+
+  return {
+    mode: 'percent',
+    percent,
+    currency,
+    area: 0,
+    rate: 0,
+    accrued,
+    accruedBase: round(accrued * fx),
+    // Сколько доли «заработано» оплатами клиента и сколько уже отдали.
+    earned: round(earnedCur),
+    earnedBase: round(earnedCur * fx),
+    paidCur: round(paidCur),
+    available: round(availableCur),
+    availableBase,
+    locked: round(lockedCur),
+    // Поля общего вида, чтобы сотрудник на проценте считался вместе со
+    // сдельщиками в «Платежах», карточке сотрудника и прибыли проекта.
+    advance: 0,
+    advanceBase: 0,
+    advanceLeft: 0,
+    advanceLeftBase: 0,
+    advancePaid: false,
+    advancePaidCur: 0,
+    advancePaidBase: 0,
+    remainder: round(availableCur),
+    remainderBase: availableBase,
+    remainderAvailable: availableCur > 0,
+    remainderPaid: allPaid,
+    finalPaidBase: paidBase,
+    finalPaidCur: round(paidCur),
+    approved: true,
+    label,
+    tone,
+    dueNowBase: availableBase,
+    paidBase,
+    lockedBase,
+    owedBase,
+  };
+}
+
+// Состояние назначения с учётом оплат клиента по проекту (нужно для
+// сотрудника на проценте; для сдельщика ничего не меняет).
+export function assignmentStateIn(state, assignment, project) {
+  if (assignment?.mode !== 'percent') return assignmentState(assignment, project);
+  const incomes = project ? state.incomes.filter((item) => item.projectId === project.id) : [];
+  return percentAssignmentState(assignment, project,
+    project ? projectSettledBase(project, incomes) : 0, project ? projectSettledAmount(project, incomes) : 0);
+}
+
+export function assignmentState(assignment, project, { settledBase, settledAmount } = {}) {
+  if (assignment?.mode === 'percent') return percentAssignmentState(assignment, project, settledBase, settledAmount);
   const base = assignmentTotals(assignment);
   const approved = isClientApproved(assignment, project);
   const fx = Number(assignment?.fx) > 0 ? Number(assignment.fx) : 1;
@@ -276,6 +373,15 @@ export function planTolerance(project) {
 
 // Сколько получено по договору в его валюте, выраженное в долларах по курсу
 // договора. Для договора в долларах — просто сумма приходов.
+// То же в валюте договора (без пересчёта через доллары — без копеек округления).
+export function projectSettledAmount(project, incomes) {
+  if (isBase(project?.currency)) return sum(incomes, (item) => item.base);
+  const fx = Number(project.fx) > 0 ? Number(project.fx) : 1;
+  return round(incomes.reduce((acc, item) => acc + (item.currency === project.currency
+    ? Number(item.amount) || 0
+    : (Number(item.base) || 0) / fx), 0));
+}
+
 export function projectSettledBase(project, incomes) {
   if (isBase(project?.currency)) return sum(incomes, (item) => item.base);
   const fx = Number(project.fx) > 0 ? Number(project.fx) : 1;
@@ -314,7 +420,8 @@ export function projectFinance(state, project) {
   const toReceiveBase = cancelled || owed <= planTolerance(project) ? 0 : owed;
 
   const assignments = projectAssignments(state, project.id);
-  const states = assignments.map((item) => assignmentState(item, project));
+  const settledAmount = projectSettledAmount(project, incomes);
+  const states = assignments.map((item) => assignmentState(item, project, { settledBase, settledAmount }));
   const pieceworkAccruedBase = sum(states, (item) => item.accruedBase);
   const pieceworkPaidBase = sum(states, (item) => item.paidBase);
   const pieceworkDueBase = sum(states, (item) => item.dueNowBase);
@@ -492,8 +599,10 @@ export function founderState(state, founder, from, to) {
   // Три разных движения, и путать их нельзя:
   //   взял для себя — доля прибыли, студия ничего не должна;
   //   оплатил из своих — расход студии, и студия остаётся должна коллеге;
-  //   вернули долг — гасит эту задолженность.
+  //   вернули долг — гасит эту задолженность;
+  //   вложил в студию — вклад учредителя, не возвращается.
   const takenBase = sum(of(all, 'draw'), (item) => item.base);
+  const investedBase = sum(of(all, 'invest'), (item) => item.base);
   const spentBase = sum(of(all, 'spend'), (item) => item.base);
   const repaidBase = sum(of(all, 'repay'), (item) => item.base);
 
@@ -508,6 +617,8 @@ export function founderState(state, founder, from, to) {
     periodTakenBase: sum(of(period, 'draw'), (item) => item.base),
     periodSpentBase: sum(of(period, 'spend'), (item) => item.base),
     periodRepaidBase: sum(of(period, 'repay'), (item) => item.base),
+    investedBase,
+    periodInvestedBase: sum(of(period, 'invest'), (item) => item.base),
     // «Взял» в сводках — это именно доля прибыли.
     totalBase: takenBase,
     periodBase: sum(of(period, 'draw'), (item) => item.base),
@@ -523,6 +634,8 @@ export function foundersSummary(state, from, to) {
     periodBase: sum(rows, (item) => item.periodBase),
     owedBase: sum(rows, (item) => item.owedBase),
     periodSpentBase: sum(rows, (item) => item.periodSpentBase),
+    investedBase: sum(rows, (item) => item.investedBase),
+    periodInvestedBase: sum(rows, (item) => item.periodInvestedBase),
   };
 }
 
@@ -616,7 +729,7 @@ export function employeeFinance(state, employee) {
   const payrolls = employeePayrolls(state, employee.id);
   const rows = employeeAssignments(state, employee.id).map((assignment) => {
     const project = state.projects.find((item) => item.id === assignment.projectId) || null;
-    return { assignment, project, state: assignmentState(assignment, project) };
+    return { assignment, project, state: assignmentStateIn(state, assignment, project) };
   });
   const openRows = rows.filter((row) => !(row.project && CLOSED_PROJECT_STATUSES.includes(row.project.status)));
   const payrollAccrued = sum(payrolls, (item) => item.accruedBase);
@@ -632,7 +745,7 @@ export function employeeFinance(state, employee) {
   // платили, потом удалили из проекта.
   const paidOut = sum(state.expenses.filter((item) => item.employeeId === employee.id), (item) => item.base);
   return {
-    type: employee.payType === 'fixed' ? 'fixed' : 'piecework',
+    type: ['fixed', 'percent'].includes(employee.payType) ? employee.payType : 'piecework',
     payrolls,
     rows,
     accruedBase: round(payrollAccrued + sum(rows, (row) => row.state.accruedBase)),
@@ -683,6 +796,13 @@ export function periodTotals(state, from, to) {
     .filter((item) => (item.kind || 'draw') === 'draw')
     .filter((item) => inRange(item.date, from, to));
   const drawBase = sum(draws, (item) => item.base);
+  // Вклады учредителей: не доход, но денег в студии становится больше.
+  // Если учредитель сам оплатил расход (аренду, ремонт), этот расход уже
+  // в расходах — вклад его уравновешивает: из кассы студии деньги не ушли.
+  const invests = (state.draws || [])
+    .filter((item) => item.kind === 'invest')
+    .filter((item) => inRange(item.date, from, to));
+  const investBase = sum(invests, (item) => item.base);
 
   const incomeByType = new Map();
   for (const income of incomes) {
@@ -702,7 +822,9 @@ export function periodTotals(state, from, to) {
     profitBase: round(incomeBase - expenseBase),
     draws,
     drawBase,
-    leftBase: round(incomeBase - expenseBase - drawBase),
+    invests,
+    investBase,
+    leftBase: round(incomeBase - expenseBase - drawBase + investBase),
     expenseByCategory,
     expenseByGroup,
     incomeByType,
@@ -800,7 +922,39 @@ export function payables(state) {
     const project = state.projects.find((item) => item.id === assignment.projectId);
     if (project && CLOSED_PROJECT_STATUSES.includes(project.status)) continue;
     const employee = state.employees.find((item) => item.id === assignment.employeeId);
-    const info = assignmentState(assignment, project);
+    const info = assignmentStateIn(state, assignment, project);
+    if (info.mode === 'percent') {
+      // Доля от проекта: что уже заработано оплатами клиента — к выплате,
+      // остальное ждёт, пока клиент заплатит.
+      if (info.availableBase > 0.01) {
+        rows.push({
+          id: `${assignment.id}:share`,
+          kind: 'assignment-share',
+          title: `Доля ${info.percent}% — ${employee?.name || 'сотрудник'}`,
+          subtitle: `${project?.name || ''} · клиент оплатил`,
+          amountBase: info.availableBase,
+          dueDate: '',
+          ready: true,
+          assignmentId: assignment.id,
+          employeeId: assignment.employeeId,
+        });
+      }
+      if (info.lockedBase > 0.01) {
+        rows.push({
+          id: `${assignment.id}:share-wait`,
+          kind: 'assignment-share',
+          title: `Доля ${info.percent}% — ${employee?.name || 'сотрудник'}`,
+          subtitle: `${project?.name || ''} · после оплаты клиентом`,
+          amountBase: info.lockedBase,
+          dueDate: '',
+          ready: false,
+          waitLabel: 'Ждёт оплаты клиента',
+          assignmentId: assignment.id,
+          employeeId: assignment.employeeId,
+        });
+      }
+      continue;
+    }
     if (info.advanceLeftBase > 0.01) {
       rows.push({
         id: `${assignment.id}:advance`,

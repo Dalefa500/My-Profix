@@ -234,7 +234,9 @@ function employeeReport(state, employee) {
   const finance = employeeFinance(state, employee);
   const pay = employee.payType === 'fixed'
     ? `${formatAmount(employee.salary, employee.salaryCurrency)} в месяц`
-    : `${formatAmount(employee.rate, employee.rateCurrency)} за м²`;
+    : employee.payType === 'percent'
+      ? `${employee.percent ?? 50}% от суммы проекта`
+      : `${formatAmount(employee.rate, employee.rateCurrency)} за м²`;
 
   const sheet = new Sheet({
     title: `Отчёт по сотруднику — ${employee.name || 'без имени'}`,
@@ -249,7 +251,7 @@ function employeeReport(state, employee) {
     { label: 'Ждёт согласования', value: finance.lockedBase },
   ]);
 
-  if (finance.type === 'piecework' || finance.rows.length) {
+  if (finance.type !== 'fixed' || finance.rows.length) {
     sheet.heading('Работа по проектам');
     sheet.table(
       [
@@ -263,8 +265,8 @@ function employeeReport(state, employee) {
       ],
       finance.rows.map((row) => [
         row.project?.name || 'Без проекта',
-        area(row.assignment.area),
-        formatAmount(row.assignment.rate, row.assignment.currency),
+        row.state.mode === 'percent' ? '—' : area(row.assignment.area),
+        row.state.mode === 'percent' ? `${row.state.percent}%` : formatAmount(row.assignment.rate, row.assignment.currency),
         money(row.state.accruedBase),
         { text: money(row.state.paidBase), color: GOOD },
         { text: money(row.state.owedBase), color: row.state.owedBase > 0 ? BURGUNDY : MUTED },
@@ -272,7 +274,9 @@ function employeeReport(state, employee) {
       ]),
       { empty: 'Сотрудник пока не назначен ни на один проект' },
     );
-    sheet.note('Остаток сдельной оплаты выплачивается после того, как клиент одобрил работу по проекту.');
+    sheet.note(finance.rows.some((row) => row.state.mode === 'percent')
+      ? 'Доля от суммы проекта выплачивается по мере оплаты клиентом; остаток сдельной оплаты — после одобрения работы клиентом.'
+      : 'Остаток сдельной оплаты выплачивается после того, как клиент одобрил работу по проекту.');
   }
   if (finance.type === 'fixed' || finance.payrolls.length) {
     sheet.heading('Начисления по месяцам');
@@ -497,13 +501,13 @@ function projectReport(state, project) {
       return [
         employee?.name || 'Сотрудник',
         assignment.role || '—',
-        area(assignment.area),
-        formatAmount(assignment.rate, assignment.currency),
+        info.mode === 'percent' ? '—' : area(assignment.area),
+        info.mode === 'percent' ? `${info.percent}%` : formatAmount(assignment.rate, assignment.currency),
         money(info.accruedBase),
         { text: money(info.paidBase), color: GOOD },
       ];
     }),
-    { empty: 'Сдельные сотрудники не назначены' },
+    { empty: 'Сотрудники на проект не назначены' },
   );
 
   sheet.heading('Движение денег по проекту');
@@ -554,7 +558,8 @@ function founderReport(state, founder, from, to) {
   sheet.totals([
     ...(period ? [{ label: 'Взял за период', value: info.periodBase }] : []),
     { label: period ? 'Взял за всё время' : 'Взял всего', value: info.takenBase, color: BURGUNDY },
-    { label: 'Оплатил за студию', value: info.spentBase, color: GOOD },
+    { label: 'Вложил в студию', value: info.investedBase, color: GOOD },
+    { label: 'Оплатил в долг', value: info.spentBase },
     { label: 'Студия должна', value: info.owedBase, color: info.owedBase > 0 ? BURGUNDY : MUTED },
   ]);
 
@@ -572,17 +577,19 @@ function founderReport(state, founder, from, to) {
       return [
         formatDate(item.date, { short: true }),
         labelOf(FOUNDER_MOVES, kind, 'Взял для себя'),
-        item.comment || (kind === 'spend' ? categoryLabel(item.category, state.settings) : '—'),
+        item.comment || (item.category ? categoryLabel(item.category, state.settings)
+          : kind === 'invest' ? 'Деньгами в кассу' : '—'),
         labelOf(PAYMENT_METHODS, item.method, 'Наличные'),
-        { text: money(item.base), font: 'bold', color: kind === 'spend' ? GOOD : INK },
+        { text: money(item.base), font: 'bold', color: kind === 'spend' || kind === 'invest' ? GOOD : INK },
       ];
     }),
     { empty: 'Операций за этот период не было' },
   );
 
   sheet.note('Деньги, которые коллега берёт для себя, — это его доля прибыли,'
-    + ' на прибыль студии они не влияют. Расходы, оплаченные его деньгами,'
-    + ' входят в расходы студии, и на их сумму студия остаётся ему должна.');
+    + ' на прибыль студии они не влияют. Расходы, оплаченные его деньгами в долг,'
+    + ' входят в расходы студии, и на их сумму студия остаётся ему должна.'
+    + ' Вклад в студию не возвращается: если им оплачен расход, он входит в расходы студии.');
 
   return { buffer: sheet.build(), name: fileName(['Отчёт', founder.name, todayIso()]) };
 }
@@ -602,10 +609,9 @@ function periodReport(state, from, to) {
     { label: 'Расход', value: totals.expenseBase, color: BURGUNDY },
     { label: 'Прибыль', value: totals.profitBase },
     // Изъятия коллег — не расход, но из общей суммы они уходят.
-    ...(totals.drawBase > 0 ? [
-      { label: 'Коллеги взяли', value: totals.drawBase, color: BURGUNDY },
-      { label: 'Осталось в студии', value: totals.leftBase },
-    ] : []),
+    ...(totals.drawBase > 0 ? [{ label: 'Коллеги взяли', value: totals.drawBase, color: BURGUNDY }] : []),
+    ...(totals.investBase > 0 ? [{ label: 'Учредители вложили', value: totals.investBase, color: GOOD }] : []),
+    ...(totals.drawBase > 0 || totals.investBase > 0 ? [{ label: 'Осталось в студии', value: totals.leftBase }] : []),
   ]);
 
   if (totals.incomeBarterBase > 0) {
@@ -691,7 +697,8 @@ function periodReport(state, from, to) {
           // не ставим (его сумма должна совпадать с итогом расходов).
           kind: 'colleague',
           // Своя подпись коллеги («На отпуск») не теряется — дописывается.
-          comment: `${(item.kind || 'draw') === 'repay' ? `Вернули долг: ${name}` : `${name} взял себе`}${item.comment ? ` · ${item.comment}` : ''} · ${money(item.base)}, не расход`,
+          comment: `${(item.kind || 'draw') === 'repay' ? `Вернули долг: ${name}`
+            : item.kind === 'invest' ? `${name} вложил в студию` : `${name} взял себе`}${item.comment ? ` · ${item.comment}` : ''} · ${money(item.base)}, ${item.kind === 'invest' ? 'не доход' : 'не расход'}`,
           projectId: null,
         };
       }),

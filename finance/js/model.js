@@ -35,6 +35,7 @@ export const OBJECT_TYPES = [
 export const EMPLOYEE_PAY_TYPES = [
   { id: 'fixed', label: 'Фиксированная зарплата' },
   { id: 'piecework', label: 'Сдельная оплата (за м²)' },
+  { id: 'percent', label: 'Процент от суммы проекта' },
 ];
 
 export const INCOME_TYPES = [
@@ -58,8 +59,9 @@ export const PAYMENT_METHODS = [
 // Это не расходы студии в обычном смысле, поэтому они считаются отдельно.
 export const FOUNDER_MOVES = [
   { id: 'draw', label: 'Взял для себя', hint: 'вычитается из общей суммы студии («Осталось в студии»)' },
-  { id: 'spend', label: 'Оплатил из своих', hint: 'расход студии, и студия остаётся должна коллеге' },
-  { id: 'repay', label: 'Студия вернула долг', hint: 'возврат того, что коллега потратил за студию' },
+  { id: 'spend', label: 'Оплатил из своих (в долг)', hint: 'расход студии; студия остаётся должна коллеге и потом вернёт' },
+  { id: 'repay', label: 'Студия вернула долг', hint: 'возврат того, что коллега потратил за студию в долг' },
+  { id: 'invest', label: 'Вложил в студию', hint: 'вклад учредителя — не возвращается: деньги в кассу или оплата за студию (аренда, ремонт, техника)' },
 ];
 
 // Чем именно рассчитывается клиент по взаимозачёту.
@@ -81,6 +83,7 @@ export const EXPENSE_GROUPS = [
       { id: 'staff/salary', label: 'Зарплаты' },
       { id: 'staff/advance', label: 'Авансы сдельным сотрудникам' },
       { id: 'staff/final', label: 'Остаточные выплаты сдельным' },
+      { id: 'staff/share', label: 'Доля сотрудника от проекта' },
     ],
   },
   {
@@ -137,7 +140,7 @@ export const EXPENSE_GROUPS = [
 ];
 
 // Категории, которые создаются системой при выплатах и не выбираются вручную.
-export const SYSTEM_CATEGORIES = ['staff/salary', 'staff/advance', 'staff/final'];
+export const SYSTEM_CATEGORIES = ['staff/salary', 'staff/advance', 'staff/final', 'staff/share'];
 
 // Удалённая категория остаётся в настройках с пометкой removed: в списках
 // выбора её нет, но у старых расходов по-прежнему видно её название.

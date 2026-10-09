@@ -31,12 +31,14 @@ export default function employees() {
     const finance = employeeFinance(state, employee);
     const payLabel = employee.payType === 'fixed'
       ? `${formatAmount(employee.salary, employee.salaryCurrency)} / месяц`
-      : formatRate(employee.rate, employee.rateCurrency);
+      : employee.payType === 'percent'
+        ? `${employee.percent ?? 50}% от проекта`
+        : formatRate(employee.rate, employee.rateCurrency);
     return html`
       <a class="row" href="#/employees/${employee.id}">
         <div class="row__main">
           <span class="row__title">${employee.name}</span>
-          <span class="row__subtitle">${employee.position || (employee.payType === 'fixed' ? 'Штатный' : 'Сдельный')} · ${payLabel}</span>
+          <span class="row__subtitle">${employee.position || ({ fixed: 'Штатный', percent: 'На проценте' }[employee.payType] || 'Сдельный')} · ${payLabel}</span>
           ${raw(employee.active === false ? badge('Не работает', 'muted') : '')}
         </div>
         <div class="row__side">
@@ -52,12 +54,13 @@ export default function employees() {
       { value: 'all', label: 'Все' },
       { value: 'fixed', label: 'Зарплата' },
       { value: 'piecework', label: 'Сдельные' },
+      { value: 'percent', label: 'Процент' },
     ], filters.type, 'type'))}
 
     <div class="stats">
       <div class="stat stat--warn"><span class="stat__label">К выплате сейчас</span><strong class="stat__value">${money(totals.due)}</strong></div>
       <div class="stat"><span class="stat__label">Ждёт согласования</span><strong class="stat__value">${money(totals.locked)}</strong>
-        <span class="stat__hint">Остатки до одобрения клиентом</span></div>
+        <span class="stat__hint">Остатки до одобрения и доли до оплаты клиентом</span></div>
     </div>
 
     <div class="card card--flat">

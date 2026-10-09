@@ -33,7 +33,28 @@ function payrollCard(payroll) {
     </div>`;
 }
 
+function shareCard(row) {
+  const { assignment, project, state: info } = row;
+  return html`
+    <div class="row row--stack">
+      <div class="row__main">
+        <a class="row__title" href="#/projects/${assignment.projectId}">${project?.name || 'Проект удалён'}</a>
+        <span class="row__subtitle">${info.percent}% от суммы проекта = ${formatAmount(info.accrued, info.currency)}</span>
+        <span class="row__subtitle">Клиент оплатил — доля ${formatAmount(info.earned, info.currency)} · выплачено ${formatAmount(info.paidCur, info.currency)}</span>
+        ${raw(badge(info.label, info.tone))}
+      </div>
+      <div class="row__side">
+        <span class="row__amount">${money(info.accruedBase)}</span>
+        <div class="btn-row">
+          ${info.available > 0
+            ? raw(html`<button class="btn btn--sm btn--good" data-pay-share="${assignment.id}">Выплатить ${formatAmount(info.available, info.currency)}</button>`) : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
 function assignmentCard(row) {
+  if (row.state.mode === 'percent') return shareCard(row);
   const { assignment, project, state: info } = row;
   return html`
     <div class="row row--stack">
@@ -76,13 +97,16 @@ export default function employeeDetail(params) {
     <div class="card">
       <div class="section-title">
         <h2>${employee.name}</h2>
-        ${raw(employee.active === false ? badge('Не работает', 'muted') : badge(isFixed ? 'Зарплата' : 'Сдельно', 'info'))}
+        ${raw(employee.active === false ? badge('Не работает', 'muted')
+          : badge(isFixed ? 'Зарплата' : employee.payType === 'percent' ? 'Процент от проекта' : 'Сдельно', 'info'))}
       </div>
       <p class="muted">
         ${employee.position || '—'} ·
         ${isFixed
           ? `${formatAmount(employee.salary, employee.salaryCurrency)} в месяц, выплата ${employee.payday} числа`
-          : formatRate(employee.rate, employee.rateCurrency)}
+          : employee.payType === 'percent'
+            ? `${employee.percent ?? 50}% от суммы каждого проекта`
+            : formatRate(employee.rate, employee.rateCurrency)}
       </p>
       ${employee.phone ? raw(html`<p class="muted">${employee.phone}</p>`) : ''}
       <div class="btn-row">
@@ -112,7 +136,9 @@ export default function employeeDetail(params) {
         ${raw(sectionTitle('Работа по проектам'))}
         ${finance.rows.length
           ? raw(html`<div class="list">${raw(finance.rows.map(assignmentCard).join(''))}</div>`)
-          : raw(emptyState('Сотрудник пока не назначен ни на один проект'))}
+          : raw(emptyState(employee.payType === 'percent'
+            ? 'Добавьте сотрудника в проект: карточка проекта → «Сотрудники на проекте» → «Добавить»'
+            : 'Сотрудник пока не назначен ни на один проект'))}
       </div>`) : ''}
 
     <div class="card">
@@ -157,6 +183,9 @@ export default function employeeDetail(params) {
       });
       root.querySelectorAll('[data-pay-final]').forEach((button) => {
         button.onclick = () => forms.openAssignmentPayment(button.dataset.payFinal, 'final', refresh);
+      });
+      root.querySelectorAll('[data-pay-share]').forEach((button) => {
+        button.onclick = () => forms.openAssignmentPayment(button.dataset.payShare, 'share', refresh);
       });
     },
   };

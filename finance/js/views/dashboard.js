@@ -55,17 +55,21 @@ function recentOperations(state, limit = 8) {
   }));
   // Коллеги взяли себе или студия вернула им долг — деньги ушли из кассы.
   // «Оплатил из своих» сюда не попадает: он уже виден как расход студии.
+  // Вклад, которым учредитель оплатил расход, тоже уже виден как расход;
+  // вклад деньгами в кассу показываем отдельной строкой.
   const draws = (state.draws || [])
-    .filter((item) => (item.kind || 'draw') !== 'spend')
+    .filter((item) => (item.kind || 'draw') !== 'spend' && !(item.kind === 'invest' && item.expenseId))
     .map((item) => {
       const name = byId('founders', item.founderId)?.name || 'Коллега';
+      const kind = item.kind || 'draw';
       return {
         kind: 'draw',
         id: item.id,
         date: item.date,
-        title: (item.kind || 'draw') === 'repay' ? `Вернули долг: ${name}` : `${name} взял себе`,
+        title: kind === 'repay' ? `Вернули долг: ${name}` : kind === 'invest' ? `${name} вложил в студию` : `${name} взял себе`,
         subtitle: item.comment || '',
         base: item.base,
+        investment: kind === 'invest',
       };
     });
   return [...incomes, ...expenses, ...draws]
@@ -182,7 +186,7 @@ export default function dashboard() {
             ${item.subtitle ? raw(html`<span class="row__subtitle">${item.subtitle}</span>`) : ''}
           </div>
           <div class="row__side">
-            <span class="row__amount ${raw(item.kind === 'income' ? 'good' : 'danger')}">${raw(item.kind === 'income' ? '+' : '−')}${money(item.base)}</span>
+            <span class="row__amount ${raw(item.kind === 'income' || item.investment ? 'good' : 'danger')}">${raw(item.kind === 'income' || item.investment ? '+' : '−')}${money(item.base)}</span>
             <span class="row__meta">${formatDate(item.date, { short: true, withYear: false })}</span>
           </div>
         </button>`).join(''))}</div>`)
