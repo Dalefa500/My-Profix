@@ -558,7 +558,7 @@ function founderReport(state, founder, from, to) {
   sheet.totals([
     ...(period ? [{ label: 'Взял за период', value: info.periodBase }] : []),
     { label: period ? 'Взял за всё время' : 'Взял всего', value: info.takenBase, color: BURGUNDY },
-    { label: 'Вложил в студию', value: info.investedBase, color: GOOD },
+    { label: period ? 'Вложил за период' : 'Вложил в студию', value: period ? info.periodInvestedBase : info.investedBase, color: GOOD },
     { label: 'Оплатил в долг', value: info.spentBase },
     { label: 'Студия должна', value: info.owedBase, color: info.owedBase > 0 ? BURGUNDY : MUTED },
   ]);
@@ -688,7 +688,9 @@ function periodReport(state, from, to) {
     ...state.expenses.filter((item) => inRange(item.date, from, to)).map((item) => ({ ...item, kind: 'expense' })),
     // Коллега взял себе или студия вернула ему долг — деньги ушли из кассы.
     ...(state.draws || [])
-      .filter((item) => (item.kind || 'draw') !== 'spend' && inRange(item.date, from, to))
+      // Вклад, которым оплачен расход, уже есть строкой расхода.
+      .filter((item) => (item.kind || 'draw') !== 'spend' && !(item.kind === 'invest' && item.expenseId)
+        && inRange(item.date, from, to))
       .map((item) => {
         const name = state.founders.find((f) => f.id === item.founderId)?.name || 'Коллега';
         return {

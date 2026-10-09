@@ -138,7 +138,7 @@ export default function dashboard() {
       ${raw(statCard({
         label: 'Ожидается выплатить',
         value: money(totals.toPayBase),
-        hint: totals.lockedPayBase > 0 ? `Ещё ${money(totals.lockedPayBase)} после согласования` : 'Готово к выплате',
+        hint: totals.lockedPayBase > 0 ? `Ещё ${money(totals.lockedPayBase)} ждёт клиента` : 'Готово к выплате',
         tone: 'warn',
         href: '#/payments/pay',
       }))}

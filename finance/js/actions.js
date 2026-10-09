@@ -130,6 +130,15 @@ function replanOps(existing, record) {
       ops.push(op.putItem('projects', existing.id, 'payments', { id: row.item.id, amount }));
     }
   }
+  // Сменили валюту договора — доп. работы пересчитываем в новую валюту,
+  // иначе «10 000 сомони» превратились бы в «$10 000».
+  if (!sameCurrency) {
+    const oldFx = isBase(existing.currency) ? 1 : (Number(existing.fx) > 0 ? Number(existing.fx) : 1);
+    for (const item of (existing.payments || []).filter((row) => row.type === 'extra')) {
+      const amount = fit((Number(item.amount) || 0) * oldFx / fx);
+      if (amount !== Number(item.amount)) ops.push(op.putItem('projects', existing.id, 'payments', { id: item.id, amount }));
+    }
+  }
   // Цену увеличили, а все платежи уже получены — доплата отдельной строкой.
   if (diff > 0.004) {
     ops.push(op.putItem('projects', existing.id, 'payments', {
@@ -372,8 +381,13 @@ export function saveAssignment(values, id = null) {
   if (values.stage) record.stage = values.stage;
   if (id) {
     const existing = store.byId('assignments', id);
-    if (existing && assignmentHasPayments(existing)) record.employeeId = existing.employeeId;
-    return store.patch('assignments', id, record);
+    if (existing && assignmentHasPayments(existing)) {
+      record.employeeId = existing.employeeId;
+      // По «процентной» работе уже платили — сдельной она не становится.
+      if (existing.mode === 'percent') return existing;
+    }
+    // Была «процентной» — теперь сдельная: признак процента убираем.
+    return store.patch('assignments', id, { ...record, mode: 'piecework' }, ['percent']);
   }
   return store.insert('assignments', { stage: 'assigned', ...record }, 'asg');
 }
@@ -866,6 +880,12 @@ export function saveFounder(values, id = null) {
 
 export function deleteFounder(id) {
   const state = getState();
+  // Вклады и долги — история денег студии: молча стереть их вместе
+  // с коллегой нельзя, иначе «Осталось в студии» изменится без движения денег.
+  const money = state.draws.filter((item) => item.founderId === id && ['invest', 'spend'].includes(item.kind));
+  if (money.length) {
+    return { ok: false, error: 'У коллеги есть вклады или оплаты за студию. Сначала удалите эти операции в его карточке' };
+  }
   const ops = [op.remove('founders', id)];
   for (const draw of state.draws.filter((item) => item.founderId === id)) {
     ops.push(op.remove('draws', draw.id));
@@ -875,7 +895,8 @@ export function deleteFounder(id) {
   for (const expense of state.expenses.filter((item) => item.source === 'founder' && item.paidByFounderId === id)) {
     ops.push(op.patch('expenses', expense.id, { source: null }, ['founderMoveId', 'paidByFounderId']));
   }
-  return store.commit(ops);
+  store.commit(ops);
+  return { ok: true };
 }
 
 // Движение денег между студией и коллегой. Три случая, и считаются

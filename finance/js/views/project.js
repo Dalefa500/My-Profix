@@ -53,8 +53,9 @@ function nearWhole(value) {
 
 // У отменённого проекта кнопок выплаты нет — как и строк в «Платежах».
 // Сотрудник на проценте: доля от суммы проекта, выплачивается по мере
-// оплаты клиентом.
-function shareRow(row, info, closed) {
+// оплаты клиентом (и у отменённого проекта — доля от того, что клиент
+// успел заплатить).
+function shareRow(row, info) {
   const employee = byId('employees', row.employeeId);
   return html`
     <div class="row row--stack" data-assignment="${row.id}">
@@ -68,7 +69,7 @@ function shareRow(row, info, closed) {
         <span class="row__amount">${money(info.accruedBase)}</span>
         <span class="row__meta">Выплачено ${money(info.paidBase)}</span>
         <div class="btn-row">
-          ${!closed && info.available > 0
+          ${info.available > 0
             ? raw(html`<button class="btn btn--sm btn--good" data-pay-share="${row.id}">Выплатить ${formatAmount(info.available, info.currency)}</button>`)
             : ''}
           <button class="btn btn--sm btn--ghost" data-edit-assignment="${row.id}">⋯</button>
@@ -78,7 +79,7 @@ function shareRow(row, info, closed) {
 }
 
 function assignmentRow(row, info, closed = false) {
-  if (info.mode === 'percent') return shareRow(row, info, closed);
+  if (info.mode === 'percent') return shareRow(row, info);
   const employee = byId('employees', row.employeeId);
   return html`
     <div class="row row--stack" data-assignment="${row.id}">

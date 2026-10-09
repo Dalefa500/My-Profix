@@ -120,7 +120,7 @@ export default function employeeDetail(params) {
       <div class="stat"><span class="stat__label">Начислено</span><strong class="stat__value">${money(finance.accruedBase)}</strong></div>
       <div class="stat stat--good"><span class="stat__label">Выплачено</span><strong class="stat__value">${money(finance.paidBase)}</strong></div>
       <div class="stat stat--warn"><span class="stat__label">К выплате сейчас</span><strong class="stat__value">${money(finance.dueNowBase)}</strong></div>
-      <div class="stat"><span class="stat__label">После согласования</span><strong class="stat__value">${money(finance.lockedBase)}</strong></div>
+      <div class="stat"><span class="stat__label">Ждёт клиента</span><strong class="stat__value">${money(finance.lockedBase)}</strong></div>
     </div>
 
     ${isFixed || finance.payrolls.length ? raw(html`

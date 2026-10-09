@@ -213,9 +213,13 @@ export function founderDetail(params) {
         button.onclick = () => openDrawSheet(button.dataset.openDraw);
       });
       root.querySelector('[data-act="delete"]').onclick = async () => {
-        const ok = await confirmDialog(`Удалить коллегу «${founder.name}»? Все его выдачи тоже удалятся.`);
+        const ok = await confirmDialog(`Удалить коллегу «${founder.name}»? Записи «Взял для себя» и возвраты долга тоже удалятся.`);
         if (!ok) return;
-        actions.deleteFounder(founder.id);
+        const result = actions.deleteFounder(founder.id);
+        if (result?.ok === false) {
+          toast(result.error, 'danger');
+          return;
+        }
         toast('Коллега удалён');
         leave('#/founders');
       };

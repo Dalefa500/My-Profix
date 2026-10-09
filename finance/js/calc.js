@@ -76,12 +76,15 @@ function percentAssignmentState(assignment, project, settledBase = 0, settledAmo
   const settledCur = settledAmount != null ? Number(settledAmount) || 0 : (Number(settledBase) || 0) / fx;
   // У отменённого проекта «договор» — то, что клиент успел заплатить.
   const contractCur = project ? (cancelled ? settledCur : (Number(project.price) || 0) + extras) : 0;
-  const accrued = round(contractCur * percent / 100);
+  let accrued = round(contractCur * percent / 100);
   const earnedCur = Math.min(accrued, settledCur * percent / 100);
   const payments = Array.isArray(assignment?.payments) ? assignment.payments : [];
   const paidCur = payments.reduce((acc, item) => acc + (item.currency === currency && Number.isFinite(Number(item.amount))
     ? Number(item.amount) : (Number(item.base) || 0) / fx), 0);
   const paidBase = sum(payments, (item) => item.base);
+  // Цену проекта снизили уже после выплаты — переплата не пропадает:
+  // начисленным считается не меньше выплаченного (и прибыль проекта это видит).
+  accrued = Math.max(accrued, round(paidCur));
   let availableCur = Math.max(0, earnedCur - paidCur);
   if (availableCur <= 0.005) availableCur = 0;
   let lockedCur = Math.max(0, accrued - Math.max(earnedCur, paidCur));
@@ -432,7 +435,10 @@ export function projectFinance(state, project) {
   const costPlanBase = round(pieceworkAccruedBase + directBase);
   const costActualBase = round(pieceworkPaidBase + directBase);
   // Прибыль отменённого проекта — по факту: договор уже не будет оплачен.
-  const profitPlanBase = cancelled ? round(receivedBase - costActualBase) : round(contractBase - costPlanBase);
+  // (за вычетом доли сотрудников на проценте, которую им ещё должны).
+  const percentOwedBase = sum(states.filter((item) => item.mode === 'percent'), (item) => item.owedBase);
+  const profitPlanBase = cancelled
+    ? round(receivedBase - costActualBase - percentOwedBase) : round(contractBase - costPlanBase);
   const profitActualBase = round(receivedBase - costActualBase);
 
   return {
@@ -731,7 +737,8 @@ export function employeeFinance(state, employee) {
     const project = state.projects.find((item) => item.id === assignment.projectId) || null;
     return { assignment, project, state: assignmentStateIn(state, assignment, project) };
   });
-  const openRows = rows.filter((row) => !(row.project && CLOSED_PROJECT_STATUSES.includes(row.project.status)));
+  const openRows = rows.filter((row) => row.state.mode === 'percent'
+    || !(row.project && CLOSED_PROJECT_STATUSES.includes(row.project.status)));
   const payrollAccrued = sum(payrolls, (item) => item.accruedBase);
   const payrollOwed = sum(payrolls, (item) => payrollState(item).leftBase);
   // «К выплате сейчас» — только зарплата, срок которой уже наступил.
@@ -920,7 +927,9 @@ export function payables(state) {
 
   for (const assignment of state.assignments) {
     const project = state.projects.find((item) => item.id === assignment.projectId);
-    if (project && CLOSED_PROJECT_STATUSES.includes(project.status)) continue;
+    // По отменённому проекту сдельщику уже ничего не платим, а доля сотрудника
+    // на проценте от того, что клиент успел заплатить, остаётся за ним.
+    if (project && CLOSED_PROJECT_STATUSES.includes(project.status) && assignment.mode !== 'percent') continue;
     const employee = state.employees.find((item) => item.id === assignment.employeeId);
     const info = assignmentStateIn(state, assignment, project);
     if (info.mode === 'percent') {
@@ -1060,6 +1069,15 @@ export function notifications(state, nowIso = today()) {
   }
 
   for (const row of payables(state)) {
+    if (row.kind === 'assignment-share' && row.ready) {
+      items.push({
+        id: `ready:${row.id}`, tone: 'good', icon: '✓',
+        title: 'Доля сотрудника доступна к выплате',
+        text: `${row.title} · ${row.subtitle || ''}`,
+        amountBase: row.amountBase, href: '#/payments/pay',
+      });
+      continue;
+    }
     if (row.kind === 'assignment-final' && row.ready) {
       items.push({
         id: `ready:${row.id}`, tone: 'good', icon: '✓',
