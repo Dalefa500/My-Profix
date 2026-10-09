@@ -283,6 +283,10 @@ export function saveEmployee(values, id = null) {
     record.activeFrom = record.startDate > today() ? record.startDate : today();
   } else if (existing.active === false && record.active) {
     record.activeFrom = today();
+  } else if (existing.payType !== 'fixed' && record.payType === 'fixed') {
+    // Перевели со сдельной или с процента на зарплату — начисляем с месяца
+    // перевода, а не за всё время, пока он работал по другой схеме.
+    record.activeFrom = today();
   } else if (!existing.activeFrom) {
     // Сотрудник заведён до этого правила. Если перенести «Работает с»
     // в прошлое, не начисляем задним числом месяцы, которых раньше не было:
@@ -308,6 +312,12 @@ export function saveEmployee(values, id = null) {
         accruedBase: toBase(record.salary, record.salaryCurrency, fx),
       });
     }
+  }
+  // Перевели с зарплаты на сдельную или на процент — начисление текущего
+  // месяца, по которому ещё ничего не выплачено, больше не нужно.
+  if (existing && existing.payType === 'fixed' && record.payType !== 'fixed') {
+    const current = state.payrolls.find((item) => item.employeeId === id && item.month === monthKey(today()));
+    if (current && !(current.payments || []).length) store.remove('payrolls', current.id);
   }
   ensurePayrolls();
   return saved;
