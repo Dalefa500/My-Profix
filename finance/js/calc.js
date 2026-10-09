@@ -97,13 +97,13 @@ function percentAssignmentState(assignment, project, settledBase = 0, settledAmo
   let label;
   let tone;
   if (allPaid) {
-    label = 'Доля выплачена полностью';
+    label = 'Доля выплачена';
     tone = 'good';
   } else if (availableCur > 0) {
-    label = 'Доля доступна к выплате';
+    label = 'Доля к выплате';
     tone = 'good';
   } else if (lockedCur > 0) {
-    label = 'Ждёт оплаты клиента';
+    label = 'Ждёт клиента';
     tone = 'warn';
   } else {
     label = 'Назначен';

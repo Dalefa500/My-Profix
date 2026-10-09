@@ -248,7 +248,7 @@ function employeeReport(state, employee) {
     { label: 'Начислено', value: finance.accruedBase },
     { label: 'Выплачено', value: finance.paidBase, color: GOOD },
     { label: 'К выплате сейчас', value: finance.dueNowBase, color: BURGUNDY },
-    { label: 'Ждёт согласования', value: finance.lockedBase },
+    { label: 'Ждёт клиента', value: finance.lockedBase },
   ]);
 
   if (finance.type !== 'fixed' || finance.rows.length) {
@@ -566,10 +566,10 @@ function founderReport(state, founder, from, to) {
   sheet.heading('Операции');
   sheet.table(
     [
-      { title: 'Дата', width: 62 },
-      { title: 'Что произошло', width: 110 },
-      { title: 'Назначение', width: 180 },
-      { title: 'Чем', width: 70 },
+      { title: 'Дата', width: 58 },
+      { title: 'Что произошло', width: 142 },
+      { title: 'Назначение', width: 150 },
+      { title: 'Чем', width: 64 },
       { title: 'Сумма', width: 75, align: 'right' },
     ],
     (period ? info.periodDraws : info.draws).map((item) => {
@@ -610,7 +610,7 @@ function periodReport(state, from, to) {
     { label: 'Прибыль', value: totals.profitBase },
     // Изъятия коллег — не расход, но из общей суммы они уходят.
     ...(totals.drawBase > 0 ? [{ label: 'Коллеги взяли', value: totals.drawBase, color: BURGUNDY }] : []),
-    ...(totals.investBase > 0 ? [{ label: 'Учредители вложили', value: totals.investBase, color: GOOD }] : []),
+    ...(totals.investBase > 0 ? [{ label: 'Вложили', value: totals.investBase, color: GOOD }] : []),
     ...(totals.drawBase > 0 || totals.investBase > 0 ? [{ label: 'Осталось в студии', value: totals.leftBase }] : []),
   ]);
 

@@ -312,7 +312,7 @@ export function openAssignmentForm(projectId, assignmentId = null, onDone) {
           }
         }
         const saved = actions.saveAssignment({ ...values, projectId, mode: 'percent' }, assignmentId);
-        toast('Сотрудник на проценте добавлен в проект', 'good');
+        toast(assignment ? 'Доля сотрудника сохранена' : 'Сотрудник на проценте добавлен в проект', 'good');
         onDone?.(saved);
         return true;
       }

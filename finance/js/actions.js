@@ -943,7 +943,12 @@ export function saveDraw(values, id = null) {
     const overflow = repayOverflow(state, existing.founderId, id,
       kind === 'spend' && values.founderId === existing.founderId ? { kind: 'spend', ...payment } : null);
     if (overflow > 0.01) {
-      return { ok: false, error: `Студия уже вернула по этому долгу больше — сумма не может быть меньше на ${formatAmount(overflow)}` };
+      return {
+        ok: false,
+        error: kind === 'spend'
+          ? `Студия уже вернула по этому долгу больше — сумма не может быть меньше на ${formatAmount(overflow)}`
+          : 'По этому долгу студия уже вернула деньги. Чтобы сменить тип операции, сначала удалите запись «Студия вернула долг»',
+      };
     }
   }
   const drawId = id || uid('drw');

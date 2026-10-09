@@ -96,6 +96,8 @@ export const EXPENSE_GROUPS = [
       { id: 'office/utilities', label: 'Коммунальные' },
       { id: 'office/internet', label: 'Интернет' },
       { id: 'office/phone', label: 'Телефон' },
+      { id: 'office/renovation', label: 'Ремонт и обустройство' },
+      { id: 'office/furniture', label: 'Мебель' },
     ],
   },
   {
