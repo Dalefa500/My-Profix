@@ -250,6 +250,10 @@ function employeeReport(state, employee) {
     { label: 'К выплате сейчас', value: finance.dueNowBase, color: BURGUNDY },
     { label: 'Ждёт клиента', value: finance.lockedBase },
   ]);
+  if (finance.loanBase > 0) {
+    sheet.note(`Аванс в счёт будущих выплат, ещё не отработан: ${finance.loans.byCurrency
+      .map((item) => formatAmount(item.amount, item.currency)).join(' + ')} (${money(finance.loanBase)}). Входит в «Выплачено».`);
+  }
 
   if (finance.type !== 'fixed' || finance.rows.length) {
     sheet.heading('Работа по проектам');

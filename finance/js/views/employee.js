@@ -14,6 +14,10 @@ import { go, leave } from '../router.js';
 import { openReport } from '../report.js';
 import { openOperation } from '../operation.js';
 
+function loansText(loans) {
+  return loans.byCurrency.map((item) => formatAmount(item.amount, item.currency)).join(' + ');
+}
+
 function payrollCard(payroll) {
   const info = payrollState(payroll);
   return html`
@@ -111,6 +115,7 @@ export default function employeeDetail(params) {
       ${employee.phone ? raw(html`<p class="muted">${employee.phone}</p>`) : ''}
       <div class="btn-row">
         <button class="btn btn--sm" data-act="edit">Изменить</button>
+        <button class="btn btn--sm" data-act="loan">Выдать аванс</button>
         <button class="btn btn--sm btn--ghost" data-act="delete">Удалить</button>
         <button class="btn btn--sm btn--ghost" data-report>Отчёт PDF</button>
       </div>
@@ -122,6 +127,15 @@ export default function employeeDetail(params) {
       <div class="stat stat--warn"><span class="stat__label">К выплате сейчас</span><strong class="stat__value">${money(finance.dueNowBase)}</strong></div>
       <div class="stat"><span class="stat__label">Ждёт клиента</span><strong class="stat__value">${money(finance.lockedBase)}</strong></div>
     </div>
+
+    ${finance.loanBase > 0 ? raw(html`
+      <div class="card">
+        <div class="section-title">
+          <h2>Аванс — ещё не отработан</h2>
+          <strong>${loansText(finance.loans)}</strong>
+        </div>
+        <p class="muted">Деньги выданы в счёт будущих выплат. При выплате зарплаты, доли или оплаты за работу выберите «Удержать из аванса» — сумма спишется с аванса, новых денег из кассы не уйдёт.</p>
+      </div>`) : ''}
 
     ${isFixed || finance.payrolls.length ? raw(html`
       <div class="card">
@@ -148,7 +162,9 @@ export default function employeeDetail(params) {
           <button class="row" data-open="${item.id}" style="width:100%;text-align:left">
             <div class="row__main">
               <span class="row__title">${item.comment || 'Выплата'}</span>
-              <span class="row__subtitle">${formatDate(item.date, { short: true })}</span>
+              <span class="row__subtitle">${formatDate(item.date, { short: true })}${item.source === 'loan'
+                ? ` · аванс, не отработано ${formatAmount(item.amount, item.currency)}`
+                : item.loanId ? ' · удержано из аванса' : ''}</span>
             </div>
             <span class="row__amount danger">−${money(item.base)}</span>
           </button>`).join(''))}</div>`)
@@ -168,8 +184,10 @@ export default function employeeDetail(params) {
       });
       root.querySelector('[data-report]').onclick = () => openReport({ type: 'employee', id: employee.id });
       root.querySelector('[data-act="edit"]').onclick = () => forms.openEmployeeForm(employee.id, refresh);
+      root.querySelector('[data-act="loan"]').onclick = () => forms.openLoanForm(employee.id, refresh);
       root.querySelector('[data-act="delete"]').onclick = async () => {
-        const ok = await confirmDialog(`Удалить сотрудника «${employee.name}»? Его начисления будут удалены, а проведённые выплаты останутся в расходах.`);
+        const ok = await confirmDialog(`Удалить сотрудника «${employee.name}»? Его начисления будут удалены, а проведённые выплаты останутся в расходах.${
+          finance.loanBase > 0 ? ` Не отработанный аванс ${loansText(finance.loans)} останется расходом студии.` : ''}`);
         if (!ok) return;
         actions.deleteEmployee(employee.id);
         toast('Сотрудник удалён');

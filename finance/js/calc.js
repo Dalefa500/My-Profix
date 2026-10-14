@@ -728,6 +728,29 @@ export function payrollMonthsFor(employee, nowIso = today()) {
 
 // --------------------------------------------------------------- сотрудники
 
+// Авансы сотруднику в счёт будущих выплат. Деньги уже ушли из кассы
+// (это расход), а сотрудник их «отрабатывает»: при выплате зарплаты или
+// доли часть суммы удерживается из аванса. Удержанная часть отделяется
+// от записи аванса, поэтому остаток аванса — это сами записи.
+export function employeeLoans(state, employeeId) {
+  // Старые первыми: новые записи стоят в начале списка, поэтому при
+  // одинаковой дате раньше идёт та, что дальше в списке.
+  const items = state.expenses
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.employeeId === employeeId && item.source === 'loan' && Number(item.amount) > 0)
+    .sort((a, b) => String(a.item.date).localeCompare(String(b.item.date)) || b.index - a.index)
+    .map(({ item }) => item);
+  const byCurrency = new Map();
+  for (const item of items) {
+    byCurrency.set(item.currency, round((byCurrency.get(item.currency) || 0) + (Number(item.amount) || 0)));
+  }
+  return {
+    items,
+    base: sum(items, (item) => item.base),
+    byCurrency: [...byCurrency].map(([currency, amount]) => ({ currency, amount })),
+  };
+}
+
 export function employeeFinance(state, employee) {
   if (!employee) return null;
   // Считаем и зарплату, и сдельные работы: сотрудника могли перевести с одной
@@ -751,7 +774,10 @@ export function employeeFinance(state, employee) {
   // Так сумма совпадает с «Историей выплат», даже если работу, за которую
   // платили, потом удалили из проекта.
   const paidOut = sum(state.expenses.filter((item) => item.employeeId === employee.id), (item) => item.base);
+  const loans = employeeLoans(state, employee.id);
   return {
+    loans,
+    loanBase: loans.base,
     type: ['fixed', 'percent'].includes(employee.payType) ? employee.payType : 'piecework',
     payrolls,
     rows,

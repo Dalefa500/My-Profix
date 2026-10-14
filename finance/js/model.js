@@ -84,6 +84,7 @@ export const EXPENSE_GROUPS = [
       { id: 'staff/advance', label: 'Авансы сдельным сотрудникам' },
       { id: 'staff/final', label: 'Остаточные выплаты сдельным' },
       { id: 'staff/share', label: 'Доля сотрудника от проекта' },
+      { id: 'staff/loan', label: 'Авансы сотрудникам (в счёт будущих выплат)' },
     ],
   },
   {
@@ -142,7 +143,7 @@ export const EXPENSE_GROUPS = [
 ];
 
 // Категории, которые создаются системой при выплатах и не выбираются вручную.
-export const SYSTEM_CATEGORIES = ['staff/salary', 'staff/advance', 'staff/final', 'staff/share'];
+export const SYSTEM_CATEGORIES = ['staff/salary', 'staff/advance', 'staff/final', 'staff/share', 'staff/loan'];
 
 // Удалённая категория остаётся в настройках с пометкой removed: в списках
 // выбора её нет, но у старых расходов по-прежнему видно её название.

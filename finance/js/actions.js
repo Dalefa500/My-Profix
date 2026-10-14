@@ -8,7 +8,7 @@ import { toBase, defaultRate, round, formatAmount, isBase } from './money.js';
 import { today, monthKey, monthLabel, addMonths, daysInMonth } from './dates.js';
 import {
   assignmentState, assignmentStateIn, assignmentHasPayments, payrollMonthsFor, payrollState, clampPercent, projectPlan,
-  projectSettledBase, founderDebt,
+  projectSettledBase, founderDebt, employeeLoans,
 } from './calc.js';
 import { categoryLabel } from './model.js';
 
@@ -335,9 +335,10 @@ export function deleteEmployee(id) {
   for (const payroll of state.payrolls.filter((item) => item.employeeId === id)) {
     ops.push(op.remove('payrolls', payroll.id));
   }
-  // Проведённые выплаты остаются в расходах как факт и как расход проекта.
+  // Проведённые выплаты и выданные авансы остаются в расходах как факт
+  // и как расход проекта.
   for (const expense of state.expenses.filter((item) => item.employeeId === id && item.source)) {
-    if (expense.source === 'assignment' || expense.source === 'payroll') {
+    if (['assignment', 'payroll', 'loan'].includes(expense.source)) {
       ops.push(op.patch('expenses', expense.id, { assignmentId: null, payrollId: null, source: null }));
     }
   }
@@ -421,6 +422,145 @@ export function deleteAssignment(id) {
   return store.commit(ops);
 }
 
+// ------------------------------------------- авансы сотрудникам (в долг)
+
+// Аванс в счёт будущих выплат: деньги ушли из кассы (расход), сотрудник
+// их потом отрабатывает — при выплате их удерживают из аванса.
+function loanRecord(employee, payment, values, comment) {
+  return {
+    id: uid('exp'),
+    date: values.date || today(),
+    category: 'staff/loan',
+    ...payment,
+    projectId: null,
+    employeeId: employee?.id || null,
+    source: 'loan',
+    method: values.method || 'cash',
+    comment: values.comment?.trim() || comment,
+    createdBy: currentOwner(),
+    createdAt: today(),
+  };
+}
+
+export function giveLoan(employeeId, values = {}) {
+  const employee = store.byId('employees', employeeId);
+  if (!employee) return { ok: false, error: 'Сотрудник не найден' };
+  const payment = money(values, getState().settings);
+  if (payment.base <= 0) return { ok: false, error: 'Укажите сумму больше нуля' };
+  const expense = loanRecord(employee, payment, values, `Аванс в счёт будущих выплат · ${employee.name}`);
+  store.commit([op.insert('expenses', expense)]);
+  return { ok: true, expense };
+}
+
+// Больше ли выплата, чем причитается (limit — в валюте обязательства
+// и в долларах). В валюте обязательства сравниваем сами суммы, в другой —
+// доллары с допуском в цент на округление пересчёта.
+function overLimit(payment, limit) {
+  return payment.currency === limit.currency
+    ? payment.amount > limit.amount + 0.005
+    : payment.base > limit.base + 0.01;
+}
+
+// Делит выплату на часть в счёт долга и часть сверх него (в валюте выплаты).
+function splitOverpay(payment, limit) {
+  if (!overLimit(payment, limit)) return { paid: payment, extra: null };
+  const paidAmount = Math.max(0, Math.min(payment.amount, payment.currency === limit.currency
+    ? round(limit.amount)
+    : round(limit.base / payment.fx)));
+  const paidBase = toBase(paidAmount, payment.currency, payment.fx);
+  return {
+    paid: paidAmount > 0 ? { ...payment, amount: paidAmount, base: paidBase } : null,
+    extra: { ...payment, amount: round(payment.amount - paidAmount), base: round(payment.base - paidBase) },
+  };
+}
+
+// Удержать сумму из авансов сотрудника (старые первыми). От записи аванса
+// отделяется часть — она станет выплатой с датой и способом оплаты аванса:
+// деньги ушли тогда, сейчас их просто зачли.
+function withholdFromLoans(state, employeeId, payment) {
+  let left = payment.amount; // в валюте выплаты
+  const pieces = [];
+  const ops = [];
+  for (const loan of employeeLoans(state, employeeId).items) {
+    if (left <= 0.005) break;
+    let take;
+    if (loan.currency === payment.currency) {
+      take = round(Math.min(left, loan.amount));
+      left = round(left - take);
+    } else {
+      const takeBase = Math.min(left * payment.fx, loan.base);
+      take = takeBase >= loan.base - 0.005 ? loan.amount : round(takeBase / loan.fx);
+      left = round(left - takeBase / payment.fx);
+    }
+    if (!(take > 0)) continue;
+    const whole = take >= loan.amount - 0.005;
+    const base = whole ? loan.base : toBase(take, loan.currency, loan.fx);
+    pieces.push({ loan, money: { amount: whole ? loan.amount : take, currency: loan.currency, fx: loan.fx, base } });
+    ops.push(whole
+      ? op.remove('expenses', loan.id)
+      : op.patch('expenses', loan.id, { amount: round(loan.amount - take), base: round(loan.base - base) }));
+  }
+  return { pieces, ops, short: left * payment.fx > 0.01 };
+}
+
+// Записи выплаты сотруднику. values.from === 'loan' — удержать из аванса
+// (новых денег не уходит), иначе деньгами; то, что сверх долга, — аванс
+// в счёт будущих выплат. makeExpense(часть) строит расход, makeItem(расход) —
+// отметку о выплате в начислении или работе.
+function payout(state, employee, payment, values, limit, makeExpense, makeItem) {
+  const ops = [];
+  const parts = [];
+  let extraMoney = null;
+  if (values.from === 'loan') {
+    if (overLimit(payment, limit)) {
+      return { ok: false, error: `Из аванса можно удержать не больше того, что причитается: ${formatAmount(limit.amount, limit.currency)}` };
+    }
+    const held = withholdFromLoans(state, employee?.id, payment);
+    if (held.short) {
+      const loans = employeeLoans(state, employee?.id);
+      return {
+        ok: false,
+        error: loans.base > 0
+          ? `Аванса осталось ${loans.byCurrency.map((item) => formatAmount(item.amount, item.currency)).join(' + ')} — больше удержать нельзя`
+          : 'У сотрудника нет аванса',
+      };
+    }
+    ops.push(...held.ops);
+    for (const piece of held.pieces) {
+      parts.push({ money: piece.money, date: piece.loan.date, method: piece.loan.method || 'cash', loan: piece.loan });
+    }
+  } else {
+    const { paid, extra } = splitOverpay(payment, limit);
+    if (paid) parts.push({ money: paid, date: values.date || today(), method: values.method || 'cash' });
+    if (extra) {
+      extraMoney = extra;
+      ops.push(op.insert('expenses', loanRecord(employee, extra, { ...values, comment: '' },
+        `Аванс сверх начисленного · ${employee?.name || ''}`.trim())));
+    }
+  }
+  let first = null;
+  for (const part of parts) {
+    const expense = {
+      ...makeExpense(part),
+      id: uid('exp'),
+      date: part.date,
+      ...part.money,
+      method: part.method,
+      createdBy: currentOwner(),
+      createdAt: today(),
+    };
+    if (part.loan) {
+      // Чтобы при удалении удержания вернуть сумму в аванс.
+      Object.assign(expense, { loanId: part.loan.id, loanDate: part.loan.date, loanComment: part.loan.comment || '' });
+      if (!values.comment) expense.comment = `${expense.comment} · из аванса`;
+    }
+    first = first || expense;
+    ops.push(op.insert('expenses', expense), makeItem(expense));
+  }
+  store.commit(ops);
+  return { ok: true, expense: first, extra: extraMoney };
+}
+
 // Выплата доли сотруднику на проценте: не больше того, что уже заработано
 // оплатами клиента (студия не платит долю вперёд из своих денег).
 function payShare(assignment, project, info, values) {
@@ -431,40 +571,22 @@ function payShare(assignment, project, info, values) {
     fx: values.fx ?? (isBase(info.currency) ? 1 : project?.fx),
   }, state.settings);
   if (payment.base <= 0) return { ok: false, error: 'Укажите сумму больше нуля' };
-  const over = payment.currency === info.currency
-    ? payment.amount > info.available + 0.005
-    : payment.base > info.availableBase + 0.01;
-  if (over) {
-    return {
-      ok: false,
-      error: info.available > 0
-        ? `Сейчас можно выплатить не больше ${formatAmount(info.available, info.currency)} — ${info.percent}% от того, что уже оплатил клиент`
-        : `Клиент пока не оплатил ничего сверх уже выплаченной доли. Доля станет доступна после следующей оплаты клиента`,
-    };
-  }
+  // Сверх доступной доли — это уже аванс сотруднику в счёт будущих выплат.
   const employee = store.byId('employees', assignment.employeeId);
-  const expense = {
-    id: uid('exp'),
-    date: values.date || today(),
-    category: 'staff/share',
-    ...payment,
-    projectId: assignment.projectId,
-    employeeId: assignment.employeeId,
-    assignmentId: assignment.id,
-    source: 'assignment',
-    method: values.method || 'cash',
-    comment: values.comment || `Доля ${info.percent}% · ${employee?.name || ''} · ${project?.name || ''}`.trim(),
-    createdBy: currentOwner(),
-    createdAt: today(),
-  };
-  store.commit([
-    op.insert('expenses', expense),
-    op.putItem('assignments', assignment.id, 'payments', {
-      id: uid('apt'), expenseId: expense.id, part: 'share', date: expense.date,
-      amount: payment.amount, currency: payment.currency, base: payment.base,
+  return payout(state, employee, payment, values,
+    { amount: info.available, currency: info.currency, base: info.availableBase },
+    () => ({
+      category: 'staff/share',
+      projectId: assignment.projectId,
+      employeeId: assignment.employeeId,
+      assignmentId: assignment.id,
+      source: 'assignment',
+      comment: values.comment || `Доля ${info.percent}% · ${employee?.name || ''} · ${project?.name || ''}`.trim(),
     }),
-  ]);
-  return { ok: true, expense };
+    (expense) => op.putItem('assignments', assignment.id, 'payments', {
+      id: uid('apt'), expenseId: expense.id, part: 'share', date: values.date || today(),
+      amount: expense.amount, currency: expense.currency, base: expense.base,
+    }));
 }
 
 // Выплата аванса или остатка сдельному сотруднику.
@@ -492,58 +614,36 @@ export function payAssignment(assignmentId, part, values = {}) {
     fx: values.fx ?? assignment.fx,
   }, state.settings);
   if (payment.base <= 0) return { ok: false, error: 'Укажите сумму больше нуля' };
-  // Больше, чем начислено за работу, выплатить нельзя: переплата нигде
-  // бы не числилась и просто пропала бы из учёта. Небольшой допуск —
-  // на округление при пересчёте между валютами.
-  // Аванс — не больше того, что ещё не выплачено остатком (остаток могли
-  // отдать раньше аванса).
-  const limitBase = part === 'advance'
-    ? round(Math.max(0, info.accruedBase - info.finalPaidBase - info.advancePaidBase)) : info.remainderBase;
-  // В валюте ставки сравниваем сами суммы, в другой валюте — доллары
-  // (с допуском в цент на округление пересчёта).
-  const limitAmount = part === 'advance'
-    ? round(Math.max(0, info.accrued - info.finalPaidCur - info.advancePaidCur)) : info.remainder;
-  const over = payment.currency === assignment.currency
-    ? payment.amount > limitAmount + 0.005
-    : payment.base > limitBase + 0.01;
-  if (over) {
-    return {
-      ok: false,
-      error: part === 'advance'
-        ? `Аванс не может быть больше невыплаченной суммы за работу (${formatAmount(limitBase)})`
-        : `Остаток к выплате — ${formatAmount(limitBase)}. Если сумма за работу изменилась, сначала поправьте площадь или ставку`,
-    };
-  }
+  // Сколько причитается за работу. Аванс — не больше того, что ещё не
+  // выплачено остатком (остаток могли отдать раньше аванса). Всё, что
+  // сверх, — аванс сотруднику в счёт будущих выплат.
+  const limit = part === 'advance'
+    ? {
+      amount: round(Math.max(0, info.accrued - info.finalPaidCur - info.advancePaidCur)),
+      currency: assignment.currency,
+      base: round(Math.max(0, info.accruedBase - info.finalPaidBase - info.advancePaidBase)),
+    }
+    : { amount: info.remainder, currency: assignment.currency, base: info.remainderBase };
 
   const employee = store.byId('employees', assignment.employeeId);
-  const expense = {
-    id: uid('exp'),
-    date: values.date || today(),
-    category: part === 'advance' ? 'staff/advance' : 'staff/final',
-    ...payment,
-    projectId: assignment.projectId,
-    employeeId: assignment.employeeId,
-    assignmentId: assignment.id,
-    source: 'assignment',
-    method: values.method || 'cash',
-    comment: values.comment
-      || `${part === 'advance' ? 'Аванс' : 'Остаток'} · ${employee?.name || ''} · ${project?.name || ''}`.trim(),
-    createdBy: currentOwner(),
-    createdAt: today(),
-  };
-
   // Каждая выплата — отдельной строкой в payments: остаток можно отдать
   // частями, а удаление одной выплаты убирает только её.
-  const ops = [
-    op.insert('expenses', expense),
-    op.putItem('assignments', assignmentId, 'payments', {
-      id: uid('apt'), expenseId: expense.id, part, date: expense.date,
-      amount: payment.amount, currency: payment.currency, base: payment.base,
+  const result = payout(state, employee, payment, values, limit,
+    () => ({
+      category: part === 'advance' ? 'staff/advance' : 'staff/final',
+      projectId: assignment.projectId,
+      employeeId: assignment.employeeId,
+      assignmentId: assignment.id,
+      source: 'assignment',
+      comment: values.comment
+        || `${part === 'advance' ? 'Аванс' : 'Остаток'} · ${employee?.name || ''} · ${project?.name || ''}`.trim(),
     }),
-  ];
-  if (part === 'final') ops.push(op.patch('assignments', assignmentId, { stage: 'approved' }));
-  store.commit(ops);
-  return { ok: true, expense };
+    (expense) => op.putItem('assignments', assignmentId, 'payments', {
+      id: uid('apt'), expenseId: expense.id, part, date: values.date || today(),
+      amount: expense.amount, currency: expense.currency, base: expense.base,
+    }));
+  if (result.ok && part === 'final') store.patch('assignments', assignmentId, { stage: 'approved' });
+  return result;
 }
 
 // ------------------------------------------------------------- зарплаты
@@ -627,43 +727,31 @@ export function payPayroll(payrollId, values = {}) {
   const paidInCurrency = (payroll.payments || []).reduce((total, item) => total + (item.currency === payroll.currency
     ? Number(item.amount) || 0
     : (Number(item.base) || 0) / (Number(payroll.fx) || 1)), 0);
-  const leftInCurrency = Math.max(0, (Number(payroll.amount) || 0) - paidInCurrency);
-  const over = payment.currency === payroll.currency
-    ? payment.amount > leftInCurrency + 0.005
-    : payment.base > info.leftBase + 0.01;
-  if (over) {
-    return { ok: false, error: `Осталось выплатить ${formatAmount(info.leftBase)} — больше начисленного выплатить нельзя` };
-  }
+  const leftInCurrency = isBase(payroll.currency)
+    ? info.leftBase
+    : Math.max(0, round((Number(payroll.amount) || 0) - paidInCurrency));
 
+  // Сверх начисленного — аванс сотруднику в счёт будущих выплат.
   const employee = store.byId('employees', payroll.employeeId);
-  const expense = {
-    id: uid('exp'),
-    date: values.date || today(),
-    category: 'staff/salary',
-    ...payment,
-    projectId: null,
-    employeeId: payroll.employeeId,
-    payrollId: payroll.id,
-    source: 'payroll',
-    method: values.method || 'cash',
-    comment: values.comment || `Зарплата · ${employee?.name || ''} · ${monthLabel(payroll.month)}`.trim(),
-    createdBy: currentOwner(),
-    createdAt: today(),
-  };
-
-  store.commit([
-    op.insert('expenses', expense),
-    op.putItem('payrolls', payrollId, 'payments', {
-      id: uid('prt'),
-      date: expense.date,
-      expenseId: expense.id,
-      amount: payment.amount,
-      currency: payment.currency,
-      fx: payment.fx,
-      base: payment.base,
+  return payout(state, employee, payment, values,
+    { amount: leftInCurrency, currency: payroll.currency, base: info.leftBase },
+    () => ({
+      category: 'staff/salary',
+      projectId: null,
+      employeeId: payroll.employeeId,
+      payrollId: payroll.id,
+      source: 'payroll',
+      comment: values.comment || `Зарплата · ${employee?.name || ''} · ${monthLabel(payroll.month)}`.trim(),
     }),
-  ]);
-  return { ok: true, expense };
+    (expense) => op.putItem('payrolls', payrollId, 'payments', {
+      id: uid('prt'),
+      date: values.date || today(),
+      expenseId: expense.id,
+      amount: expense.amount,
+      currency: expense.currency,
+      fx: expense.fx,
+      base: expense.base,
+    }));
 }
 
 // --------------------------------------------------- приходы и расходы
@@ -755,6 +843,35 @@ export function deleteExpense(id) {
   // удаляем обе, иначе долг студии останется висеть без основания.
   if (expense.source === 'founder' && expense.founderMoveId) {
     ops.push(op.remove('draws', expense.founderMoveId));
+  }
+  // Удержание из аванса отменили — деньги снова числятся авансом сотрудника
+  // (из кассы они ушли, просто ещё не отработаны).
+  if (expense.loanId && ['payroll', 'assignment'].includes(expense.source)
+    && state.employees.some((item) => item.id === expense.employeeId)) {
+    const loan = state.expenses.find((item) => item.id === expense.loanId);
+    if (loan && loan.source === 'loan' && loan.currency === expense.currency) {
+      ops.push(op.patch('expenses', loan.id, {
+        amount: round((Number(loan.amount) || 0) + (Number(expense.amount) || 0)),
+        base: round((Number(loan.base) || 0) + (Number(expense.base) || 0)),
+      }));
+    } else {
+      ops.push(op.insert('expenses', {
+        id: loan ? uid('exp') : expense.loanId,
+        date: expense.loanDate || expense.date,
+        category: 'staff/loan',
+        amount: expense.amount,
+        currency: expense.currency,
+        fx: expense.fx,
+        base: expense.base,
+        projectId: null,
+        employeeId: expense.employeeId,
+        source: 'loan',
+        method: expense.method || 'cash',
+        comment: expense.loanComment || 'Аванс в счёт будущих выплат',
+        createdBy: expense.createdBy || currentOwner(),
+        createdAt: today(),
+      }));
+    }
   }
   store.commit(ops);
   return { ok: true };

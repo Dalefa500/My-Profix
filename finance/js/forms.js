@@ -13,6 +13,7 @@ import {
 } from './model.js';
 import {
   assignmentState, assignmentStateIn, assignmentTotals, assignmentHasPayments, payrollState, barterState,
+  employeeLoans,
 } from './calc.js';
 
 const option = (value, label) => ({ value, label });
@@ -585,6 +586,113 @@ export function openExpenseForm(prefill = {}, onDone) {
 
 // ------------------------------------------------------------- выплаты
 
+// ------------------------------------------- выплаты и авансы сотрудникам
+
+function loansText(loans) {
+  return loans.byCurrency.map((item) => formatAmount(item.amount, item.currency)).join(' + ');
+}
+
+// «Откуда выплата» — только если у сотрудника есть невыплаченный аванс.
+function loanSourceFields(employeeId) {
+  const loans = employeeLoans(getState(), employeeId);
+  if (!(loans.base > 0)) return [];
+  return [{
+    name: 'from', label: 'Откуда выплата', type: 'segmented', wide: true,
+    options: [option('cash', 'Деньгами'), option('loan', 'Удержать из аванса')],
+    value: 'cash',
+    hint: `Аванс сотрудника: ${loansText(loans)} — его можно удержать из этой выплаты`,
+  }];
+}
+
+// Под суммой — что будет с ней: сверх начисленного уйдёт авансом,
+// а при удержании из аванса новых денег из кассы не уходит.
+function bindPayoutNote(limit) {
+  const panel = document.querySelector('.sheet__panel');
+  const form = panel?.querySelector('form');
+  const amountField = form?.querySelector('[data-field-name="amount"]');
+  if (!form || !amountField) return;
+  const note = document.createElement('div');
+  note.className = 'form__preview field--wide';
+  note.style.cssText = 'margin-top:0;background:var(--info-soft);color:var(--ink)';
+  note.hidden = true;
+  amountField.after(note);
+  const read = (name) => form.querySelector(`[name="${name}"]`)?.value;
+  const update = () => {
+    const amount = Number(parseNum(read('amount'))) || 0;
+    const currency = read('amount__currency') || limit.currency;
+    const fx = Number(read('amount__fx')) || 1;
+    const owed = currency === limit.currency ? limit.amount : limit.base / fx;
+    const over = currency === limit.currency ? amount > limit.amount + 0.005 : amount * fx > limit.base + 0.01;
+    let text = '';
+    if (read('from') === 'loan') {
+      text = over
+        ? `Из аванса можно удержать не больше ${formatAmount(limit.amount, limit.currency)}`
+        : 'Сумма удержится из аванса — новых денег из кассы не уходит.';
+    } else if (amount > 0 && over) {
+      const extra = Math.round((amount - Math.max(0, owed)) * 100) / 100;
+      text = owed > 0.005
+        ? `${formatAmount(owed, currency)} — в счёт начисленного, ${formatAmount(extra, currency)} — аванс в счёт будущих выплат. Его можно будет удержать из следующих выплат.`
+        : 'Вся сумма — аванс в счёт будущих выплат. Его можно будет удержать из следующих выплат.';
+    }
+    note.textContent = text;
+    note.hidden = !text;
+  };
+  form.addEventListener('input', update);
+  form.addEventListener('change', update);
+  update();
+}
+
+function payoutToast(result, fallback) {
+  if (result.extra) {
+    toast(result.expense
+      ? `Выплачено, сверх начисленного ${formatAmount(result.extra.amount, result.extra.currency)} записано авансом`
+      : `Записано авансом: ${formatAmount(result.extra.amount, result.extra.currency)}`, 'good');
+  } else {
+    toast(fallback, 'good');
+  }
+}
+
+// Аванс сотруднику в счёт будущих выплат (например, помочь в трудной
+// ситуации): деньги уходят сейчас, а сотрудник потом их отрабатывает.
+export function openLoanForm(employeeId, onDone) {
+  const employee = byId('employees', employeeId);
+  if (!employee) return;
+  const loans = employeeLoans(getState(), employeeId);
+  const currency = employee.payType === 'fixed' ? employee.salaryCurrency
+    : employee.payType === 'piecework' ? employee.rateCurrency : null;
+  openForm({
+    title: 'Выдать аванс',
+    intro: `${employee.name} · деньги в счёт будущих выплат. Потом их можно удержать из зарплаты, доли или оплаты за работу.`
+      + (loans.base > 0 ? ` Уже выдано и не отработано: ${loansText(loans)}.` : ''),
+    fields: [
+      {
+        name: 'amount', label: 'Сумма аванса', type: 'money', required: true, value: '',
+        currency: currency || getState().settings.baseCurrency,
+      },
+      { name: 'date', label: 'Дата', type: 'date', required: true, value: today() },
+    ],
+    advanced: [
+      {
+        name: 'method', label: 'Способ оплаты', type: 'select',
+        options: PAYMENT_METHODS.map((item) => option(item.id, item.label)), value: 'cash',
+      },
+      { name: 'comment', label: 'Комментарий', type: 'textarea', wide: true, placeholder: 'Например: помочь с лечением' },
+    ],
+    submitLabel: 'Выдать',
+    onSubmit: (values) => {
+      const result = actions.giveLoan(employeeId, {
+        ...values,
+        currency: values.amountCurrency,
+        fx: values.amountFx,
+      });
+      if (!result.ok) return result.error;
+      toast('Аванс записан — его можно удержать из следующих выплат', 'good');
+      onDone?.();
+      return true;
+    },
+  });
+}
+
 export function openAssignmentPayment(assignmentId, part, onDone) {
   const assignment = byId('assignments', assignmentId);
   const project = byId('projects', assignment?.projectId);
@@ -601,6 +709,7 @@ export function openAssignmentPayment(assignmentId, part, onDone) {
       intro: `${employee?.name || ''} · ${project?.name || ''} · ${info.percent}% от суммы проекта. `
         + `Клиент оплатил — доля ${formatAmount(info.earned, info.currency)}, выплачено ${formatAmount(info.paidCur, info.currency)}.`,
       fields: [
+        ...loanSourceFields(assignment.employeeId),
         {
           name: 'amount', label: 'Сумма выплаты', type: 'money', required: true,
           value: info.available, currency: info.currency, fx: project?.fx,
@@ -623,11 +732,12 @@ export function openAssignmentPayment(assignmentId, part, onDone) {
           fx: values.amountFx,
         });
         if (!result.ok) return result.error;
-        toast('Выплата доли записана в расходы компании', 'good');
+        payoutToast(result, 'Выплата доли записана в расходы компании');
         onDone?.();
         return true;
       },
     });
+    bindPayoutNote({ amount: info.available, currency: info.currency, base: info.availableBase });
     return;
   }
 
@@ -641,6 +751,7 @@ export function openAssignmentPayment(assignmentId, part, onDone) {
     title: part === 'advance' ? 'Выплатить аванс' : 'Выплатить остаток',
     intro: `${employee?.name || ''} · ${project?.name || ''} · ${info.area} м² × ${formatAmount(info.rate, info.currency)}`,
     fields: [
+      ...loanSourceFields(assignment.employeeId),
       {
         name: 'amount', label: 'Сумма выплаты', type: 'money', required: true,
         value: amount, currency: assignment.currency, fx: assignment.fx,
@@ -662,11 +773,18 @@ export function openAssignmentPayment(assignmentId, part, onDone) {
         fx: values.amountFx,
       });
       if (!result.ok) return result.error;
-      toast('Выплата записана в расходы компании', 'good');
+      payoutToast(result, 'Выплата записана в расходы компании');
       onDone?.();
       return true;
     },
   });
+  bindPayoutNote(part === 'advance'
+    ? {
+      amount: Math.max(0, info.accrued - info.finalPaidCur - info.advancePaidCur),
+      currency: assignment.currency,
+      base: Math.max(0, info.accruedBase - info.finalPaidBase - info.advancePaidBase),
+    }
+    : { amount: info.remainder, currency: assignment.currency, base: info.remainderBase });
 }
 
 export function openPayrollPayment(payrollId, onDone) {
@@ -687,10 +805,11 @@ export function openPayrollPayment(payrollId, onDone) {
     title: 'Выплатить зарплату',
     intro: `${employee?.name || ''} · ${monthLabel(payroll.month)} · начислено ${formatAmount(info.accruedBase)}, осталось ${formatAmount(info.leftBase)}`,
     fields: [
+      ...loanSourceFields(payroll.employeeId),
       {
         name: 'amount', label: 'Сумма выплаты', type: 'money', required: true,
         value: Math.round(leftInCurrency * 100) / 100, currency: payroll.currency, fx: payroll.fx,
-        hint: 'Можно выплатить частично — остаток сохранится',
+        hint: 'Можно выплатить частично — остаток сохранится. Больше начисленного — разница станет авансом',
       },
       { name: 'date', label: 'Дата выплаты', type: 'date', required: true, value: today() },
     ],
@@ -709,11 +828,12 @@ export function openPayrollPayment(payrollId, onDone) {
         fx: values.amountFx,
       });
       if (!result.ok) return result.error;
-      toast('Зарплата выплачена', 'good');
+      payoutToast(result, 'Зарплата выплачена');
       onDone?.();
       return true;
     },
   });
+  bindPayoutNote({ amount: Math.round(leftInCurrency * 100) / 100, currency: payroll.currency, base: info.leftBase });
 }
 
 // ----------------------------------------------------- планируемые расходы
