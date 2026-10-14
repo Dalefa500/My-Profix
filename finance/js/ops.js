@@ -150,7 +150,7 @@ function cleanSettings(changes) {
 // Проверка формы операций до применения (на сервере): глубина вложенности
 // и размер ограничены, чтобы одна испорченная операция не могла уронить
 // сервер или раздуть данные.
-const OP_TYPES = ['insert', 'patch', 'remove', 'settings', 'item'];
+const OP_TYPES = ['insert', 'patch', 'remove', 'settings', 'item', 'adjust'];
 const MAX_DEPTH = 12;
 const MAX_OP_BYTES = 256 * 1024;
 
@@ -183,6 +183,16 @@ export function validateOps(ops) {
     }
     if (op.unset !== undefined && !(Array.isArray(op.unset) && op.unset.every((field) => typeof field === 'string'))) {
       throw new Error('Неверные изменения');
+    }
+    if (op.type === 'adjust') {
+      const deltas = Object.entries(op.changes || {});
+      if (!deltas.length || !deltas.every(([field, delta]) => /^[a-z][a-zA-Z]{0,30}$/.test(field) && Number.isFinite(delta))) {
+        throw new Error('Неверные изменения');
+      }
+      if (op.guard !== undefined && (!op.guard || typeof op.guard !== 'object'
+        || typeof op.guard.id !== 'string' || op.guard.id.length > 80)) throw new Error('Неверная операция');
+      if (op.record !== undefined && (!op.record || typeof op.record !== 'object' || Array.isArray(op.record)
+        || op.record.id !== op.id)) throw new Error('Неверная запись');
     }
   }
   return true;
@@ -245,6 +255,36 @@ export function applyOp(data, op) {
       items[index] = { ...items[index], [op.field]: list };
       return data;
     }
+    // Прибавить к числовым полям записи (например, уменьшить остаток
+    // аванса). В отличие от patch, такие правки с двух телефонов
+    // складываются, а не затирают друг друга. guard делает операцию
+    // однократной: она применяется, только если записи-свидетеля ещё нет
+    // (exists: false) или она ещё есть (exists: true), — повторная
+    // доставка того же пакета ничего не меняет.
+    case 'adjust': {
+      if (op.guard) {
+        const exists = collectionOf(data, op.guard.collection).some((item) => item.id === op.guard.id);
+        if (exists !== Boolean(op.guard.exists)) return data;
+      }
+      const items = collectionOf(data, op.collection);
+      const index = items.findIndex((item) => item.id === op.id);
+      const add = (value, delta) => Math.round(((Number(value) || 0) + Number(delta)) * 100) / 100;
+      if (index === -1) {
+        // Записи уже нет (её исчерпали на другом телефоне) — заводим заново
+        // с одной этой разницей, чтобы суммы сошлись.
+        if (op.record?.id) {
+          const record = { ...op.record };
+          for (const [field, delta] of Object.entries(op.changes || {})) record[field] = add(0, delta);
+          items.unshift(record);
+        }
+        return data;
+      }
+      const next = { ...items[index] };
+      for (const [field, delta] of Object.entries(op.changes || {})) next[field] = add(next[field], delta);
+      if (op.dropIfZero && Math.abs(Number(next[op.dropIfZero]) || 0) <= 0.005) items.splice(index, 1);
+      else items[index] = next;
+      return data;
+    }
     default:
       throw new Error(`Неизвестная операция: ${op.type}`);
   }
@@ -260,6 +300,7 @@ export const op = {
   insert: (collection, record) => ({ type: 'insert', collection, record }),
   patch: (collection, id, changes, unset) => ({ type: 'patch', collection, id, changes, unset }),
   remove: (collection, id) => ({ type: 'remove', collection, id }),
+  adjust: (collection, id, changes, extra = {}) => ({ type: 'adjust', collection, id, changes, ...extra }),
   settings: (changes) => ({ type: 'settings', changes }),
   // Один элемент вложенного списка: добавить/заменить или убрать.
   putItem: (collection, id, field, item) => ({ type: 'item', collection, id, field, item }),

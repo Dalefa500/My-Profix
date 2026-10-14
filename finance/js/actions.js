@@ -478,31 +478,47 @@ function splitOverpay(payment, limit) {
 // отделяется часть — она станет выплатой с датой и способом оплаты аванса:
 // деньги ушли тогда, сейчас их просто зачли.
 // Считаем в валюте обязательства и по его курсу (limit.fx): начисление
-// пересчитывает выплаты в другой валюте именно так, и зачтётся ровно
-// введённая сумма, даже если аванс выдан в другой валюте или по другому курсу.
+// пересчитывает выплаты в другой валюте именно так. settle — сколько
+// зачтено в валюте обязательства: отметка о выплате пишется в ней, чтобы
+// не оставалось «хвостов» вроде 0,02 сомони из-за округления долларов.
 function withholdFromLoans(state, employeeId, payment, limit) {
   const owedFx = Number(limit.fx) > 0 ? Number(limit.fx) : 1;
-  let left = payment.currency === limit.currency ? payment.amount : payment.base / owedFx;
+  let left = round(payment.currency === limit.currency ? payment.amount : payment.base / owedFx);
   const pieces = [];
   const ops = [];
   for (const loan of employeeLoans(state, employeeId).items) {
     if (left * owedFx <= 0.005) break;
     let take;
+    let settled;
     if (loan.currency === limit.currency) {
       take = round(Math.min(left, loan.amount));
-      left = round(left - take);
+      settled = take;
+    } else if (left * owedFx < loan.base - 0.005) {
+      take = round(left * owedFx / loan.fx);
+      settled = left;
     } else {
-      const takeBase = Math.min(left * owedFx, loan.base);
-      take = takeBase >= loan.base - 0.005 ? loan.amount : round(takeBase / loan.fx);
-      left -= takeBase / owedFx;
+      take = loan.amount;
+      settled = round(loan.base / owedFx);
     }
     if (!(take > 0)) continue;
+    left = round(left - settled);
     const whole = take >= loan.amount - 0.005;
+    const amount = whole ? loan.amount : take;
     const base = whole ? loan.base : toBase(take, loan.currency, loan.fx);
-    pieces.push({ loan, money: { amount: whole ? loan.amount : take, currency: loan.currency, fx: loan.fx, base } });
-    ops.push(whole
-      ? op.remove('expenses', loan.id)
-      : op.patch('expenses', loan.id, { amount: round(loan.amount - take), base: round(loan.base - base) }));
+    const id = uid('exp');
+    pieces.push({
+      id,
+      loan,
+      money: { amount, currency: loan.currency, fx: loan.fx, base },
+      settle: { amount: settled, currency: limit.currency, fx: owedFx, base },
+    });
+    // Разница, а не новая сумма: удержания с двух телефонов складываются.
+    // Однократно — пока выплаты-части ещё нет.
+    ops.push(op.adjust('expenses', loan.id, { amount: -amount, base: -base }, {
+      dropIfZero: 'amount',
+      guard: { collection: 'expenses', id, exists: false },
+      record: loan,
+    }));
   }
   return { pieces, ops, short: left * owedFx > 0.01 };
 }
@@ -531,7 +547,10 @@ function payout(state, employee, payment, values, limit, makeExpense, makeItem) 
     }
     ops.push(...held.ops);
     for (const piece of held.pieces) {
-      parts.push({ money: piece.money, date: piece.loan.date, method: piece.loan.method || 'cash', loan: piece.loan });
+      parts.push({
+        id: piece.id, money: piece.money, settle: piece.settle,
+        date: piece.loan.date, method: piece.loan.method || 'cash', loan: piece.loan,
+      });
     }
   } else {
     const { paid, extra } = splitOverpay(payment, limit);
@@ -546,7 +565,7 @@ function payout(state, employee, payment, values, limit, makeExpense, makeItem) 
   for (const part of parts) {
     const expense = {
       ...makeExpense(part),
-      id: uid('exp'),
+      id: part.id || uid('exp'),
       date: part.date,
       ...part.money,
       method: part.method,
@@ -559,7 +578,7 @@ function payout(state, employee, payment, values, limit, makeExpense, makeItem) 
       if (!values.comment) expense.comment = `${expense.comment} · из аванса`;
     }
     first = first || expense;
-    ops.push(op.insert('expenses', expense), makeItem(expense));
+    ops.push(op.insert('expenses', expense), makeItem(expense, part.settle || part.money));
   }
   store.commit(ops);
   return { ok: true, expense: first, extra: extraMoney };
@@ -592,9 +611,9 @@ function payShare(assignment, project, info, values) {
       source: 'assignment',
       comment: values.comment || `Доля ${info.percent}% · ${employee?.name || ''} · ${project?.name || ''}`.trim(),
     }),
-    (expense) => op.putItem('assignments', assignment.id, 'payments', {
+    (expense, settle) => op.putItem('assignments', assignment.id, 'payments', {
       id: uid('apt'), expenseId: expense.id, part: 'share', date: values.date || today(),
-      amount: expense.amount, currency: expense.currency, base: expense.base,
+      amount: settle.amount, currency: settle.currency, base: settle.base,
     }));
 }
 
@@ -648,9 +667,9 @@ export function payAssignment(assignmentId, part, values = {}) {
       comment: values.comment
         || `${part === 'advance' ? 'Аванс' : 'Остаток'} · ${employee?.name || ''} · ${project?.name || ''}`.trim(),
     }),
-    (expense) => op.putItem('assignments', assignmentId, 'payments', {
+    (expense, settle) => op.putItem('assignments', assignmentId, 'payments', {
       id: uid('apt'), expenseId: expense.id, part, date: values.date || today(),
-      amount: expense.amount, currency: expense.currency, base: expense.base,
+      amount: settle.amount, currency: settle.currency, base: settle.base,
     }));
   if (result.ok && part === 'final') store.patch('assignments', assignmentId, { stage: 'approved' });
   return result;
@@ -753,14 +772,14 @@ export function payPayroll(payrollId, values = {}) {
       source: 'payroll',
       comment: values.comment || `Зарплата · ${employee?.name || ''} · ${monthLabel(payroll.month)}`.trim(),
     }),
-    (expense) => op.putItem('payrolls', payrollId, 'payments', {
+    (expense, settle) => op.putItem('payrolls', payrollId, 'payments', {
       id: uid('prt'),
       date: values.date || today(),
       expenseId: expense.id,
-      amount: expense.amount,
-      currency: expense.currency,
-      fx: expense.fx,
-      base: expense.base,
+      amount: settle.amount,
+      currency: settle.currency,
+      fx: settle.fx,
+      base: settle.base,
     }));
 }
 
@@ -855,24 +874,20 @@ export function deleteExpense(id) {
     ops.push(op.remove('draws', expense.founderMoveId));
   }
   // Удержание из аванса отменили — деньги снова числятся авансом сотрудника
-  // (из кассы они ушли, просто ещё не отработаны).
-  if (expense.loanId && ['payroll', 'assignment'].includes(expense.source)
-    && state.employees.some((item) => item.id === expense.employeeId)) {
+  // (из кассы они ушли, просто ещё не отработаны). Разницей и однократно —
+  // пока сама выплата-часть ещё есть, поэтому идёт первой в пакете.
+  if (expense.loanId && state.employees.some((item) => item.id === expense.employeeId)) {
     const loan = state.expenses.find((item) => item.id === expense.loanId);
-    if (loan && loan.source === 'loan' && loan.currency === expense.currency) {
-      ops.push(op.patch('expenses', loan.id, {
-        amount: round((Number(loan.amount) || 0) + (Number(expense.amount) || 0)),
-        base: round((Number(loan.base) || 0) + (Number(expense.base) || 0)),
-      }));
-    } else {
-      ops.push(op.insert('expenses', {
-        id: loan ? uid('exp') : expense.loanId,
+    const sameLoan = !loan || (loan.source === 'loan' && loan.currency === expense.currency);
+    const loanId = sameLoan ? expense.loanId : uid('exp');
+    ops.unshift(op.adjust('expenses', loanId, { amount: Number(expense.amount) || 0, base: Number(expense.base) || 0 }, {
+      guard: { collection: 'expenses', id: expense.id, exists: true },
+      record: {
+        id: loanId,
         date: expense.loanDate || expense.date,
         category: 'staff/loan',
-        amount: expense.amount,
         currency: expense.currency,
         fx: expense.fx,
-        base: expense.base,
         projectId: null,
         employeeId: expense.employeeId,
         source: 'loan',
@@ -880,8 +895,8 @@ export function deleteExpense(id) {
         comment: expense.loanComment || 'Аванс в счёт будущих выплат',
         createdBy: expense.createdBy || currentOwner(),
         createdAt: today(),
-      }));
-    }
+      },
+    }));
   }
   store.commit(ops);
   return { ok: true };

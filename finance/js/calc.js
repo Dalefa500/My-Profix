@@ -735,19 +735,25 @@ export function payrollMonthsFor(employee, nowIso = today()) {
 export function employeeLoans(state, employeeId) {
   // Старые первыми: новые записи стоят в начале списка, поэтому при
   // одинаковой дате раньше идёт та, что дальше в списке.
-  const items = state.expenses
+  // Отрицательная запись бывает, если с двух телефонов удержали больше,
+  // чем было: она уменьшает итог, но удерживать из неё нечего.
+  const all = state.expenses.filter((item) => item.employeeId === employeeId && item.source === 'loan');
+  const items = all
     .map((item, index) => ({ item, index }))
-    .filter(({ item }) => item.employeeId === employeeId && item.source === 'loan' && Number(item.amount) > 0)
+    .filter(({ item }) => Number(item.amount) > 0)
     .sort((a, b) => String(a.item.date).localeCompare(String(b.item.date)) || b.index - a.index)
     .map(({ item }) => item);
   const byCurrency = new Map();
-  for (const item of items) {
+  for (const item of all) {
     byCurrency.set(item.currency, round((byCurrency.get(item.currency) || 0) + (Number(item.amount) || 0)));
   }
+  const base = sum(all, (item) => item.base);
   return {
-    items,
-    base: sum(items, (item) => item.base),
-    byCurrency: [...byCurrency].map(([currency, amount]) => ({ currency, amount })),
+    items: base > 0 ? items : [],
+    base: Math.max(0, base),
+    byCurrency: base > 0
+      ? [...byCurrency].filter(([, amount]) => amount > 0).map(([currency, amount]) => ({ currency, amount }))
+      : [],
   };
 }
 
