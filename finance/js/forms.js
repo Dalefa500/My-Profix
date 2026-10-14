@@ -595,7 +595,7 @@ function loansText(loans) {
 // «Откуда выплата» — только если у сотрудника есть невыплаченный аванс.
 function loanSourceFields(employeeId) {
   const loans = employeeLoans(getState(), employeeId);
-  if (!(loans.base > 0)) return [];
+  if (!loans.items.length || !(loans.base > 0.005)) return [];
   return [{
     name: 'from', label: 'Откуда выплата', type: 'segmented', wide: true,
     options: [option('cash', 'Деньгами'), option('loan', 'Удержать из аванса')],

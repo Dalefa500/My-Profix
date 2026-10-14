@@ -733,27 +733,47 @@ export function payrollMonthsFor(employee, nowIso = today()) {
 // доли часть суммы удерживается из аванса. Удержанная часть отделяется
 // от записи аванса, поэтому остаток аванса — это сами записи.
 export function employeeLoans(state, employeeId) {
+  const all = state.expenses.filter((item) => item.employeeId === employeeId && item.source === 'loan');
   // Старые первыми: новые записи стоят в начале списка, поэтому при
   // одинаковой дате раньше идёт та, что дальше в списке.
-  // Отрицательная запись бывает, если с двух телефонов удержали больше,
-  // чем было: она уменьшает итог, но удерживать из неё нечего.
-  const all = state.expenses.filter((item) => item.employeeId === employeeId && item.source === 'loan');
-  const items = all
+  const ordered = all
     .map((item, index) => ({ item, index }))
-    .filter(({ item }) => Number(item.amount) > 0)
     .sort((a, b) => String(a.item.date).localeCompare(String(b.item.date)) || b.index - a.index)
     .map(({ item }) => item);
+  // Сколько можно удержать из каждой записи. Отрицательная запись бывает,
+  // если с двух телефонов удержали больше, чем было: она уменьшает
+  // остатки других записей (сначала той же валюты, потом по долларам).
+  const items = ordered.filter((item) => Number(item.amount) > 0)
+    .map((item) => ({ ...item, amount: Number(item.amount), base: Number(item.base) || 0 }));
+  for (const minus of ordered.filter((item) => Number(item.amount) < 0)) {
+    let needBase = -(Number(minus.base) || 0);
+    let needAmount = -Number(minus.amount);
+    for (const sameCurrency of [true, false]) {
+      for (const item of items) {
+        if (needBase <= 0.005 || item.amount <= 0 || item.base <= 0
+          || (item.currency === minus.currency) !== sameCurrency) continue;
+        const take = sameCurrency
+          ? Math.min(needAmount, item.amount)
+          : Math.min(needBase, item.base) / item.base * item.amount;
+        const takeBase = take >= item.amount - 0.005 ? item.base : round(take * item.base / item.amount);
+        item.amount = round(item.amount - take);
+        item.base = round(item.base - takeBase);
+        needBase -= takeBase;
+        needAmount -= sameCurrency ? take : takeBase / (Number(minus.fx) || 1);
+      }
+    }
+  }
   const byCurrency = new Map();
   for (const item of all) {
     byCurrency.set(item.currency, round((byCurrency.get(item.currency) || 0) + (Number(item.amount) || 0)));
   }
-  const base = sum(all, (item) => item.base);
   return {
-    items: base > 0 ? items : [],
-    base: Math.max(0, base),
-    byCurrency: base > 0
-      ? [...byCurrency].filter(([, amount]) => amount > 0).map(([currency, amount]) => ({ currency, amount }))
-      : [],
+    // Записи (с учётом отрицательных), из которых можно удерживать.
+    items: items.filter((item) => item.amount > 0.005),
+    // Итог со знаком: меньше нуля — удержали больше, чем выдали.
+    base: sum(all, (item) => item.base),
+    byCurrency: [...byCurrency].filter(([, amount]) => Math.abs(amount) > 0.005)
+      .map(([currency, amount]) => ({ currency, amount })),
   };
 }
 

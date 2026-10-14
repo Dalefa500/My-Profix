@@ -281,7 +281,10 @@ export function applyOp(data, op) {
       }
       const next = { ...items[index] };
       for (const [field, delta] of Object.entries(op.changes || {})) next[field] = add(next[field], delta);
-      if (op.dropIfZero && Math.abs(Number(next[op.dropIfZero]) || 0) <= 0.005) items.splice(index, 1);
+      // Убираем запись, только если обнулились все поля (и сумма, и доллары):
+      // иначе пропал бы цент-другой, набежавший от округлений.
+      const zero = Object.keys(op.changes || {}).every((field) => Math.abs(Number(next[field]) || 0) <= 0.005);
+      if (op.dropIfZero && zero) items.splice(index, 1);
       else items[index] = next;
       return data;
     }

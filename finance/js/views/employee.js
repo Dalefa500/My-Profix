@@ -128,7 +128,15 @@ export default function employeeDetail(params) {
       <div class="stat"><span class="stat__label">Ждёт клиента</span><strong class="stat__value">${money(finance.lockedBase)}</strong></div>
     </div>
 
-    ${finance.loanBase > 0 ? raw(html`
+    ${finance.loanBase < -0.05 ? raw(html`
+      <div class="card">
+        <div class="section-title">
+          <h2>Из аванса удержали больше, чем выдали</h2>
+          <strong class="danger">${loansText(finance.loans)}</strong>
+        </div>
+        <p class="muted">Скорее всего, удержание провели одновременно с двух телефонов. Проверьте «Историю выплат» ниже и удалите лишнее удержание — сумма вернётся.</p>
+      </div>`) : ''}
+    ${finance.loanBase > 0.005 && finance.loans.items.length ? raw(html`
       <div class="card">
         <div class="section-title">
           <h2>Аванс — ещё не отработан</h2>
@@ -187,7 +195,7 @@ export default function employeeDetail(params) {
       root.querySelector('[data-act="loan"]').onclick = () => forms.openLoanForm(employee.id, refresh);
       root.querySelector('[data-act="delete"]').onclick = async () => {
         const ok = await confirmDialog(`Удалить сотрудника «${employee.name}»? Его начисления будут удалены, а проведённые выплаты останутся в расходах.${
-          finance.loanBase > 0 ? ` Не отработанный аванс ${loansText(finance.loans)} останется расходом студии.` : ''}`);
+          finance.loanBase > 0.005 ? ` Не отработанный аванс ${loansText(finance.loans)} останется расходом студии.` : ''}`);
         if (!ok) return;
         actions.deleteEmployee(employee.id);
         toast('Сотрудник удалён');

@@ -520,6 +520,14 @@ function withholdFromLoans(state, employeeId, payment, limit) {
       record: loan,
     }));
   }
+  // Копейки от пересчёта целого аванса по другому курсу относим к последней
+  // части: зачтено должно быть ровно столько, сколько ввели, — иначе
+  // осталось бы, например, 0,02 сомони, которые не выплатить.
+  if (pieces.length && Math.abs(left * owedFx) <= 0.011) {
+    const last = pieces[pieces.length - 1].settle;
+    last.amount = round(last.amount + left);
+    left = 0;
+  }
   return { pieces, ops, short: left * owedFx > 0.01 };
 }
 
