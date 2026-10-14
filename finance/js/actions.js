@@ -477,20 +477,24 @@ function splitOverpay(payment, limit) {
 // Удержать сумму из авансов сотрудника (старые первыми). От записи аванса
 // отделяется часть — она станет выплатой с датой и способом оплаты аванса:
 // деньги ушли тогда, сейчас их просто зачли.
-function withholdFromLoans(state, employeeId, payment) {
-  let left = payment.amount; // в валюте выплаты
+// Считаем в валюте обязательства и по его курсу (limit.fx): начисление
+// пересчитывает выплаты в другой валюте именно так, и зачтётся ровно
+// введённая сумма, даже если аванс выдан в другой валюте или по другому курсу.
+function withholdFromLoans(state, employeeId, payment, limit) {
+  const owedFx = Number(limit.fx) > 0 ? Number(limit.fx) : 1;
+  let left = payment.currency === limit.currency ? payment.amount : payment.base / owedFx;
   const pieces = [];
   const ops = [];
   for (const loan of employeeLoans(state, employeeId).items) {
-    if (left <= 0.005) break;
+    if (left * owedFx <= 0.005) break;
     let take;
-    if (loan.currency === payment.currency) {
+    if (loan.currency === limit.currency) {
       take = round(Math.min(left, loan.amount));
       left = round(left - take);
     } else {
-      const takeBase = Math.min(left * payment.fx, loan.base);
+      const takeBase = Math.min(left * owedFx, loan.base);
       take = takeBase >= loan.base - 0.005 ? loan.amount : round(takeBase / loan.fx);
-      left = round(left - takeBase / payment.fx);
+      left -= takeBase / owedFx;
     }
     if (!(take > 0)) continue;
     const whole = take >= loan.amount - 0.005;
@@ -500,7 +504,7 @@ function withholdFromLoans(state, employeeId, payment) {
       ? op.remove('expenses', loan.id)
       : op.patch('expenses', loan.id, { amount: round(loan.amount - take), base: round(loan.base - base) }));
   }
-  return { pieces, ops, short: left * payment.fx > 0.01 };
+  return { pieces, ops, short: left * owedFx > 0.01 };
 }
 
 // Записи выплаты сотруднику. values.from === 'loan' — удержать из аванса
@@ -515,7 +519,7 @@ function payout(state, employee, payment, values, limit, makeExpense, makeItem) 
     if (overLimit(payment, limit)) {
       return { ok: false, error: `Из аванса можно удержать не больше того, что причитается: ${formatAmount(limit.amount, limit.currency)}` };
     }
-    const held = withholdFromLoans(state, employee?.id, payment);
+    const held = withholdFromLoans(state, employee?.id, payment, limit);
     if (held.short) {
       const loans = employeeLoans(state, employee?.id);
       return {
@@ -574,7 +578,12 @@ function payShare(assignment, project, info, values) {
   // Сверх доступной доли — это уже аванс сотруднику в счёт будущих выплат.
   const employee = store.byId('employees', assignment.employeeId);
   return payout(state, employee, payment, values,
-    { amount: info.available, currency: info.currency, base: info.availableBase },
+    {
+      amount: info.available,
+      currency: info.currency,
+      base: info.availableBase,
+      fx: isBase(info.currency) ? 1 : (Number(project?.fx) > 0 ? Number(project.fx) : 1),
+    },
     () => ({
       category: 'staff/share',
       projectId: assignment.projectId,
@@ -622,8 +631,9 @@ export function payAssignment(assignmentId, part, values = {}) {
       amount: round(Math.max(0, info.accrued - info.finalPaidCur - info.advancePaidCur)),
       currency: assignment.currency,
       base: round(Math.max(0, info.accruedBase - info.finalPaidBase - info.advancePaidBase)),
+      fx: assignment.fx,
     }
-    : { amount: info.remainder, currency: assignment.currency, base: info.remainderBase };
+    : { amount: info.remainder, currency: assignment.currency, base: info.remainderBase, fx: assignment.fx };
 
   const employee = store.byId('employees', assignment.employeeId);
   // Каждая выплата — отдельной строкой в payments: остаток можно отдать
@@ -734,7 +744,7 @@ export function payPayroll(payrollId, values = {}) {
   // Сверх начисленного — аванс сотруднику в счёт будущих выплат.
   const employee = store.byId('employees', payroll.employeeId);
   return payout(state, employee, payment, values,
-    { amount: leftInCurrency, currency: payroll.currency, base: info.leftBase },
+    { amount: leftInCurrency, currency: payroll.currency, base: info.leftBase, fx: payroll.fx },
     () => ({
       category: 'staff/salary',
       projectId: null,
