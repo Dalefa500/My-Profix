@@ -121,7 +121,7 @@ export default function founders() {
     </div>
 
     <div class="card">
-      ${raw(sectionTitle('Коллеги', '<button class="btn btn--sm" data-act="add-founder">Добавить</button>'))}
+      ${raw(sectionTitle('Учредители', '<button class="btn btn--sm" data-act="add-founder">Добавить</button>'))}
       ${summary.rows.length
         ? raw(html`<div class="list">${raw(summary.rows.map((row) => html`
           <a class="row" href="#/founders/${row.founder.id}">
@@ -147,7 +147,7 @@ export default function founders() {
       «Взял для себя» — деньги на личные расходы из прибыли: долг студии они не меняют.</p>`;
 
   return {
-    title: 'Коллеги',
+    title: 'Учредители',
     subtitle: range.label,
     back: '#/',
     body,
@@ -235,7 +235,7 @@ export function founderDetail(params) {
 
   return {
     title: founder.name,
-    subtitle: 'Коллега',
+    subtitle: 'Учредитель',
     back: '#/founders',
     body,
     mount(root) {

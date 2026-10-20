@@ -473,7 +473,7 @@ function openMoreMenu() {
     body: html`<div class="list">
       <a class="row" href="#/payments" data-close="1"><div class="row__main"><span class="row__title">Платежи</span><span class="row__subtitle">Что получить и что выплатить</span></div><span class="row__meta">›</span></a>
       <a class="row" href="#/barters" data-close="1"><div class="row__main"><span class="row__title">Взаиморасчёты</span><span class="row__subtitle">Квартиры и машины в счёт работ</span></div><span class="row__meta">›</span></a>
-      <a class="row" href="#/founders" data-close="1"><div class="row__main"><span class="row__title">Коллеги</span><span class="row__subtitle">Сколько взяли из кассы</span></div><span class="row__meta">›</span></a>
+      <a class="row" href="#/founders" data-close="1"><div class="row__main"><span class="row__title">Учредители</span><span class="row__subtitle">Вложения, долг студии, взятое себе</span></div><span class="row__meta">›</span></a>
       <a class="row" href="#/settings" data-close="1"><div class="row__main"><span class="row__title">Настройки</span><span class="row__subtitle">Курс, категории, пароль</span></div><span class="row__meta">›</span></a>
       <div class="row"><div class="row__main"><span class="row__title">${user?.name || ''}</span>
         <span class="row__subtitle">${store.isAuthDisabled() ? 'вход в приложение отключён'

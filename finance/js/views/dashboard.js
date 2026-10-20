@@ -108,6 +108,7 @@ export default function dashboard() {
   const alerts = notifications(state).filter((item) => item.tone === 'danger').slice(0, 2);
   const recent = recentOperations(state);
   const barters = barterTotals(state);
+  const partners = foundersSummary(state);
 
   const body = html`
     <div class="chips" data-period>
@@ -125,7 +126,7 @@ export default function dashboard() {
         : 'введён вручную'}</span>
     </div>
 
-    ${raw(heroBlock(totals, range.label, foundersSummary(state).owedBase))}
+    ${raw(heroBlock(totals, range.label, partners.owedBase))}
 
     <div class="stats">
       ${raw(statCard({
@@ -153,6 +154,20 @@ export default function dashboard() {
         <div class="row__side">
           <span class="row__amount warn">${money(barters.leftBase)}</span>
           <span class="row__meta">осталось отработать</span>
+        </div>
+      </a>`) : ''}
+
+    ${partners.rows.length ? raw(html`
+      <a class="row card card--flat" href="#/founders">
+        <div class="row__main">
+          <span class="row__title">Вложения учредителей</span>
+          <span class="row__subtitle">${partners.investedBase > 0
+            ? 'кто сколько вложил и сколько студия должна'
+            : 'записать, кто сколько вложил своих денег'}</span>
+        </div>
+        <div class="row__side">
+          <span class="row__amount ${raw(partners.owedBase > 0 ? 'danger' : '')}">${money(partners.owedBase)}</span>
+          <span class="row__meta">студия должна</span>
         </div>
       </a>`) : ''}
 

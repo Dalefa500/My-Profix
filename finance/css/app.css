@@ -540,6 +540,10 @@ a.stat:active, a.card:active, button.card:active { transform: scale(0.972); tran
   transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.2s;
   border-radius: 12px;
 }
+/* Строка-карточка (ссылка на раздел с главной): отступы карточки,
+   а не строки списка. */
+.row.card { padding: 14px 16px; border-radius: var(--radius); }
+.row.card > * + * { margin-top: 0; }
 a.row:active, button.row:active {
   transform: scale(0.975);
   transition-duration: 0.06s;
