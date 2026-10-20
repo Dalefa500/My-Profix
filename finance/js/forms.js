@@ -1013,7 +1013,8 @@ export function openFounderForm(id = null, onDone) {
 export function openDrawForm(founderId = '', id = null, onDone, kind = 'invest') {
   const state = getState();
   const draw = id ? byId('draws', id) : null;
-  const moveKind = draw?.kind || kind || 'invest';
+  // У старых записей «Взял для себя» поля kind нет — это именно «взял».
+  const moveKind = draw ? (draw.kind || 'draw') : (kind || 'invest');
 
   openForm({
     title: draw ? 'Операция учредителя' : 'Деньги учредителя',

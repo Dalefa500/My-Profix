@@ -651,23 +651,28 @@ function periodReport(state, from, to) {
   );
 
   const partners = foundersSummary(state, from, to);
-  if (partners.rows.length && (partners.periodBase > 0 || partners.owedBase > 0)) {
-    sheet.heading('Коллеги взяли из кассы');
+  if (partners.rows.length && (partners.periodBase > 0 || partners.investedBase > 0 || partners.repaidBase > 0)) {
+    sheet.heading('Учредители');
     sheet.table(
       [
-        { title: 'Коллега', width: 170 },
-        { title: 'Взял за период', width: 90, align: 'right' },
-        { title: 'Взял всего', width: 80, align: 'right' },
-        { title: 'Студия должна', width: 90, align: 'right' },
+        { title: 'Учредитель', width: 130 },
+        { title: 'Взял за период', width: 75, align: 'right' },
+        { title: 'Вложил всего', width: 75, align: 'right' },
+        { title: 'Забрал', width: 75, align: 'right' },
+        { title: 'Студия должна', width: 75, align: 'right' },
       ],
       partners.rows.map((row) => [
         row.founder.name,
         { text: money(row.periodBase), font: 'bold' },
-        { text: money(row.takenBase), color: MUTED },
+        { text: money(row.investedBase), color: row.investedBase > 0 ? GOOD : MUTED },
+        { text: money(row.repaidBase), color: MUTED },
         { text: money(row.owedBase), color: row.owedBase > 0 ? BURGUNDY : MUTED },
       ]),
     );
-    sheet.note('Доля прибыли, а не расход студии: в расходы выше не входят, но из общей суммы вычтены — см. «Осталось в студии».');
+    sheet.note((partners.periodBase > 0
+      ? 'Взятое для себя — доля прибыли, а не расход студии: в расходы выше не входит, но из общей суммы вычтено — см. «Осталось в студии». '
+      : '')
+      + 'Вложенное учредителями студия должна им вернуть; «Вложил», «Забрал» и «Студия должна» — за всё время.');
   }
 
   const barters = barterTotals(state);

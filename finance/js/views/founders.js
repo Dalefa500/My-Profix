@@ -68,11 +68,13 @@ export default function founders() {
           <a class="row" href="#/founders/${row.founder.id}">
             <div class="row__main">
               <span class="row__title">${row.founder.name}</span>
-              <span class="row__subtitle">вложил ${money(row.investedBase)}${row.repaidBase > 0 ? ` · забрал ${money(row.repaidBase)}` : ''}</span>
+              <span class="row__subtitle">${row.investedBase > 0 || row.repaidBase > 0
+                ? `вложил ${money(row.investedBase)}${row.repaidBase > 0 ? ` · забрал ${money(row.repaidBase)}` : ''}`
+                : 'пока не вкладывал'}</span>
             </div>
             <div class="row__side">
-              <span class="row__amount ${raw(row.owedBase > 0 ? 'danger' : 'good')}">${money(row.owedBase)}</span>
-              <span class="row__meta">${row.owedBase > 0 ? 'студия должна' : 'всё вернули'}</span>
+              <span class="row__amount ${raw(row.owedBase > 0 ? 'danger' : row.investedBase > 0 ? 'good' : '')}">${money(row.owedBase)}</span>
+              <span class="row__meta">${row.owedBase > 0 ? 'студия должна' : row.investedBase > 0 ? 'всё вернули' : 'долга нет'}</span>
             </div>
           </a>`).join(''))}
           <div class="row">
