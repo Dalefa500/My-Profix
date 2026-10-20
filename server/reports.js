@@ -560,11 +560,10 @@ function founderReport(state, founder, from, to) {
 
   // За всё время второй строкой показываем, только когда первая — за период.
   sheet.totals([
-    ...(period ? [{ label: 'Взял за период', value: info.periodBase }] : []),
-    { label: period ? 'Взял за всё время' : 'Взял всего', value: info.takenBase, color: BURGUNDY },
-    { label: period ? 'Вложил за период' : 'Вложил в студию', value: period ? info.periodInvestedBase : info.investedBase, color: GOOD },
-    { label: 'Оплатил в долг', value: info.spentBase },
+    { label: 'Вложил всего', value: info.investedBase, color: GOOD },
+    { label: 'Забрал вложенное', value: info.repaidBase },
     { label: 'Студия должна', value: info.owedBase, color: info.owedBase > 0 ? BURGUNDY : MUTED },
+    { label: period ? 'Взял себе за период' : 'Взял себе', value: period ? info.periodBase : info.takenBase, color: BURGUNDY },
   ]);
 
   sheet.heading('Операции');
@@ -584,16 +583,16 @@ function founderReport(state, founder, from, to) {
         item.comment || (item.category ? categoryLabel(item.category, state.settings)
           : kind === 'invest' ? 'Деньгами в кассу' : '—'),
         labelOf(PAYMENT_METHODS, item.method, 'Наличные'),
-        { text: money(item.base), font: 'bold', color: kind === 'spend' || kind === 'invest' ? GOOD : INK },
+        { text: `${kind === 'spend' || kind === 'invest' ? '+' : '−'}${money(item.base)}`, font: 'bold', color: kind === 'spend' || kind === 'invest' ? GOOD : INK },
       ];
     }),
     { empty: 'Операций за этот период не было' },
   );
 
-  sheet.note('Деньги, которые коллега берёт для себя, — это его доля прибыли,'
-    + ' на прибыль студии они не влияют. Расходы, оплаченные его деньгами в долг,'
-    + ' входят в расходы студии, и на их сумму студия остаётся ему должна.'
-    + ' Вклад в студию не возвращается: если им оплачен расход, он входит в расходы студии.');
+  sheet.note('Вложенное учредителем (деньги в кассу или оплата расходов студии) студия должна ему вернуть;'
+    + ' оплаченные им расходы входят в расходы студии. «Забрал вложенное» уменьшает этот долг.'
+    + ' Деньги, взятые для себя, — доля прибыли: на долг студии и на прибыль они не влияют.'
+    + (period ? ' Итоги «Вложил», «Забрал» и «Студия должна» — за всё время, операции — за период.' : ''));
 
   return { buffer: sheet.build(), name: fileName(['Отчёт', founder.name, todayIso()]) };
 }
@@ -612,11 +611,15 @@ function periodReport(state, from, to) {
     { label: 'Доход', value: totals.incomeBase, color: GOOD },
     { label: 'Расход', value: totals.expenseBase, color: BURGUNDY },
     { label: 'Прибыль', value: totals.profitBase },
-    // Изъятия коллег — не расход, но из общей суммы они уходят.
+  ]);
+  // Деньги учредителей — не доход и не расход, но сумму в студии меняют.
+  // Отдельной строкой, чтобы подписи не обрезались.
+  const founderMoves = [
     ...(totals.drawBase > 0 ? [{ label: 'Коллеги взяли', value: totals.drawBase, color: BURGUNDY }] : []),
     ...(totals.investBase > 0 ? [{ label: 'Вложили', value: totals.investBase, color: GOOD }] : []),
-    ...(totals.drawBase > 0 || totals.investBase > 0 ? [{ label: 'Осталось в студии', value: totals.leftBase }] : []),
-  ]);
+    ...(totals.repayBase > 0 ? [{ label: 'Вернули вложенное', value: totals.repayBase, color: BURGUNDY }] : []),
+  ];
+  if (founderMoves.length) sheet.totals([...founderMoves, { label: 'Осталось в студии', value: totals.leftBase }]);
 
   if (totals.incomeBarterBase > 0) {
     sheet.note(`Из дохода ${money(totals.incomeBarterBase)} получено взаимозачётом —`
@@ -703,7 +706,7 @@ function periodReport(state, from, to) {
           // не ставим (его сумма должна совпадать с итогом расходов).
           kind: 'colleague',
           // Своя подпись коллеги («На отпуск») не теряется — дописывается.
-          comment: `${(item.kind || 'draw') === 'repay' ? `Вернули долг: ${name}`
+          comment: `${(item.kind || 'draw') === 'repay' ? `${name} забрал вложенное`
             : item.kind === 'invest' ? `${name} вложил в студию` : `${name} взял себе`}${item.comment ? ` · ${item.comment}` : ''} · ${money(item.base)}, ${item.kind === 'invest' ? 'не доход' : 'не расход'}`,
           projectId: null,
         };

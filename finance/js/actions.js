@@ -1095,22 +1095,22 @@ export function saveDraw(values, id = null) {
       return {
         ok: false,
         error: owed > 0
-          ? `Долг студии перед коллегой (${founder?.name || 'без имени'}) — ${formatAmount(owed)}, больше вернуть нельзя`
-          : `У студии нет долга перед коллегой (${founder?.name || 'без имени'}). Если деньги взяли себе, выберите «Взял для себя»`,
+          ? `${founder?.name || 'Учредитель'}: студия должна ${formatAmount(owed)} — больше вернуть нельзя`
+          : `${founder?.name || 'Учредитель'}: долга студии нет — вложенное уже вернули или вкладов не было. Если деньги взяли себе, выберите «Взял для себя»`,
       };
     }
   }
   // Уменьшили или убрали расход, по которому студия уже вернула деньги, —
   // возвращённое оказалось бы больше долга, и разница нигде бы не числилась.
-  if (existing && (existing.kind || 'draw') === 'spend') {
-    const overflow = repayOverflow(state, existing.founderId, id,
-      kind === 'spend' && values.founderId === existing.founderId ? { kind: 'spend', ...payment } : null);
+  if (existing && ['spend', 'invest'].includes(existing.kind || 'draw')) {
+    const stillOwed = ['spend', 'invest'].includes(kind) && values.founderId === existing.founderId;
+    const overflow = repayOverflow(state, existing.founderId, id, stillOwed ? { kind, ...payment } : null);
     if (overflow > 0.01) {
       return {
         ok: false,
-        error: kind === 'spend'
-          ? `Студия уже вернула по этому долгу больше — сумма не может быть меньше на ${formatAmount(overflow)}`
-          : 'По этому долгу студия уже вернула деньги. Чтобы сменить тип операции, сначала удалите запись «Студия вернула долг»',
+        error: stillOwed
+          ? `Учредителю уже вернули больше — сумма не может быть меньше на ${formatAmount(overflow)}`
+          : 'Из этих денег учредителю уже возвращали. Чтобы сменить тип операции, сначала удалите запись «Забрал вложенное»',
       };
     }
   }
@@ -1174,10 +1174,10 @@ function repayOverflow(state, founderId, ignoreId, extra = null) {
 }
 
 function spendDeleteProblem(state, draw) {
-  if (!draw || (draw.kind || 'draw') !== 'spend') return null;
+  if (!draw || !['spend', 'invest'].includes(draw.kind || 'draw')) return null;
   const overflow = repayOverflow(state, draw.founderId, draw.id);
   return overflow > 0.01
-    ? 'Студия уже вернула коллеге деньги по этому расходу. Сначала удалите или уменьшите запись «Студия вернула долг».'
+    ? 'Учредителю уже вернули эти деньги. Сначала удалите или уменьшите запись «Забрал вложенное».'
     : null;
 }
 

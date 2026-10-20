@@ -559,7 +559,9 @@ export function founderDraws(state, founderId, from, to) {
 export function founderDebt(draws) {
   const balances = new Map(); // валюта -> { amount, base }
   for (const item of draws) {
-    if ((item.kind || 'draw') !== 'spend') continue;
+    // Студия должна учредителю всё, что он вложил: деньгами в кассу
+    // или оплатой расходов за студию.
+    if (!['spend', 'invest'].includes(item.kind || 'draw')) continue;
     const key = item.currency || 'USD';
     const entry = balances.get(key) || { amount: 0, base: 0 };
     entry.amount += Number(item.amount) || 0;
@@ -602,13 +604,14 @@ export function founderState(state, founder, from, to) {
   const period = from && to ? all.filter((item) => inRange(item.date, from, to)) : all;
   const of = (list, kind) => list.filter((item) => (item.kind || 'draw') === kind);
 
-  // Три разных движения, и путать их нельзя:
-  //   взял для себя — доля прибыли, студия ничего не должна;
-  //   оплатил из своих — расход студии, и студия остаётся должна коллеге;
-  //   вернули долг — гасит эту задолженность;
-  //   вложил в студию — вклад учредителя, не возвращается.
+  // Разные движения, и путать их нельзя:
+  //   вложил в студию (деньгами или оплатой за студию; раньше — «оплатил
+  //     из своих в долг») — студия должна это вернуть;
+  //   забрал вложенное — гасит этот долг;
+  //   взял для себя — доля прибыли, долг не меняет.
+  const invested = (list) => list.filter((item) => ['invest', 'spend'].includes(item.kind || 'draw'));
   const takenBase = sum(of(all, 'draw'), (item) => item.base);
-  const investedBase = sum(of(all, 'invest'), (item) => item.base);
+  const investedBase = sum(invested(all), (item) => item.base);
   const spentBase = sum(of(all, 'spend'), (item) => item.base);
   const repaidBase = sum(of(all, 'repay'), (item) => item.base);
 
@@ -624,7 +627,7 @@ export function founderState(state, founder, from, to) {
     periodSpentBase: sum(of(period, 'spend'), (item) => item.base),
     periodRepaidBase: sum(of(period, 'repay'), (item) => item.base),
     investedBase,
-    periodInvestedBase: sum(of(period, 'invest'), (item) => item.base),
+    periodInvestedBase: sum(invested(period), (item) => item.base),
     // «Взял» в сводках — это именно доля прибыли.
     totalBase: takenBase,
     periodBase: sum(of(period, 'draw'), (item) => item.base),
@@ -642,6 +645,7 @@ export function foundersSummary(state, from, to) {
     periodSpentBase: sum(rows, (item) => item.periodSpentBase),
     investedBase: sum(rows, (item) => item.investedBase),
     periodInvestedBase: sum(rows, (item) => item.periodInvestedBase),
+    repaidBase: sum(rows, (item) => item.repaidBase),
   };
 }
 
@@ -858,10 +862,16 @@ export function periodTotals(state, from, to) {
   // Вклады учредителей: не доход, но денег в студии становится больше.
   // Если учредитель сам оплатил расход (аренду, ремонт), этот расход уже
   // в расходах — вклад его уравновешивает: из кассы студии деньги не ушли.
+  // Вложенное студия должна вернуть: когда учредитель забирает вложенное,
+  // деньги из студии уходят.
   const invests = (state.draws || [])
-    .filter((item) => item.kind === 'invest')
+    .filter((item) => ['invest', 'spend'].includes(item.kind))
     .filter((item) => inRange(item.date, from, to));
   const investBase = sum(invests, (item) => item.base);
+  const repays = (state.draws || [])
+    .filter((item) => item.kind === 'repay')
+    .filter((item) => inRange(item.date, from, to));
+  const repayBase = sum(repays, (item) => item.base);
 
   const incomeByType = new Map();
   for (const income of incomes) {
@@ -883,7 +893,11 @@ export function periodTotals(state, from, to) {
     drawBase,
     invests,
     investBase,
-    leftBase: round(incomeBase - expenseBase - drawBase + investBase),
+    repays,
+    repayBase,
+    // Сколько денег в студии: прибыль минус изъятия, плюс вложенное
+    // учредителями, минус то, что им уже вернули.
+    leftBase: round(incomeBase - expenseBase - drawBase + investBase - repayBase),
     expenseByCategory,
     expenseByGroup,
     incomeByType,

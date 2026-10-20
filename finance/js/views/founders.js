@@ -45,11 +45,14 @@ export default function founders() {
   // Прибыль берём без расходов, оплаченных самими вкладами (ремонт,
   // техника): иначе вложения вычитались бы дважды.
   const allTime = periodTotals(state, '0000-01-01', '9999-12-31');
-  const paidByInvest = (state.draws || []).filter((item) => item.kind === 'invest' && item.expenseId)
+  const paidByInvest = (state.draws || []).filter((item) => ['invest', 'spend'].includes(item.kind) && item.expenseId)
     .reduce((acc, item) => acc + (Number(item.base) || 0), 0);
   const operatingProfit = allTime.profitBase + paidByInvest;
   const payback = summary.investedBase > 0
     ? Math.max(0, Math.min(100, Math.round((operatingProfit / summary.investedBase) * 100))) : 0;
+  // Показываем всех учредителей, как только кто-то что-то вложил:
+  // видно и того, кто пока не вкладывал.
+  const investors = summary.rows.some((row) => row.investedBase > 0 || row.repaidBase > 0) ? summary.rows : [];
 
   const body = html`
     <div class="chips" data-period>
@@ -57,6 +60,38 @@ export default function founders() {
         <button type="button" class="chip ${raw(item.value === periodState.preset ? 'is-active' : '')}"
           data-value="${item.value}">${item.label}</button>`).join(''))}
     </div>
+
+    <div class="card">
+      ${raw(sectionTitle('Вложения учредителей', '<span class="muted">за всё время</span>'))}
+      ${investors.length ? raw(html`
+        <div class="list">${raw(investors.map((row) => html`
+          <a class="row" href="#/founders/${row.founder.id}">
+            <div class="row__main">
+              <span class="row__title">${row.founder.name}</span>
+              <span class="row__subtitle">вложил ${money(row.investedBase)}${row.repaidBase > 0 ? ` · забрал ${money(row.repaidBase)}` : ''}</span>
+            </div>
+            <div class="row__side">
+              <span class="row__amount ${raw(row.owedBase > 0 ? 'danger' : 'good')}">${money(row.owedBase)}</span>
+              <span class="row__meta">${row.owedBase > 0 ? 'студия должна' : 'всё вернули'}</span>
+            </div>
+          </a>`).join(''))}
+          <div class="row">
+            <div class="row__main">
+              <span class="row__title">Итого студия должна учредителям</span>
+              <span class="row__subtitle">вложили ${money(summary.investedBase)}${summary.repaidBase > 0 ? ` · вернули ${money(summary.repaidBase)}` : ''} · прибыль студии окупила ${payback}%</span>
+            </div>
+            <div class="row__side"><span class="row__amount ${raw(summary.owedBase > 0 ? 'danger' : 'good')}">${money(summary.owedBase)}</span></div>
+          </div>
+        </div>`)
+        : raw(emptyState('Учредители пока ничего не вкладывали. Когда учредитель платит за студию из своего кармана (аренда, мелкие расходы) — нажмите «Записать вклад».'))}
+    </div>
+
+    ${summary.rows.length ? raw(html`
+      <div class="btn-row">
+        <button class="btn btn--primary" data-act="add-invest">Записать вклад</button>
+        <button class="btn" data-act="add-repay">Забрал вложенное</button>
+        <button class="btn btn--ghost" data-act="add-draw">Взял для себя</button>
+      </div>`) : ''}
 
     <div class="stats">
       ${raw(statCard({
@@ -73,22 +108,14 @@ export default function founders() {
       ${raw(statCard({
         label: 'Осталось в студии',
         value: money(leftBase),
-        hint: leftBase < 0 ? 'взяли больше, чем заработали' : 'прибыль минус изъятия плюс вклады',
+        hint: leftBase < 0 ? 'потратили больше, чем было' : 'прибыль минус изъятия, плюс вложенное, минус возвращённое',
         tone: leftBase < 0 ? 'danger' : 'good',
       }))}
       ${raw(statCard({
-        label: 'Вложили в студию',
-        value: money(summary.investedBase),
-        hint: summary.investedBase > 0
-          ? `за всё время · прибыль студии окупила ${payback}%`
-          : 'вклады учредителей: офис, ремонт, техника',
+        label: `Вложили · ${range.label}`,
+        value: money(summary.periodInvestedBase),
+        hint: totals.repayBase > 0 ? `вернули учредителям ${money(totals.repayBase)}` : 'учредители из своего кармана',
       }))}
-      ${summary.owedBase > 0 ? raw(statCard({
-        label: 'Студия должна коллегам',
-        value: money(summary.owedBase),
-        hint: 'оплатили расходы студии своими деньгами',
-        tone: 'danger',
-      })) : ''}
     </div>
 
     <div class="card">
@@ -111,15 +138,11 @@ export default function founders() {
         : raw(emptyState('Коллеги не заведены. Добавьте владельцев студии, чтобы вести их выплаты.'))}
     </div>
 
-    ${summary.rows.length ? raw(html`
-      <button class="btn btn--primary btn--block" data-act="add-draw">Записать операцию</button>`) : ''}
-
-    <p class="muted">Деньги, которые коллега берёт для себя (на личные расходы), вычитаются из
-      общей суммы: на Главной, в Финансах и в Отчётах главная цифра — «Осталось в студии».
-      В расходы студии они не записываются — это доля прибыли, а не траты на работу.
-      «Оплатил из своих (в долг)» — расход студии, и студия остаётся должна коллеге.
-      «Вложил в студию» — вклад учредителя без возврата: деньги в кассу или оплата
-      аренды, ремонта, техники за студию.</p>`;
+    <p class="muted">«Вложил в студию» — учредитель внёс свои деньги в кассу или сам оплатил
+      расход студии (аренду, мелкие расходы, технику). Оплаченный расход попадает в расходы
+      студии, а студия становится должна учредителю эту сумму. Когда студия выйдет в прибыль,
+      учредитель забирает вложенное — запишите «Забрал вложенное», и долг уменьшится.
+      «Взял для себя» — деньги на личные расходы из прибыли: долг студии они не меняют.</p>`;
 
   return {
     title: 'Коллеги',
@@ -134,9 +157,10 @@ export default function founders() {
         refresh();
       });
       root.querySelector('[data-act="add-founder"]').onclick = () => forms.openFounderForm(null, refresh);
-      root.querySelector('[data-act="add-draw"]')?.addEventListener('click', () => {
-        forms.openDrawForm('', null, refresh);
-      });
+      root.querySelector('[data-act="add-invest"]')?.addEventListener('click', () => forms.openDrawForm('', null, refresh, 'invest'));
+      root.querySelector('[data-act="add-repay"]')?.addEventListener('click', () => forms.openDrawForm(
+        investors.find((row) => row.owedBase > 0)?.founder.id || '', null, refresh, 'repay'));
+      root.querySelector('[data-act="add-draw"]')?.addEventListener('click', () => forms.openDrawForm('', null, refresh, 'draw'));
     },
   };
 }
@@ -166,22 +190,32 @@ export function founderDetail(params) {
     </div>
 
     <div class="stats">
-      ${raw(statCard({ label: `Взял для себя · ${range.label}`, value: money(row.periodBase) }))}
-      ${raw(statCard({ label: 'Взял за всё время', value: money(row.takenBase), tone: 'warn' }))}
       ${raw(statCard({
         label: 'Вложил в студию',
         value: money(row.investedBase),
-        hint: row.periodInvestedBase > 0 ? `${range.label.toLowerCase()}: ${money(row.periodInvestedBase)}` : 'за всё время, без возврата',
+        hint: row.periodInvestedBase > 0 ? `${range.label.toLowerCase()}: ${money(row.periodInvestedBase)}` : 'за всё время',
+        tone: 'good',
+      }))}
+      ${raw(statCard({ label: 'Забрал вложенное', value: money(row.repaidBase), hint: 'за всё время' }))}
+      ${raw(statCard({
+        label: 'Студия должна сейчас',
+        value: money(row.owedBase),
+        hint: row.owedBase > 0 ? 'вернуть, когда студия выйдет в прибыль' : 'долга нет',
+        tone: row.owedBase > 0 ? 'danger' : 'neutral',
       }))}
       ${raw(statCard({
-        label: 'Студия должна',
-        value: money(row.owedBase),
-        hint: row.spentBase > 0 ? `оплатил за студию в долг ${money(row.spentBase)}` : 'в долг за студию не платил',
-        tone: row.owedBase > 0 ? 'danger' : 'neutral',
+        label: `Взял для себя · ${range.label}`,
+        value: money(row.periodBase),
+        hint: `за всё время ${money(row.takenBase)}`,
+        tone: 'warn',
       }))}
     </div>
 
-    <button class="btn btn--primary btn--block" data-act="add-draw">Записать операцию</button>
+    <div class="btn-row">
+      <button class="btn btn--primary" data-act="add-invest">Вложил</button>
+      ${row.owedBase > 0 ? raw(html`<button class="btn" data-act="add-repay">Забрал вложенное</button>`) : ''}
+      <button class="btn btn--ghost" data-act="add-draw">Взял для себя</button>
+    </div>
 
     <div class="card">
       ${raw(sectionTitle('История операций'))}
@@ -192,7 +226,7 @@ export function founderDetail(params) {
               <span class="row__title">${labelOf(FOUNDER_MOVES, item.kind || 'draw', 'Взял для себя')}</span>
               <span class="row__subtitle">${formatDate(item.date, { short: true })}${item.comment ? ` · ${item.comment}` : ''}</span>
             </div>
-            <span class="row__amount ${raw(['spend', 'invest'].includes(item.kind || 'draw') ? 'good' : '')}">${money(item.base)}</span>
+            <span class="row__amount ${raw(['spend', 'invest'].includes(item.kind || 'draw') ? 'good' : '')}">${raw(['spend', 'invest'].includes(item.kind || 'draw') ? '+' : '−')}${money(item.base)}</span>
           </button>`).join(''))}</div>`)
         : raw(emptyState('Операций ещё не было'))}
     </div>`;
@@ -208,12 +242,14 @@ export function founderDetail(params) {
         ? { type: 'founder', id: founder.id }
         : { type: 'founder', id: founder.id, from: range.from, to: range.to });
       root.querySelector('[data-act="edit"]').onclick = () => forms.openFounderForm(founder.id, refresh);
-      root.querySelector('[data-act="add-draw"]').onclick = () => forms.openDrawForm(founder.id, null, refresh);
+      root.querySelector('[data-act="add-invest"]').onclick = () => forms.openDrawForm(founder.id, null, refresh, 'invest');
+      root.querySelector('[data-act="add-repay"]')?.addEventListener('click', () => forms.openDrawForm(founder.id, null, refresh, 'repay'));
+      root.querySelector('[data-act="add-draw"]').onclick = () => forms.openDrawForm(founder.id, null, refresh, 'draw');
       root.querySelectorAll('[data-open-draw]').forEach((button) => {
         button.onclick = () => openDrawSheet(button.dataset.openDraw);
       });
       root.querySelector('[data-act="delete"]').onclick = async () => {
-        const ok = await confirmDialog(`Удалить коллегу «${founder.name}»? Записи «Взял для себя» и возвраты долга тоже удалятся.`);
+        const ok = await confirmDialog(`Удалить коллегу «${founder.name}»? Записи «Взял для себя» и «Забрал вложенное» тоже удалятся.`);
         if (!ok) return;
         const result = actions.deleteFounder(founder.id);
         if (result?.ok === false) {

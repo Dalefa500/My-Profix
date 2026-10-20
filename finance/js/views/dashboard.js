@@ -3,7 +3,7 @@
 import { html, raw, statCard, sectionTitle, rowItem, emptyState, money, openForm, toast } from '../ui.js';
 import { getState, byId } from '../store.js';
 import * as store from '../store.js';
-import { dashboardTotals, notifications, barterTotals } from '../calc.js';
+import { dashboardTotals, notifications, barterTotals, foundersSummary } from '../calc.js';
 import { heroBlock } from './hero.js';
 import { openOperation } from '../operation.js';
 import { openDrawSheet } from './founders.js';
@@ -66,7 +66,7 @@ function recentOperations(state, limit = 8) {
         kind: 'draw',
         id: item.id,
         date: item.date,
-        title: kind === 'repay' ? `Вернули долг: ${name}` : kind === 'invest' ? `${name} вложил в студию` : `${name} взял себе`,
+        title: kind === 'repay' ? `${name} забрал вложенное` : kind === 'invest' ? `${name} вложил в студию` : `${name} взял себе`,
         subtitle: item.comment || '',
         base: item.base,
         investment: kind === 'invest',
@@ -125,7 +125,7 @@ export default function dashboard() {
         : 'введён вручную'}</span>
     </div>
 
-    ${raw(heroBlock(totals, range.label))}
+    ${raw(heroBlock(totals, range.label, foundersSummary(state).owedBase))}
 
     <div class="stats">
       ${raw(statCard({

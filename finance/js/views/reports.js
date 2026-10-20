@@ -202,7 +202,7 @@ export default function reports() {
 
     <button class="btn btn--block btn--ghost" data-report>Скачать отчёт за период в PDF</button>
 
-    ${raw(heroBlock(totals, range.label))}
+    ${raw(heroBlock(totals, range.label, foundersSummary(state).owedBase))}
 
     ${series.length > 1 ? raw(html`
       <div class="card">

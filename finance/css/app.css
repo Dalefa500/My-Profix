@@ -1237,6 +1237,7 @@ td.danger, .danger-text { color: var(--danger); }
   line-height: 1.4;
   color: rgba(255, 255, 255, 0.78);
 }
+a.hero__note { display: block; color: #fff; font-weight: 600; text-decoration: none; }
 
 /* Название компании кириллицей: рукописный шрифт знака его не умеет,
    поэтому показываем обычным шрифтом — крупно, плотно, фирменным цветом. */

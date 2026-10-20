@@ -1010,17 +1010,19 @@ export function openFounderForm(id = null, onDone) {
 
 // Движение денег между студией и коллегой: взял для себя, оплатил
 // расход студии своими деньгами или получил этот долг обратно.
-export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
+export function openDrawForm(founderId = '', id = null, onDone, kind = 'invest') {
   const state = getState();
   const draw = id ? byId('draws', id) : null;
-  const moveKind = draw?.kind || kind || 'draw';
+  const moveKind = draw?.kind || kind || 'invest';
 
   openForm({
-    title: draw ? 'Операция коллеги' : 'Деньги коллеги',
+    title: draw ? 'Операция учредителя' : 'Деньги учредителя',
     fields: [
       {
         name: 'kind', label: 'Что произошло', type: 'select', required: true, wide: true,
-        options: FOUNDER_MOVES.map((item) => option(item.id, item.label)),
+        // Старое «Оплатил из своих (в долг)» — только у уже записанных операций.
+        options: FOUNDER_MOVES.filter((item) => !item.legacy || item.id === moveKind)
+          .map((item) => option(item.id, item.label)),
         value: moveKind,
         hint: FOUNDER_MOVES.find((item) => item.id === moveKind)?.hint || '',
       },
@@ -1035,14 +1037,14 @@ export function openDrawForm(founderId = '', id = null, onDone, kind = 'draw') {
       },
       { name: 'date', label: 'Дата', type: 'date', required: true, value: draw?.date || today() },
       {
-        name: 'founderId', label: 'Коллега', type: 'select', required: true,
+        name: 'founderId', label: 'Учредитель', type: 'select', required: true,
         options: state.founders.map((item) => option(item.id, item.name)),
         value: draw?.founderId || founderId || state.founders[0]?.id || '',
       },
       {
         name: 'category', label: 'На что потрачено', type: 'select',
         options: categoryOptions(state, draw?.category), value: draw?.category || 'other/misc',
-        hint: 'Заполняется, когда коллега оплатил расход студии.',
+        hint: 'Например, аренда офиса — этот расход попадёт в расходы студии.',
       },
     ],
     advanced: [
